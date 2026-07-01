@@ -183,6 +183,21 @@ function computeFreeItems(cart: Record<number, CartItem>, rules: FreeRule[]): Fr
   return out;
 }
 
+// Résout l'id de l'étiquette Odoo "Validé" (crm.tag, utilisée sur sale.order.tag_ids) — mise en cache
+// au niveau module pour ne faire la recherche qu'une seule fois par session app.
+let _validatedTagIdCache: number | null | undefined = undefined;
+async function getValidatedTagId(session: odoo.OdooSession): Promise<number | null> {
+  if (_validatedTagIdCache !== undefined) return _validatedTagIdCache;
+  try {
+    const tags = await odoo.searchRead(session, "crm.tag", [["name", "ilike", "valid"]], ["id", "name"], 20);
+    const exact = tags.find((t: any) => (t.name || "").trim().toLowerCase() === "validé");
+    _validatedTagIdCache = exact ? exact.id : (tags[0]?.id ?? null);
+  } catch {
+    _validatedTagIdCache = null;
+  }
+  return _validatedTagIdCache ?? null;
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 export default function OrderScreen({ session, onBack, onToast, desktop }: Props) {
   const [step, setStep] = useState<"client" | "catalog">("client");
@@ -268,18 +283,25 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
   const handleValidate = async () => {
     setSubmitting(true);
     try {
+      const validatedTagId = await getValidatedTagId(session);
+      if (validatedTagId === null) {
+        onToast("Étiquette « Validé » introuvable dans Odoo — commande créée sans étiquette", "info");
+      }
+      const tagVals = validatedTagId ? { tag_ids: [[6, 0, [validatedTagId]]] } : {};
+
       const pricelistId = client.property_product_pricelist?.[0] || false;
       const mainId = await odoo.create(session, "sale.order", {
         partner_id: client.id, state: "draft",
         ...(pricelistId ? { pricelist_id: pricelistId } : {}),
         note: note || "",
+        ...tagVals,
       });
       for (const item of Object.values(cart)) {
         await odoo.create(session, "sale.order.line", { order_id: mainId, product_id: item.product.id, product_uom_qty: item.qty, price_unit: item.unitPrice });
       }
       let freeId: number | null = null;
       if (freeItems.length > 0) {
-        freeId = await odoo.create(session, "sale.order", { partner_id: client.id, state: "draft", note: `Articles offerts — lié au devis #${mainId}` });
+        freeId = await odoo.create(session, "sale.order", { partner_id: client.id, state: "draft", note: `Articles offerts — lié au devis #${mainId}`, ...tagVals });
         for (const fi of freeItems) {
           await odoo.create(session, "sale.order.line", { order_id: freeId, product_id: fi.product.id, product_uom_qty: fi.qty, price_unit: 0 });
         }
@@ -704,7 +726,7 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
       if (ids.length) {
         const prods = await odoo.searchRead(session, "product.product",
           [["id", "in", ids]],
-          ["id", "name", "default_code", "lst_price", "product_tmpl_id", "virtual_available"],
+          ["id", "name", "default_code", "barcode", "lst_price", "product_tmpl_id", "virtual_available"],
           ids.length);
         const enriched = prods.map((p: any) => ({ ...p, ...agg.get(p.id) }));
         enriched.sort((a: any, b: any) => (b.totalQty || 0) - (a.totalQty || 0));
@@ -745,7 +767,7 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
       const productIds = lines.map((l: any) => l.product_id[0]);
       const products = await odoo.searchRead(session, "product.product",
         [["id", "in", productIds]],
-        ["id", "name", "default_code", "lst_price", "product_tmpl_id", "virtual_available"],
+        ["id", "name", "default_code", "barcode", "lst_price", "product_tmpl_id", "virtual_available"],
         productIds.length);
       const productMap = new Map<number, any>(products.map((p: any) => [p.id as number, p]));
 
@@ -779,7 +801,7 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
     }
     try {
       const p = await odoo.searchRead(session, "product.product", domain,
-        ["id", "name", "default_code", "lst_price", "product_tmpl_id", "virtual_available"], 500, "name");
+        ["id", "name", "default_code", "barcode", "lst_price", "product_tmpl_id", "virtual_available"], 500, "name");
       // Produits en stock en premier, puis les autres
       p.sort((a: any, b: any) => (b.virtual_available || 0) - (a.virtual_available || 0));
       if (!q) setAllProducts(p);
@@ -989,7 +1011,7 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
                       {qty > 0 && <div style={{ position: "absolute", top: 5, left: 5, background: C.teal, color: "#fff", fontSize: 11, fontWeight: 800, borderRadius: 7, padding: "2px 7px" }}>{qty}</div>}
                     </div>
                     <div style={{ padding: "8px 10px 10px" }}>
-                      <div style={{ fontSize: 9, color: C.muted, fontFamily: "monospace", marginBottom: 1 }}>{p.default_code}</div>
+                      <div style={{ fontSize: 9, color: C.muted, fontFamily: "monospace", marginBottom: 1 }}>{p.default_code}{p.barcode ? ` · ${p.barcode}` : ""}</div>
                       <div style={{ fontSize: 11, fontWeight: 600, color: C.text, lineHeight: 1.3, height: 28, overflow: "hidden" }}>{p.name}</div>
                       {activeCatId === FAV_CAT_ID && p.totalQty != null && (
                         <div style={{ fontSize: 9, fontWeight: 700, color: C.orange, background: C.orangeSoft, borderRadius: 5, padding: "2px 5px", marginTop: 3, display: "inline-block" }}>
@@ -1111,7 +1133,7 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
             </div>
             {/* Infos */}
             <div style={{ padding: "16px 20px 20px" }}>
-              <div style={{ fontSize: 11, color: C.muted, fontFamily: "monospace", marginBottom: 4 }}>{zoom.default_code}</div>
+              <div style={{ fontSize: 11, color: C.muted, fontFamily: "monospace", marginBottom: 4 }}>{zoom.default_code}{zoom.barcode ? ` · EAN ${zoom.barcode}` : ""}</div>
               <div style={{ fontSize: 16, fontWeight: 700, color: C.text, lineHeight: 1.35, marginBottom: 10 }}>{zoom.name}</div>
               <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
                 <span style={{ fontSize: 18, fontWeight: 800, color: C.tealDark }}>
