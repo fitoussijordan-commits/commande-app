@@ -1,0 +1,1243 @@
+"use client";
+import { useState, useEffect, useCallback, useRef } from "react";
+import * as odoo from "@/lib/odoo";
+
+// ── Palette ───────────────────────────────────────────────────────────────────
+const C = {
+  bg: "#f8fafc", white: "#fff", text: "#0f172a", textSec: "#334155",
+  muted: "#94a3b8", border: "#e2e8f0",
+  teal: "#0d9488", tealDark: "#0f766e", tealSoft: "#f0fdfa", tealMid: "#ccfbf1",
+  purple: "#7c3aed", purpleSoft: "#f5f3ff",
+  orange: "#ea580c", orangeSoft: "#fff7ed",
+  green: "#16a34a", greenSoft: "#f0fdf4",
+  red: "#dc2626", redSoft: "#fef2f2",
+  blue: "#2563eb", blueSoft: "#eff6ff",
+  shadow: "0 1px 3px rgba(0,0,0,0.08), 0 1px 2px rgba(0,0,0,0.05)",
+  shadowMd: "0 4px 6px rgba(0,0,0,0.07), 0 2px 4px rgba(0,0,0,0.05)",
+  shadowXl: "0 20px 25px rgba(0,0,0,0.10), 0 8px 10px rgba(0,0,0,0.04)",
+};
+
+// ── Types ─────────────────────────────────────────────────────────────────────
+interface Props {
+  session: odoo.OdooSession;
+  onBack: () => void;
+  onToast: (msg: string, type?: "success" | "error" | "info") => void;
+  desktop?: boolean;
+}
+interface CartItem { product: any; qty: number; unitPrice: number; }
+interface FreeRule {
+  id: string; name: string; triggerQty: number; freeQty: number;
+  allProducts: boolean; productRefs: string[];
+}
+interface FreeItem { product: any; qty: number; ruleName: string; }
+
+const LS_RULES  = "wms_order_rules_v2";
+const LS_DRAFT  = "wms_order_draft";
+const LS_CATS   = "wms_order_smart_cats";
+
+// ── Catégories par codification référence (chars 1-2 de default_code) ─────────
+// Ex : 1010101 → "01" = Visage
+interface SmartCat { id: string; code: string; emoji: string; label: string; }
+
+const DEFAULT_CATS: SmartCat[] = [
+  { id: "01", code: "01", emoji: "🌸", label: "Visage" },
+  { id: "02", code: "02", emoji: "✨", label: "Régénérant" },
+  { id: "03", code: "03", emoji: "💆", label: "Corps" },
+  { id: "04", code: "04", emoji: "🚿", label: "Hygiène" },
+  { id: "05", code: "05", emoji: "💊", label: "Med" },
+  { id: "06", code: "06", emoji: "💄", label: "Maquillage" },
+];
+
+function loadSmartCats(): SmartCat[] {
+  try { const r = localStorage.getItem(LS_CATS); return r ? JSON.parse(r) : DEFAULT_CATS; } catch { return DEFAULT_CATS; }
+}
+function saveSmartCats(c: SmartCat[]) { localStorage.setItem(LS_CATS, JSON.stringify(c)); }
+
+// Extrait le code catégorie : chars 1 et 2 (0-indexé) de la référence
+function getCatCode(product: any): string {
+  const ref = product.default_code || "";
+  return ref.length >= 3 ? ref.substring(1, 3) : "";
+}
+
+function matchesCat(product: any, cat: SmartCat): boolean {
+  return getCatCode(product) === cat.code;
+}
+
+function loadRules(): FreeRule[] { try { return JSON.parse(localStorage.getItem(LS_RULES) || "[]"); } catch { return []; } }
+function saveRules(r: FreeRule[]) { localStorage.setItem(LS_RULES, JSON.stringify(r)); }
+
+interface Draft {
+  client: any;
+  cart: Record<number, CartItem>;
+  note: string;
+  savedAt: number; // timestamp
+}
+function loadDraft(): Draft | null { try { const r = localStorage.getItem(LS_DRAFT); return r ? JSON.parse(r) : null; } catch { return null; } }
+function saveDraft(d: Draft | null) {
+  if (d) localStorage.setItem(LS_DRAFT, JSON.stringify(d));
+  else localStorage.removeItem(LS_DRAFT);
+}
+
+function uid() { return Math.random().toString(36).slice(2, 9); }
+function fmtPrice(n: number) { return new Intl.NumberFormat("fr-FR", { style: "currency", currency: "EUR" }).format(n); }
+function fmtDate(ts: number) {
+  const d = new Date(ts);
+  return `${d.toLocaleDateString("fr-FR")} à ${d.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}`;
+}
+
+// ── Calcul prix pricelist côté client (1 seul appel Odoo au départ) ───────────
+interface PriceItem {
+  applied_on: string;          // '0_product_variant' | '1_product' | '2_product_category' | '3_global'
+  compute_price: string;       // 'fixed' | 'discount' | 'formula'
+  product_id: any;             // [id, name] ou false
+  product_tmpl_id: any;
+  categ_id: any;
+  fixed_price: number;
+  percent_price: number;       // % de remise pour compute_price='discount'
+  price_discount: number;      // % de remise pour compute_price='formula'
+  price_surcharge: number;
+  min_quantity: number;
+}
+
+function applyPricelist(lstPrice: number, productId: number, productTmplId: number, items: PriceItem[], qty = 1): number {
+  // Priorité : product_variant > product_template > global
+  // On prend la première règle qui s'applique (Odoo respecte la séquence)
+  const today = new Date().toISOString().slice(0, 10);
+
+  for (const item of items) {
+    if (item.min_quantity > qty) continue;
+
+    const appliesToProduct =
+      (item.applied_on === "0_product_variant" && item.product_id && item.product_id[0] === productId) ||
+      (item.applied_on === "1_product" && item.product_tmpl_id && item.product_tmpl_id[0] === productTmplId) ||
+      (item.applied_on === "3_global");
+
+    if (!appliesToProduct) continue;
+
+    if (item.compute_price === "fixed")    return item.fixed_price;
+    if (item.compute_price === "discount") return lstPrice * (1 - item.percent_price / 100);
+    if (item.compute_price === "formula")  return Math.max(0, lstPrice * (1 - item.price_discount / 100) + item.price_surcharge);
+  }
+  return lstPrice; // aucune règle → prix catalogue
+}
+
+async function fetchPricelistItems(session: odoo.OdooSession, pricelistId: number): Promise<PriceItem[]> {
+  return odoo.searchRead(session, "product.pricelist.item",
+    [["pricelist_id", "=", pricelistId], ["active", "=", true]],
+    ["applied_on", "compute_price", "product_id", "product_tmpl_id", "categ_id",
+     "fixed_price", "percent_price", "price_discount", "price_surcharge", "min_quantity"],
+    500, "sequence asc"  // Odoo trie par séquence pour appliquer la bonne priorité
+  );
+}
+
+function computeFreeItems(cart: Record<number, CartItem>, rules: FreeRule[]): FreeItem[] {
+  const out: FreeItem[] = [];
+  for (const rule of rules) {
+    let total = 0;
+    const matched: any[] = [];
+    for (const item of Object.values(cart)) {
+      const ref = item.product.default_code || "";
+      if (rule.allProducts || rule.productRefs.includes(ref)) { total += item.qty; matched.push(item.product); }
+    }
+    if (total >= rule.triggerQty && matched.length > 0) {
+      const sets = Math.floor(total / rule.triggerQty);
+      const top = matched.sort((a, b) => (cart[b.id]?.qty || 0) - (cart[a.id]?.qty || 0))[0];
+      out.push({ product: top, qty: sets * rule.freeQty, ruleName: rule.name });
+    }
+  }
+  return out;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+export default function OrderScreen({ session, onBack, onToast, desktop }: Props) {
+  const [step, setStep] = useState<"client" | "catalog">("client");
+  const [client, setClient] = useState<any>(null);
+  const [priceItems, setPriceItems] = useState<PriceItem[]>([]); // items pricelist du client
+  const [cart, setCart] = useState<Record<number, CartItem>>({});
+  const [rules, setRules] = useState<FreeRule[]>([]);
+  const [freeItems, setFreeItems] = useState<FreeItem[]>([]);
+  const [showRules, setShowRules] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [done, setDone] = useState<{ mainId: number; freeId: number | null } | null>(null);
+  const [note, setNote] = useState("");
+  const [draft, setDraft] = useState<Draft | null>(null); // brouillon détecté au démarrage
+  const [showDraftBanner, setShowDraftBanner] = useState(false);
+
+  // Chargement initial : règles + détection brouillon
+  useEffect(() => {
+    setRules(loadRules());
+    const d = loadDraft();
+    if (d && Object.keys(d.cart).length > 0) {
+      // Recharger les items pricelist du brouillon
+      if (d.client?.property_product_pricelist?.[0]) {
+        fetchPricelistItems(session, d.client.property_product_pricelist[0]).then(setPriceItems).catch(() => {});
+      }
+      setDraft(d);
+      setShowDraftBanner(true);
+    }
+  }, [session]);
+
+  // Sauvegarde auto du brouillon dès que le panier ou le client change
+  useEffect(() => {
+    if (client && Object.keys(cart).length > 0) {
+      saveDraft({ client, cart, note, savedAt: Date.now() });
+    }
+  }, [cart, client, note]);
+
+  useEffect(() => { setFreeItems(computeFreeItems(cart, rules)); }, [cart, rules]);
+
+  const cartCount = Object.values(cart).reduce((s, i) => s + i.qty, 0);
+  const cartTotal = Object.values(cart).reduce((s, i) => s + i.qty * i.unitPrice, 0);
+  const freeCount = freeItems.reduce((s, i) => s + i.qty, 0);
+
+  const setQty = (product: any, qty: number, unitPrice?: number) => {
+    setCart(prev => {
+      if (qty <= 0) { const n = { ...prev }; delete n[product.id]; return n; }
+      const price = unitPrice ?? prev[product.id]?.unitPrice ?? product.lst_price ?? 0;
+      return { ...prev, [product.id]: { product, qty, unitPrice: price } };
+    });
+  };
+
+  const restoreDraft = () => {
+    if (!draft) return;
+    setClient(draft.client);
+    setCart(draft.cart);
+    setNote(draft.note || "");
+    setStep("catalog");
+    setShowDraftBanner(false);
+    setDraft(null);
+    onToast("Brouillon restauré", "success");
+  };
+
+  const discardDraft = () => {
+    saveDraft(null);
+    setDraft(null);
+    setShowDraftBanner(false);
+  };
+
+  const handleValidate = async () => {
+    setSubmitting(true);
+    try {
+      const pricelistId = client.property_product_pricelist?.[0] || false;
+      const mainId = await odoo.create(session, "sale.order", {
+        partner_id: client.id, state: "draft",
+        ...(pricelistId ? { pricelist_id: pricelistId } : {}),
+        note: note || "",
+      });
+      for (const item of Object.values(cart)) {
+        await odoo.create(session, "sale.order.line", { order_id: mainId, product_id: item.product.id, product_uom_qty: item.qty, price_unit: item.unitPrice });
+      }
+      let freeId: number | null = null;
+      if (freeItems.length > 0) {
+        freeId = await odoo.create(session, "sale.order", { partner_id: client.id, state: "draft", note: `Articles offerts — lié au devis #${mainId}` });
+        for (const fi of freeItems) {
+          await odoo.create(session, "sale.order.line", { order_id: freeId, product_id: fi.product.id, product_uom_qty: fi.qty, price_unit: 0 });
+        }
+      }
+      saveDraft(null); // effacer le brouillon après création réussie
+      setDone({ mainId, freeId });
+    } catch (e: any) { onToast("Erreur : " + e.message, "error"); }
+    setSubmitting(false);
+  };
+
+  // Écran confirmation finale
+  if (done) return (
+    <div style={{ position: "fixed", inset: 0, left: desktop ? 248 : 0, background: "linear-gradient(135deg, #0f766e 0%, #7c3aed 100%)", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'DM Sans', sans-serif" }}>
+      <div style={{ background: "#fff", borderRadius: 24, padding: "48px 40px", maxWidth: 480, width: "90%", textAlign: "center", boxShadow: C.shadowXl }}>
+        <div style={{ fontSize: 64, marginBottom: 16 }}>🎉</div>
+        <div style={{ fontSize: 26, fontWeight: 800, color: C.text, marginBottom: 8 }}>Devis créé !</div>
+        <div style={{ fontSize: 15, color: C.muted, lineHeight: 1.6, marginBottom: 32 }}>
+          Devis principal <span style={{ color: C.teal, fontWeight: 700 }}>#{done.mainId}</span> dans Odoo
+          {done.freeId && <><br/>BC gratuit <span style={{ color: C.purple, fontWeight: 700 }}>#{done.freeId}</span> créé automatiquement</>}
+        </div>
+        <div style={{ display: "flex", gap: 12, justifyContent: "center" }}>
+          <button onClick={() => { setDone(null); setCart({}); setClient(null); setNote(""); setStep("client"); saveDraft(null); }}
+            style={{ padding: "14px 28px", background: C.teal, color: "#fff", border: "none", borderRadius: 12, fontSize: 15, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+            Nouvelle commande
+          </button>
+          <button onClick={onBack}
+            style={{ padding: "14px 24px", background: C.bg, color: C.muted, border: `1px solid ${C.border}`, borderRadius: 12, fontSize: 15, cursor: "pointer", fontFamily: "inherit" }}>
+            Menu
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+
+  return (
+    <div style={{ position: "fixed", inset: 0, left: desktop ? 248 : 0, zIndex: 150, background: C.bg, display: "flex", flexDirection: "column" as const, fontFamily: "'DM Sans', sans-serif", overflow: "hidden" }}>
+
+      {/* ── Top bar ── */}
+      <div style={{ height: 56, background: "#fff", borderBottom: `1px solid ${C.border}`, display: "flex", alignItems: "center", padding: "0 20px", gap: 16, flexShrink: 0, boxShadow: C.shadow }}>
+        <button onClick={() => step === "catalog" ? setStep("client") : onBack()}
+          title={step === "catalog" ? "Retour à la recherche client" : "Retour au WMS"}
+          style={{ width: 36, height: 36, borderRadius: 10, background: C.bg, border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={C.text} strokeWidth="2.5"><path d="M19 12H5M12 5l-7 7 7 7"/></svg>
+        </button>
+
+        {/* Breadcrumb / steps */}
+        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          {(["client", "catalog"] as const).map((s, i) => {
+            const labels = ["Client", "Catalogue & Panier"];
+            const done_ = ["client", "catalog"].indexOf(step) > i;
+            const active = step === s;
+            return (
+              <div key={s} style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                {i > 0 && <div style={{ width: 20, height: 1, background: C.border }} />}
+                <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "4px 10px", borderRadius: 20,
+                  background: active ? C.teal : done_ ? C.tealMid : C.bg,
+                  cursor: done_ ? "pointer" : "default" }}
+                  onClick={() => done_ && setStep(s)}>
+                  <div style={{ width: 18, height: 18, borderRadius: 9, background: active ? "#fff" : done_ ? C.teal : C.border, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10, fontWeight: 800, color: active ? C.teal : done_ ? "#fff" : C.muted }}>
+                    {done_ ? "✓" : i + 1}
+                  </div>
+                  <span style={{ fontSize: 12, fontWeight: 600, color: active ? "#fff" : done_ ? C.tealDark : C.muted }}>{labels[i]}</span>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        <div style={{ flex: 1 }} />
+
+        {/* Client badge */}
+        {client && (
+          <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 12px", background: C.tealSoft, borderRadius: 10, border: `1px solid ${C.tealMid}` }}>
+            <div style={{ width: 28, height: 28, borderRadius: 8, background: C.teal, display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", fontSize: 12, fontWeight: 700 }}>
+              {client.name.charAt(0).toUpperCase()}
+            </div>
+            <div>
+              <div style={{ fontSize: 12, fontWeight: 700, color: C.tealDark }}>{client.name}</div>
+              {client.property_product_pricelist && <div style={{ fontSize: 10, color: C.teal }}>{client.property_product_pricelist[1]}</div>}
+            </div>
+            {step !== "client" && <button onClick={() => { setClient(null); setCart({}); setStep("client"); }} style={{ background: "none", border: "none", cursor: "pointer", color: C.muted, fontSize: 14, lineHeight: 1 }}>✕</button>}
+          </div>
+        )}
+
+  
+        <button onClick={() => setShowRules(!showRules)} style={{ width: 36, height: 36, borderRadius: 10, background: showRules ? C.purpleSoft : C.bg, border: `1px solid ${showRules ? C.purple : C.border}`, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16 }}>
+          ⚙️
+        </button>
+      </div>
+
+      {/* ── Bannière brouillon ── */}
+      {showDraftBanner && draft && (
+        <div style={{ background: "#fefce8", borderBottom: `1px solid #fde047`, padding: "10px 20px", display: "flex", alignItems: "center", gap: 12, flexShrink: 0 }}>
+          <span style={{ fontSize: 18 }}>📝</span>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontSize: 13, fontWeight: 700, color: "#713f12" }}>
+              Commande en cours — {draft.client?.name}
+            </div>
+            <div style={{ fontSize: 11, color: "#92400e" }}>
+              {Object.keys(draft.cart).length} produit{Object.keys(draft.cart).length > 1 ? "s" : ""} · sauvegardé {fmtDate(draft.savedAt)}
+            </div>
+          </div>
+          <button onClick={restoreDraft}
+            style={{ padding: "7px 16px", background: "#ca8a04", color: "#fff", border: "none", borderRadius: 8, fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+            Reprendre
+          </button>
+          <button onClick={discardDraft}
+            style={{ padding: "7px 12px", background: "transparent", color: "#92400e", border: `1px solid #fde047`, borderRadius: 8, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>
+            Ignorer
+          </button>
+        </div>
+      )}
+
+      {/* ── Panneau règles (overlay) ── */}
+      {showRules && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 100, display: "flex", alignItems: "flex-end", justifyContent: "flex-end" }} onClick={() => setShowRules(false)}>
+          <div style={{ width: 400, height: "100%", background: "#fff", boxShadow: C.shadowXl, overflowY: "auto" as const }} onClick={e => e.stopPropagation()}>
+            <RulesPanel rules={rules} onChange={r => { setRules(r); saveRules(r); }} onClose={() => setShowRules(false)} />
+          </div>
+        </div>
+      )}
+
+      {/* ── Étapes ── */}
+      {step === "client" && <ClientStep session={session} onSelect={c => {
+        setClient(c);
+        setStep("catalog");
+        // 1 seul appel pricelist au moment du choix client
+        const plId = c.property_product_pricelist?.[0];
+        if (plId) fetchPricelistItems(session, plId).then(setPriceItems).catch(() => setPriceItems([]));
+        else setPriceItems([]);
+      }} />}
+      {step === "catalog" && client && (
+        <CatalogStep session={session} cart={cart} onQtyChange={setQty} freeItems={freeItems}
+          onValidate={handleValidate} submitting={submitting}
+          note={note} setNote={setNote} client={client} priceItems={priceItems} onToast={onToast} />
+      )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ÉTAPE 1 — Sélection client
+// ═══════════════════════════════════════════════════════════════════════════
+function ClientStep({ session, onSelect }: { session: odoo.OdooSession; onSelect: (c: any) => void }) {
+  const [q, setQ] = useState("");
+  const [results, setResults] = useState<any[]>([]);
+  const [loading, setLoading] = useState(false);
+  const timer = useRef<any>(null);
+
+  useEffect(() => {
+    if (q.length < 2) { setResults([]); return; }
+    clearTimeout(timer.current);
+    timer.current = setTimeout(async () => {
+      setLoading(true);
+      try {
+        const r = await odoo.searchRead(session, "res.partner",
+          ["|", ["name", "ilike", q], ["ref", "ilike", q], ["customer_rank", ">", 0], ["active", "=", true]],
+          ["id", "name", "ref", "city", "country_id", "property_product_pricelist", "email", "phone"], 30);
+        setResults(r);
+      } catch {}
+      setLoading(false);
+    }, 300);
+  }, [q, session]);
+
+  return (
+    <div style={{ flex: 1, display: "flex", flexDirection: "column" as const, alignItems: "center", justifyContent: "center", padding: 40 }}>
+      <div style={{ width: "100%", maxWidth: 560 }}>
+        <div style={{ textAlign: "center", marginBottom: 32 }}>
+          <div style={{ width: 72, height: 72, borderRadius: 20, background: "linear-gradient(135deg, #0d9488, #7c3aed)", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 16px", fontSize: 32 }}>👤</div>
+          <div style={{ fontSize: 26, fontWeight: 800, color: C.text }}>Choisir un client</div>
+          <div style={{ fontSize: 14, color: C.muted, marginTop: 6 }}>Recherche par nom, référence ou ville</div>
+        </div>
+
+        <div style={{ position: "relative" as const, marginBottom: 16 }}>
+          <svg style={{ position: "absolute", left: 14, top: "50%", transform: "translateY(-50%)" }} width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={C.muted} strokeWidth="2">
+            <circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/>
+          </svg>
+          <input autoFocus value={q} onChange={e => setQ(e.target.value)}
+            placeholder="Nom du client..."
+            style={{ width: "100%", boxSizing: "border-box" as const, padding: "14px 14px 14px 44px", border: `1.5px solid ${C.border}`, borderRadius: 14, fontSize: 16, fontFamily: "inherit", background: C.white, color: C.text, boxShadow: C.shadowMd, outline: "none" }} />
+        </div>
+
+        {loading && <div style={{ textAlign: "center", color: C.muted, padding: 12, fontSize: 14 }}>Recherche en cours…</div>}
+
+        <div style={{ display: "flex", flexDirection: "column" as const, gap: 8, maxHeight: "50vh", overflowY: "auto" as const }}>
+          {results.map(c => (
+            <button key={c.id} onClick={() => onSelect(c)}
+              style={{ padding: "14px 16px", background: C.white, border: `1.5px solid ${C.border}`, borderRadius: 14, cursor: "pointer", textAlign: "left" as const, fontFamily: "inherit", boxShadow: C.shadow, transition: "all 0.12s", display: "flex", alignItems: "center", gap: 14 }}>
+              <div style={{ width: 42, height: 42, borderRadius: 12, background: `hsl(${c.id % 360}, 60%, 90%)`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18, fontWeight: 800, color: `hsl(${c.id % 360}, 60%, 35%)`, flexShrink: 0 }}>
+                {c.name.charAt(0).toUpperCase()}
+              </div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 15, fontWeight: 700, color: C.text }}>{c.name}</div>
+                <div style={{ fontSize: 12, color: C.muted, marginTop: 2, display: "flex", gap: 10, flexWrap: "wrap" as const }}>
+                  {c.ref && <span>Réf: {c.ref}</span>}
+                  {c.city && <span>📍 {c.city}</span>}
+                  {c.phone && <span>📞 {c.phone}</span>}
+                </div>
+              </div>
+              {c.property_product_pricelist && (
+                <div style={{ fontSize: 11, fontWeight: 600, color: C.teal, background: C.tealSoft, borderRadius: 8, padding: "3px 8px", flexShrink: 0 }}>
+                  {c.property_product_pricelist[1]}
+                </div>
+              )}
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={C.muted} strokeWidth="2"><path d="M9 18l6-6-6-6"/></svg>
+            </button>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ÉTAPE 2 — Catalogue + Panier persistant
+// ═══════════════════════════════════════════════════════════════════════════
+function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submitting, note, setNote, client, priceItems, onToast }: {
+  session: odoo.OdooSession; cart: Record<number, CartItem>;
+  onQtyChange: (p: any, q: number, price?: number) => void; freeItems: FreeItem[];
+  onValidate: () => void; submitting: boolean;
+  note: string; setNote: (n: string) => void; client: any;
+  priceItems: PriceItem[];
+  onToast: (msg: string, type?: "success" | "error" | "info") => void;
+}) {
+  const [smartCats, setSmartCats] = useState<SmartCat[]>([]);
+  const [activeCatId, setActiveCatId] = useState<string | null>(null);
+  const [allProducts, setAllProducts] = useState<any[]>([]); // cache complet des produits en stock
+  const [loading, setProdLoading] = useState(false);
+  const [search, setSearch] = useState("");
+  const [stockOnly, setStockOnly] = useState(true); // n'afficher que les articles avec du stock prévisionnel
+  const searchInput = useRef<HTMLInputElement>(null);
+  const searchTimer = useRef<any>(null);
+
+  // URL vignette via proxy (chargée en lazy + cache navigateur 1h) — évite de charger 500 base64 d'un coup
+  const imgUrl = (id: number) => `/api/odoo/image?odooUrl=${encodeURIComponent(session.config.url)}&id=${id}&s=${session.sessionId}`;
+
+  // ── Zoom image produit ─────────────────────────────────────────────────────
+  const [zoom, setZoom] = useState<any>(null);          // produit affiché en grand
+  const [zoomImg, setZoomImg] = useState<string>("");   // base64 image_1024
+  const [zoomLoading, setZoomLoading] = useState(false);
+
+  const openZoom = async (p: any) => {
+    setZoom(p);
+    setZoomImg("");
+    setZoomLoading(true);
+    try {
+      const r = await odoo.searchRead(session, "product.product", [["id", "=", p.id]], ["image_1024"], 1);
+      setZoomImg(r?.[0]?.image_1024 || "");
+    } catch {}
+    setZoomLoading(false);
+  };
+
+  // ── MEA / Offres ─────────────────────────────────────────────────────────
+  const MEA_CAT_ID = "__mea__";
+  const [meaTemplates, setMeaTemplates] = useState<any[]>([]);
+  const [meaLoading, setMeaLoading] = useState(false);
+  const [applyingMea, setApplyingMea] = useState<number | null>(null);
+
+  // ── Favoris : produits déjà commandés par le client, triés par quantité ───
+  const FAV_CAT_ID = "__fav__";
+  const [favProducts, setFavProducts] = useState<any[]>([]);
+  const [favLoading, setFavLoading] = useState(false);
+  const [favLoaded, setFavLoaded] = useState(false);
+
+  const loadFavorites = async () => {
+    if (favLoaded || !client?.id) return;
+    setFavLoading(true);
+    try {
+      // 12 derniers mois pour rester pertinent et rapide
+      const since = new Date();
+      since.setFullYear(since.getFullYear() - 1);
+      const sinceStr = since.toISOString().slice(0, 10);
+      const lines = await odoo.searchRead(session, "sale.order.line",
+        [["order_partner_id", "=", client.id], ["product_id", "!=", false], ["create_date", ">=", sinceStr], ["state", "in", ["sale", "done"]]],
+        ["product_id", "product_uom_qty", "create_date"],
+        2000, "create_date desc");
+      // Agrégation par produit : quantité totale, nb de commandes, dernière date
+      const agg = new Map<number, { totalQty: number; times: number; lastDate: string }>();
+      for (const l of lines) {
+        const pid = l.product_id?.[0];
+        if (!pid) continue;
+        const cur = agg.get(pid) || { totalQty: 0, times: 0, lastDate: "" };
+        cur.totalQty += l.product_uom_qty || 0;
+        cur.times += 1;
+        if ((l.create_date || "") > cur.lastDate) cur.lastDate = l.create_date || "";
+        agg.set(pid, cur);
+      }
+      const ids = Array.from(agg.keys());
+      if (ids.length) {
+        const prods = await odoo.searchRead(session, "product.product",
+          [["id", "in", ids]],
+          ["id", "name", "default_code", "lst_price", "product_tmpl_id", "virtual_available"],
+          ids.length);
+        const enriched = prods.map((p: any) => ({ ...p, ...agg.get(p.id) }));
+        enriched.sort((a: any, b: any) => (b.totalQty || 0) - (a.totalQty || 0));
+        setFavProducts(enriched);
+      } else {
+        setFavProducts([]);
+      }
+      setFavLoaded(true);
+    } catch (e: any) { onToast("Erreur favoris: " + e.message, "error"); }
+    setFavLoading(false);
+  };
+
+  const loadMeaTemplates = async () => {
+    if (meaTemplates.length > 0) return;
+    setMeaLoading(true);
+    try {
+      const templates = await odoo.searchRead(session, "sale.order.template",
+        [["active", "=", true]],
+        ["id", "name", "sale_order_template_line_ids"],
+        200, "name");
+      setMeaTemplates(templates);
+    } catch {}
+    setMeaLoading(false);
+  };
+
+  const applyMeaTemplate = async (template: any) => {
+    setApplyingMea(template.id);
+    try {
+      // Utilise les IDs de lignes déjà chargés pour éviter le filtre sur order_template_id
+      const lineIds: number[] = template.sale_order_template_line_ids || [];
+      if (!lineIds.length) { onToast("Aucun produit dans cette offre", "error"); setApplyingMea(null); return; }
+      const lines = await odoo.searchRead(session, "sale.order.template.line",
+        [["id", "in", lineIds], ["product_id", "!=", false]],
+        ["product_id", "product_uom_qty"],
+        200);
+      if (!lines.length) { onToast("Aucun produit dans cette offre", "error"); setApplyingMea(null); return; }
+
+      const productIds = lines.map((l: any) => l.product_id[0]);
+      const products = await odoo.searchRead(session, "product.product",
+        [["id", "in", productIds]],
+        ["id", "name", "default_code", "lst_price", "product_tmpl_id", "virtual_available"],
+        productIds.length);
+      const productMap = new Map<number, any>(products.map((p: any) => [p.id as number, p]));
+
+      let added = 0;
+      for (const line of lines) {
+        const product: any = productMap.get(line.product_id[0]);
+        if (!product) continue;
+        const qty = Math.max(1, Math.round(line.product_uom_qty || 1));
+        const clientPrice = applyPricelist(product.lst_price || 0, product.id, product.product_tmpl_id?.[0] || 0, priceItems, qty);
+        onQtyChange(product, (cart[product.id]?.qty || 0) + qty, clientPrice);
+        added++;
+      }
+      onToast(`✅ ${template.name} — ${added} produit${added > 1 ? "s" : ""} ajouté${added > 1 ? "s" : ""}`, "success");
+    } catch (e: any) { onToast("Erreur: " + e.message, "error"); }
+    setApplyingMea(null);
+  };
+
+  useEffect(() => { setSmartCats(loadSmartCats()); }, []);
+
+  // Chargement initial : tous les produits vendables actifs
+  const loadAll = useCallback(async (q: string) => {
+    setProdLoading(true);
+    const domain: any[] = [
+      ["sale_ok", "=", true],
+      ["active", "=", true],
+    ];
+    if (q.trim().length >= 2) {
+      domain.push("|");
+      domain.push(["name", "ilike", q.trim()]);
+      domain.push(["default_code", "ilike", q.trim()]);
+    }
+    try {
+      const p = await odoo.searchRead(session, "product.product", domain,
+        ["id", "name", "default_code", "lst_price", "product_tmpl_id", "virtual_available"], 500, "name");
+      // Produits en stock en premier, puis les autres
+      p.sort((a: any, b: any) => (b.virtual_available || 0) - (a.virtual_available || 0));
+      if (!q) setAllProducts(p);
+      else return p; // pour la recherche, retourner sans stocker
+    } catch {}
+    setProdLoading(false);
+  }, [session]);
+
+  useEffect(() => { loadAll(""); }, [loadAll]);
+
+  // Produits affichés = filtre catégorie + filtre recherche sur le cache local
+  const [searchResults, setSearchResults] = useState<any[]>([]);
+  const isSearching = search.trim().length >= 2;
+
+  useEffect(() => {
+    if (!isSearching) { setSearchResults([]); return; }
+    clearTimeout(searchTimer.current);
+    searchTimer.current = setTimeout(async () => {
+      setProdLoading(true);
+      const r = await loadAll(search);
+      if (r) setSearchResults(r as any[]);
+      setProdLoading(false);
+    }, 300);
+  }, [search, loadAll, isSearching]);
+
+  const inStock = (p: any) => (p.virtual_available || 0) > 0;
+
+  const baseProducts = isSearching
+    ? searchResults
+    : activeCatId === FAV_CAT_ID
+      ? favProducts
+      : activeCatId
+        ? allProducts.filter(p => {
+            const cat = smartCats.find(c => c.id === activeCatId);
+            return cat ? matchesCat(p, cat) : true;
+          })
+        : allProducts;
+  const displayedProducts = stockOnly ? baseProducts.filter(inStock) : baseProducts;
+
+  const freeProductIds = new Set(freeItems.map(f => f.product.id));
+  const cartItems = Object.values(cart);
+  const cartCount = cartItems.reduce((s, i) => s + i.qty, 0);
+  const cartTotal = cartItems.reduce((s, i) => s + i.qty * i.unitPrice, 0);
+  const freeCount = freeItems.reduce((s, i) => s + i.qty, 0);
+
+  return (
+    <div style={{ flex: 1, display: "flex", overflow: "hidden", minHeight: 0 }}>
+
+      {/* ── Sidebar catégories par mots-clés ── */}
+      <div style={{ width: 160, background: C.white, borderRight: `1px solid ${C.border}`, overflowY: "auto" as const, flexShrink: 0 }}>
+        <div style={{ padding: "12px 10px 6px", fontSize: 10, fontWeight: 700, color: C.muted, textTransform: "uppercase" as const, letterSpacing: "0.08em" }}>Gammes</div>
+
+        {/* Tous */}
+        <button onClick={() => setActiveCatId(null)}
+          style={{ width: "100%", padding: "10px 10px", background: !activeCatId ? C.tealSoft : "transparent", border: "none", borderLeft: `3px solid ${!activeCatId ? C.teal : "transparent"}`, cursor: "pointer", textAlign: "left" as const, fontSize: 12, fontWeight: !activeCatId ? 700 : 400, color: !activeCatId ? C.tealDark : C.textSec, fontFamily: "inherit", display: "flex", alignItems: "center", gap: 7 }}>
+          <span>🏠</span> Tous
+        </button>
+
+        {/* Favoris du client */}
+        <button onClick={() => { setActiveCatId(FAV_CAT_ID); loadFavorites(); }}
+          style={{ width: "100%", padding: "10px 10px", background: activeCatId === FAV_CAT_ID ? C.orangeSoft : "transparent", border: "none", borderLeft: `3px solid ${activeCatId === FAV_CAT_ID ? C.orange : "transparent"}`, cursor: "pointer", textAlign: "left" as const, fontFamily: "inherit", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6, transition: "all 0.1s" }}>
+          <span style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: activeCatId === FAV_CAT_ID ? 700 : 400, color: activeCatId === FAV_CAT_ID ? C.orange : C.textSec }}>
+            <span>⭐</span> Favoris
+          </span>
+          {favLoaded && favProducts.length > 0 && <span style={{ fontSize: 10, fontWeight: 700, color: activeCatId === FAV_CAT_ID ? C.orange : C.muted, background: activeCatId === FAV_CAT_ID ? C.orangeSoft : C.bg, borderRadius: 5, padding: "1px 5px", flexShrink: 0 }}>{favProducts.length}</span>}
+        </button>
+
+        {/* Catégories configurées */}
+        {smartCats.map(cat => {
+          const count = allProducts.filter(p => matchesCat(p, cat) && (!stockOnly || inStock(p))).length;
+          const active = activeCatId === cat.id;
+          return (
+            <button key={cat.id} onClick={() => setActiveCatId(cat.id)}
+              style={{ width: "100%", padding: "10px 10px", background: active ? C.tealSoft : "transparent", border: "none", borderLeft: `3px solid ${active ? C.teal : "transparent"}`, cursor: "pointer", textAlign: "left" as const, fontFamily: "inherit", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6, transition: "all 0.1s" }}>
+              <span style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: active ? 700 : 400, color: active ? C.tealDark : C.textSec }}>
+                <span>{cat.emoji}</span>{cat.label}
+              </span>
+              {count > 0 && <span style={{ fontSize: 10, fontWeight: 700, color: active ? C.teal : C.muted, background: active ? C.tealMid : C.bg, borderRadius: 5, padding: "1px 5px", flexShrink: 0 }}>{count}</span>}
+            </button>
+          );
+        })}
+
+        {/* ── Offres MEA ── */}
+        <div style={{ marginTop: 8, borderTop: `1px solid ${C.border}`, paddingTop: 6 }}>
+          <div style={{ padding: "4px 10px 4px", fontSize: 10, fontWeight: 700, color: C.muted, textTransform: "uppercase" as const, letterSpacing: "0.08em" }}>Offres</div>
+          <button
+            onClick={() => { setActiveCatId(MEA_CAT_ID); loadMeaTemplates(); }}
+            style={{ width: "100%", padding: "10px 10px", background: activeCatId === MEA_CAT_ID ? C.orangeSoft : "transparent", border: "none", borderLeft: `3px solid ${activeCatId === MEA_CAT_ID ? C.orange : "transparent"}`, cursor: "pointer", textAlign: "left" as const, fontFamily: "inherit", display: "flex", alignItems: "center", gap: 7, transition: "all 0.1s" }}>
+            <span style={{ fontSize: 12, fontWeight: activeCatId === MEA_CAT_ID ? 700 : 400, color: activeCatId === MEA_CAT_ID ? C.orange : C.textSec, display: "flex", alignItems: "center", gap: 6 }}>
+              <span>🎁</span> MEA
+            </span>
+          </button>
+        </div>
+      </div>
+
+      {/* ── Zone produits ── */}
+      <div style={{ flex: 1, display: "flex", flexDirection: "column" as const, overflow: "hidden", minWidth: 0 }}>
+        {/* Barre recherche avec croix */}
+        <div style={{ padding: "10px 14px", background: C.white, borderBottom: `1px solid ${C.border}`, display: "flex", gap: 10, alignItems: "center" }}>
+          <div style={{ position: "relative" as const, flex: 1 }}>
+            <svg style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", pointerEvents: "none" }} width="15" height="15" viewBox="0 0 24 24" fill="none" stroke={C.muted} strokeWidth="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+            <input
+              ref={searchInput}
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              placeholder="Rechercher par nom ou référence..."
+              style={{ width: "100%", boxSizing: "border-box" as const, padding: "9px 34px 9px 34px", border: `1.5px solid ${search ? C.teal : C.border}`, borderRadius: 10, fontSize: 13, fontFamily: "inherit", background: C.bg, outline: "none", transition: "border-color 0.15s" }}
+            />
+            {search && (
+              <button onClick={() => { setSearch(""); searchInput.current?.focus(); }}
+                style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", background: C.muted, border: "none", borderRadius: "50%", width: 18, height: 18, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", padding: 0 }}>
+                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="3"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+              </button>
+            )}
+          </div>
+          {/* Toggle stock dispo */}
+          <button
+            onClick={() => setStockOnly(v => !v)}
+            title={stockOnly ? "Afficher aussi les articles en rupture" : "N'afficher que les articles en stock"}
+            style={{ display: "flex", alignItems: "center", gap: 7, flexShrink: 0, background: stockOnly ? C.tealSoft : C.bg, border: `1.5px solid ${stockOnly ? C.teal : C.border}`, borderRadius: 10, padding: "7px 11px", cursor: "pointer", fontFamily: "inherit" }}>
+            <span style={{ width: 30, height: 17, borderRadius: 10, background: stockOnly ? C.teal : C.muted, position: "relative" as const, transition: "background 0.15s", flexShrink: 0 }}>
+              <span style={{ position: "absolute", top: 2, left: stockOnly ? 15 : 2, width: 13, height: 13, borderRadius: "50%", background: "#fff", transition: "left 0.15s" }} />
+            </span>
+            <span style={{ fontSize: 12, fontWeight: 600, color: stockOnly ? C.tealDark : C.textSec, whiteSpace: "nowrap" as const }}>Stock dispo</span>
+          </button>
+          {/* Compteur résultats */}
+          {(activeCatId || isSearching) && (
+            <div style={{ fontSize: 12, color: C.muted, flexShrink: 0 }}>
+              {displayedProducts.length} produit{displayedProducts.length > 1 ? "s" : ""}
+            </div>
+          )}
+        </div>
+
+        {/* Grille */}
+        <div style={{ flex: 1, overflowY: "auto" as const, padding: 14 }}>
+
+          {/* ── Vue MEA ── */}
+          {activeCatId === MEA_CAT_ID ? (
+            meaLoading ? (
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: 200, color: C.muted }}>Chargement…</div>
+            ) : meaTemplates.length === 0 ? (
+              <div style={{ textAlign: "center", padding: 60, color: C.muted }}>
+                <div style={{ fontSize: 32, marginBottom: 10 }}>📋</div>
+                <div>Aucun modèle de devis trouvé</div>
+              </div>
+            ) : (
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))", gap: 10 }}>
+                {meaTemplates.map((t) => {
+                  const isApplying = applyingMea === t.id;
+                  const lineCount = t.sale_order_template_line_ids?.length || 0;
+                  return (
+                    <div key={t.id} style={{ minHeight: 90, background: C.white, borderRadius: 10, border: `1px solid ${isApplying ? C.teal : C.border}`, boxShadow: C.shadow, display: "flex", alignItems: "center", gap: 14, padding: "12px 16px", transition: "border-color 0.15s" }}>
+                      {/* Infos */}
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 11, color: C.muted, marginBottom: 3 }}>{lineCount} produit{lineCount > 1 ? "s" : ""}</div>
+                        <div style={{ fontSize: 13, fontWeight: 700, color: C.text, lineHeight: 1.35, overflowWrap: "anywhere" as const }}>{t.name}</div>
+                      </div>
+                      {/* Bouton */}
+                      <button
+                        onClick={() => applyMeaTemplate(t)}
+                        disabled={isApplying}
+                        style={{ flexShrink: 0, padding: "8px 14px", background: isApplying ? C.bg : C.teal, color: isApplying ? C.muted : "#fff", border: `1px solid ${isApplying ? C.border : C.teal}`, borderRadius: 8, fontSize: 12, fontWeight: 700, cursor: isApplying ? "default" : "pointer", fontFamily: "inherit", whiteSpace: "nowrap" as const }}>
+                        {isApplying ? "…" : "+ Ajouter"}
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            )
+          ) : activeCatId === FAV_CAT_ID && favLoading ? (
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: 200, color: C.muted }}>Chargement des favoris…</div>
+          ) : activeCatId === FAV_CAT_ID && favLoaded && displayedProducts.length === 0 ? (
+            <div style={{ textAlign: "center", padding: 60, color: C.muted }}>
+              <div style={{ fontSize: 32, marginBottom: 10 }}>⭐</div>
+              <div>{favProducts.length === 0 ? "Ce client n'a passé aucune commande sur les 12 derniers mois" : "Aucun favori en stock — désactive « Stock dispo » pour tout voir"}</div>
+            </div>
+          ) : loading && allProducts.length === 0 ? (
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: 200, color: C.muted }}>Chargement…</div>
+          ) : !activeCatId && !isSearching && allProducts.length === 0 ? (
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "60%", flexDirection: "column" as const, gap: 12, color: C.muted }}>
+              <div style={{ fontSize: 48 }}>📦</div>
+              <div style={{ fontSize: 15, fontWeight: 600 }}>Aucun produit en stock</div>
+            </div>
+          ) : displayedProducts.length === 0 ? (
+            <div style={{ textAlign: "center", padding: 60, color: C.muted }}>
+              <div style={{ fontSize: 32, marginBottom: 10 }}>🔍</div>
+              <div>Aucun résultat</div>
+            </div>
+          ) : (
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))", gap: 10 }}>
+              {displayedProducts.map(p => {
+                const qty = cart[p.id]?.qty || 0;
+                const isFree = freeProductIds.has(p.id);
+                const stock = Math.max(0, Math.round(p.virtual_available || 0));
+                // Prix client calculé côté client à partir des items pricelist (0 appel supplémentaire)
+                const clientPrice = applyPricelist(p.lst_price || 0, p.id, p.product_tmpl_id?.[0] || 0, priceItems, qty || 1);
+                const hasDiscount = priceItems.length > 0 && Math.abs(clientPrice - (p.lst_price || 0)) > 0.01;
+                return (
+                  <div key={p.id} style={{ background: C.white, borderRadius: 14, overflow: "hidden", border: `2px solid ${qty > 0 ? C.teal : isFree ? C.green : C.border}`, boxShadow: qty > 0 ? `0 0 0 3px ${C.tealSoft}` : C.shadow, transition: "all 0.15s" }}>
+                    <div onClick={() => openZoom(p)} title="Agrandir l'image" style={{ height: 80, background: C.bg, display: "flex", alignItems: "center", justifyContent: "center", position: "relative" as const, cursor: "zoom-in" }}>
+                      <div style={{ position: "absolute", fontSize: 32 }}>📦</div>
+                      <img src={imgUrl(p.id)} alt="" loading="lazy" style={{ height: 72, objectFit: "contain", position: "relative" as const, zIndex: 1 }} onError={e => { (e.currentTarget as HTMLImageElement).style.display = "none"; }} />
+                      <div style={{ position: "absolute", bottom: 4, right: 4, background: "rgba(255,255,255,0.85)", borderRadius: 6, width: 20, height: 20, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke={C.muted} strokeWidth="2.5"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3M11 8v6M8 11h6"/></svg>
+                      </div>
+                      {isFree && <div style={{ position: "absolute", top: 5, right: 5, background: C.green, color: "#fff", fontSize: 9, fontWeight: 700, borderRadius: 5, padding: "2px 5px" }}>OFFERT</div>}
+                      {qty > 0 && <div style={{ position: "absolute", top: 5, left: 5, background: C.teal, color: "#fff", fontSize: 11, fontWeight: 800, borderRadius: 7, padding: "2px 7px" }}>{qty}</div>}
+                    </div>
+                    <div style={{ padding: "8px 10px 10px" }}>
+                      <div style={{ fontSize: 9, color: C.muted, fontFamily: "monospace", marginBottom: 1 }}>{p.default_code}</div>
+                      <div style={{ fontSize: 11, fontWeight: 600, color: C.text, lineHeight: 1.3, height: 28, overflow: "hidden" }}>{p.name}</div>
+                      {activeCatId === FAV_CAT_ID && p.totalQty != null && (
+                        <div style={{ fontSize: 9, fontWeight: 700, color: C.orange, background: C.orangeSoft, borderRadius: 5, padding: "2px 5px", marginTop: 3, display: "inline-block" }}>
+                          ⭐ {Math.round(p.totalQty)} commandé{Math.round(p.totalQty) > 1 ? "s" : ""} · {p.times} fois
+                        </div>
+                      )}
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 5, marginBottom: 6 }}>
+                        <div style={{ display: "flex", flexDirection: "column" as const, gap: 1 }}>
+                          <span style={{ fontSize: 13, fontWeight: 800, color: hasDiscount ? C.green : C.tealDark }}>{clientPrice > 0 ? fmtPrice(clientPrice) : "—"}</span>
+                          {hasDiscount && <span style={{ fontSize: 9, color: C.muted, textDecoration: "line-through" }}>{fmtPrice(p.lst_price)}</span>}
+                        </div>
+                        <span style={{ fontSize: 9, fontWeight: 600, color: stock > 0 ? C.green : C.red, background: stock > 0 ? C.greenSoft : C.redSoft, borderRadius: 5, padding: "2px 5px" }}>{stock > 0 ? stock : "Rupture"}</span>
+                      </div>
+                      <div style={{ display: "flex", background: qty > 0 ? C.tealSoft : C.bg, borderRadius: 8, overflow: "hidden", border: `1px solid ${qty > 0 ? C.tealMid : C.border}` }}>
+                        <button onClick={() => onQtyChange(p, qty - 1, clientPrice)} style={{ flex: 1, padding: "7px 0", background: "transparent", border: "none", cursor: "pointer", fontSize: 17, fontWeight: 700, color: qty > 0 ? C.red : C.muted, lineHeight: 1 }}>−</button>
+                        <span style={{ flex: 1, textAlign: "center" as const, fontSize: 14, fontWeight: 800, color: qty > 0 ? C.tealDark : C.muted, lineHeight: "30px" }}>{qty}</span>
+                        <button onClick={() => onQtyChange(p, qty + 1, clientPrice)} style={{ flex: 1, padding: "7px 0", background: "transparent", border: "none", cursor: "pointer", fontSize: 17, fontWeight: 700, color: C.teal, lineHeight: 1 }}>+</button>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* ── Panier persistant (droite) ── */}
+      <div style={{ width: 280, background: C.white, borderLeft: `1px solid ${C.border}`, display: "flex", flexDirection: "column" as const, flexShrink: 0 }}>
+        {/* Header panier */}
+        <div style={{ padding: "12px 14px", background: "linear-gradient(135deg, #0d9488, #0f766e)", color: "#fff" }}>
+          <div style={{ fontSize: 13, fontWeight: 700 }}>🛒 Panier — {client.name}</div>
+          <div style={{ fontSize: 11, opacity: 0.85, marginTop: 2 }}>
+            {cartCount} article{cartCount > 1 ? "s" : ""} · {fmtPrice(cartTotal)}
+            {freeCount > 0 && <span style={{ marginLeft: 6, background: "rgba(255,255,255,0.2)", borderRadius: 5, padding: "1px 6px" }}>+{freeCount} offerts</span>}
+          </div>
+        </div>
+
+        {/* Liste articles */}
+        <div style={{ flex: 1, overflowY: "auto" as const, padding: "10px 12px" }}>
+          {cartItems.length === 0 ? (
+            <div style={{ textAlign: "center", padding: "32px 12px", color: C.muted }}>
+              <div style={{ fontSize: 28, marginBottom: 8 }}>🛒</div>
+              <div style={{ fontSize: 12 }}>Ajoute des produits</div>
+            </div>
+          ) : (
+            cartItems.map(item => (
+              <div key={item.product.id} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8, padding: "7px 8px", background: C.bg, borderRadius: 10 }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>{item.product.name}</div>
+                  <div style={{ fontSize: 10, color: C.muted }}>{fmtPrice(item.qty * item.unitPrice)}</div>
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: 4, flexShrink: 0 }}>
+                  <button onClick={() => onQtyChange(item.product, item.qty - 1)} style={{ width: 22, height: 22, borderRadius: 5, background: C.redSoft, border: "none", cursor: "pointer", color: C.red, fontSize: 14, fontWeight: 700, lineHeight: 1 }}>−</button>
+                  <span style={{ fontSize: 13, fontWeight: 800, color: C.text, minWidth: 18, textAlign: "center" as const }}>{item.qty}</span>
+                  <button onClick={() => onQtyChange(item.product, item.qty + 1)} style={{ width: 22, height: 22, borderRadius: 5, background: C.tealSoft, border: "none", cursor: "pointer", color: C.teal, fontSize: 14, fontWeight: 700, lineHeight: 1 }}>+</button>
+                </div>
+              </div>
+            ))
+          )}
+
+          {/* Articles gratuits */}
+          {freeItems.length > 0 && (
+            <div style={{ margin: "8px 0", padding: "8px 10px", background: C.greenSoft, border: `1px solid ${C.green}33`, borderRadius: 10 }}>
+              <div style={{ fontSize: 10, fontWeight: 700, color: C.green, textTransform: "uppercase" as const, letterSpacing: "0.05em", marginBottom: 5 }}>🎁 BC Gratuit (séparé)</div>
+              {freeItems.map((fi, i) => (
+                <div key={i} style={{ fontSize: 11, color: C.green, marginBottom: 2 }}>
+                  <strong>{fi.qty}×</strong> {fi.product.name}
+                  <div style={{ fontSize: 10, opacity: 0.7 }}>{fi.ruleName}</div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Note */}
+          <textarea value={note} onChange={e => setNote(e.target.value)} placeholder="Note interne..."
+            rows={2} style={{ width: "100%", boxSizing: "border-box" as const, marginTop: 6, padding: "7px 9px", border: `1px solid ${C.border}`, borderRadius: 9, fontSize: 11, fontFamily: "inherit", resize: "none" as const, background: C.bg }} />
+        </div>
+
+        {/* Footer total + valider */}
+        <div style={{ padding: "12px 14px", borderTop: `1px solid ${C.border}` }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+            <span style={{ fontSize: 12, color: C.muted }}>Total HT indicatif</span>
+            <span style={{ fontSize: 17, fontWeight: 800, color: C.tealDark }}>{fmtPrice(cartTotal)}</span>
+          </div>
+          <button onClick={onValidate} disabled={submitting || cartCount === 0}
+            style={{ width: "100%", padding: "13px 0", background: cartCount === 0 ? C.border : submitting ? C.muted : "linear-gradient(135deg, #0d9488, #0f766e)", color: "#fff", border: "none", borderRadius: 12, fontSize: 14, fontWeight: 700, cursor: cartCount === 0 ? "default" : "pointer", fontFamily: "inherit", boxShadow: cartCount > 0 && !submitting ? "0 4px 12px rgba(13,148,136,0.35)" : "none", transition: "all 0.2s" }}>
+            {submitting ? "Création…" : cartCount === 0 ? "Panier vide" : `Créer le devis${freeItems.length > 0 ? " + BC gratuit" : ""}`}
+          </button>
+          <div style={{ fontSize: 10, color: C.muted, textAlign: "center" as const, marginTop: 5 }}>Prix Odoo appliqués à la création</div>
+        </div>
+      </div>
+
+      {/* ── Modale zoom image ── */}
+      {zoom && (
+        <div onClick={() => setZoom(null)}
+          style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 200, display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}>
+          <div onClick={e => e.stopPropagation()}
+            style={{ background: C.white, borderRadius: 16, maxWidth: 480, width: "100%", maxHeight: "90vh", overflow: "auto" as const, boxShadow: C.shadowXl, position: "relative" as const }}>
+            {/* Bouton retour (gauche) */}
+            <button onClick={() => setZoom(null)} title="Retour"
+              style={{ position: "absolute", top: 12, left: 12, width: 32, height: 32, borderRadius: "50%", background: C.bg, border: `1px solid ${C.border}`, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1 }}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={C.text} strokeWidth="2.5"><path d="M19 12H5M12 5l-7 7 7 7"/></svg>
+            </button>
+            {/* Bouton fermer */}
+            <button onClick={() => setZoom(null)}
+              style={{ position: "absolute", top: 12, right: 12, width: 32, height: 32, borderRadius: "50%", background: C.bg, border: `1px solid ${C.border}`, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1 }}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={C.text} strokeWidth="3"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+            </button>
+            {/* Image */}
+            <div style={{ height: 340, background: C.bg, display: "flex", alignItems: "center", justifyContent: "center", borderRadius: "16px 16px 0 0" }}>
+              {zoomLoading ? (
+                <span style={{ color: C.muted, fontSize: 13 }}>Chargement…</span>
+              ) : zoomImg ? (
+                <img src={`data:image/png;base64,${zoomImg}`} alt="" style={{ maxHeight: 320, maxWidth: "90%", objectFit: "contain" }} />
+              ) : (
+                <img src={imgUrl(zoom.id)} alt="" style={{ maxHeight: 200, maxWidth: "90%", objectFit: "contain" }} onError={e => { (e.currentTarget as HTMLImageElement).style.display = "none"; }} />
+              )}
+            </div>
+            {/* Infos */}
+            <div style={{ padding: "16px 20px 20px" }}>
+              <div style={{ fontSize: 11, color: C.muted, fontFamily: "monospace", marginBottom: 4 }}>{zoom.default_code}</div>
+              <div style={{ fontSize: 16, fontWeight: 700, color: C.text, lineHeight: 1.35, marginBottom: 10 }}>{zoom.name}</div>
+              <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                <span style={{ fontSize: 18, fontWeight: 800, color: C.tealDark }}>
+                  {(() => { const cp = applyPricelist(zoom.lst_price || 0, zoom.id, zoom.product_tmpl_id?.[0] || 0, priceItems, cart[zoom.id]?.qty || 1); return cp > 0 ? fmtPrice(cp) : "—"; })()}
+                </span>
+                {(() => { const s = Math.max(0, Math.round(zoom.virtual_available || 0)); return (
+                  <span style={{ fontSize: 11, fontWeight: 600, color: s > 0 ? C.green : C.red, background: s > 0 ? C.greenSoft : C.redSoft, borderRadius: 6, padding: "3px 8px" }}>{s > 0 ? `${s} en stock` : "Rupture"}</span>
+                ); })()}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ÉTAPE 3 — Confirmation
+// ═══════════════════════════════════════════════════════════════════════════
+function ConfirmStep({ cart, freeItems, total, client, note, setNote, onQtyChange, onBack, onSubmit, submitting }: {
+  cart: Record<number, CartItem>; freeItems: FreeItem[]; total: number;
+  client: any; note: string; setNote: (n: string) => void;
+  onQtyChange: (p: any, q: number) => void;
+  onBack: () => void; onSubmit: () => void; submitting: boolean;
+}) {
+  return (
+    <div style={{ flex: 1, display: "flex", overflow: "hidden", minHeight: 0 }}>
+      {/* Liste articles */}
+      <div style={{ flex: 1, overflowY: "auto" as const, padding: 24 }}>
+        <div style={{ fontSize: 18, fontWeight: 800, color: C.text, marginBottom: 16 }}>Récapitulatif de la commande</div>
+
+        {/* Articles commandés */}
+        <div style={{ background: C.white, borderRadius: 16, overflow: "hidden", border: `1px solid ${C.border}`, marginBottom: 16, boxShadow: C.shadow }}>
+          <div style={{ padding: "12px 16px", background: C.teal, color: "#fff", fontSize: 12, fontWeight: 700, textTransform: "uppercase" as const, letterSpacing: "0.06em" }}>
+            📦 Articles ({Object.values(cart).reduce((s, i) => s + i.qty, 0)} unités)
+          </div>
+          {Object.values(cart).map((item, i) => (
+            <div key={item.product.id} style={{ padding: "12px 16px", borderBottom: i < Object.values(cart).length - 1 ? `1px solid ${C.border}` : undefined, display: "flex", alignItems: "center", gap: 12 }}>
+              {item.product.image_128 && <img src={`data:image/png;base64,${item.product.image_128}`} alt="" style={{ width: 44, height: 44, objectFit: "contain", borderRadius: 8, background: C.bg, flexShrink: 0 }} />}
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 13, fontWeight: 700, color: C.text }}>{item.product.name}</div>
+                <div style={{ fontSize: 11, color: C.muted }}>{item.product.default_code} · {fmtPrice(item.unitPrice)} / unité</div>
+              </div>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
+                <div style={{ display: "flex", background: C.bg, borderRadius: 8, overflow: "hidden", border: `1px solid ${C.border}` }}>
+                  <button onClick={() => onQtyChange(item.product, item.qty - 1)} style={{ padding: "5px 10px", background: "none", border: "none", cursor: "pointer", fontSize: 15, color: C.red, fontWeight: 700 }}>−</button>
+                  <span style={{ padding: "5px 8px", fontSize: 14, fontWeight: 800, color: C.text }}>{item.qty}</span>
+                  <button onClick={() => onQtyChange(item.product, item.qty + 1)} style={{ padding: "5px 10px", background: "none", border: "none", cursor: "pointer", fontSize: 15, color: C.teal, fontWeight: 700 }}>+</button>
+                </div>
+                <span style={{ fontSize: 14, fontWeight: 800, color: C.tealDark, minWidth: 70, textAlign: "right" as const }}>{fmtPrice(item.qty * item.unitPrice)}</span>
+              </div>
+            </div>
+          ))}
+        </div>
+
+        {/* BC gratuit */}
+        {freeItems.length > 0 && (
+          <div style={{ background: C.greenSoft, borderRadius: 16, overflow: "hidden", border: `1px solid ${C.green}33`, marginBottom: 16 }}>
+            <div style={{ padding: "12px 16px", background: C.green, color: "#fff", fontSize: 12, fontWeight: 700, textTransform: "uppercase" as const, letterSpacing: "0.06em" }}>
+              🎁 BC Gratuit séparé (créé automatiquement)
+            </div>
+            {freeItems.map((fi, i) => (
+              <div key={i} style={{ padding: "12px 16px", borderBottom: i < freeItems.length - 1 ? `1px solid ${C.green}22` : undefined, display: "flex", alignItems: "center", gap: 12 }}>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: C.green }}>{fi.product.name}</div>
+                  <div style={{ fontSize: 11, color: C.green, opacity: 0.8 }}>{fi.ruleName}</div>
+                </div>
+                <div style={{ fontSize: 14, fontWeight: 800, color: C.green }}>{fi.qty} × 0,00 €</div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Note */}
+        <div>
+          <div style={{ fontSize: 12, fontWeight: 600, color: C.muted, marginBottom: 6 }}>Note interne</div>
+          <textarea value={note} onChange={e => setNote(e.target.value)} placeholder="Informations complémentaires..."
+            rows={3} style={{ width: "100%", boxSizing: "border-box" as const, padding: "10px 12px", border: `1px solid ${C.border}`, borderRadius: 12, fontSize: 13, fontFamily: "inherit", resize: "none" as const, background: C.white }} />
+        </div>
+      </div>
+
+      {/* Panneau latéral total */}
+      <div style={{ width: 300, background: C.white, borderLeft: `1px solid ${C.border}`, display: "flex", flexDirection: "column" as const, padding: 24, gap: 16 }}>
+        <div>
+          <div style={{ fontSize: 11, color: C.muted, fontWeight: 600, textTransform: "uppercase" as const, letterSpacing: "0.06em", marginBottom: 4 }}>Client</div>
+          <div style={{ fontSize: 15, fontWeight: 700, color: C.text }}>{client.name}</div>
+          {client.property_product_pricelist && <div style={{ fontSize: 12, color: C.teal, marginTop: 2 }}>📋 {client.property_product_pricelist[1]}</div>}
+        </div>
+
+        <div style={{ border: `1px solid ${C.border}`, borderRadius: 14, padding: 16 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
+            <span style={{ fontSize: 13, color: C.muted }}>Sous-total</span>
+            <span style={{ fontSize: 13, fontWeight: 600, color: C.text }}>{fmtPrice(total)}</span>
+          </div>
+          {freeItems.length > 0 && (
+            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
+              <span style={{ fontSize: 13, color: C.green }}>🎁 Articles offerts</span>
+              <span style={{ fontSize: 13, fontWeight: 600, color: C.green }}>BC séparé</span>
+            </div>
+          )}
+          <div style={{ borderTop: `1px solid ${C.border}`, paddingTop: 8, display: "flex", justifyContent: "space-between" }}>
+            <span style={{ fontSize: 15, fontWeight: 700, color: C.text }}>Total HT</span>
+            <span style={{ fontSize: 18, fontWeight: 800, color: C.tealDark }}>{fmtPrice(total)}</span>
+          </div>
+          <div style={{ fontSize: 10, color: C.muted, marginTop: 4, textAlign: "center" as const }}>Prix Odoo appliqués à la création</div>
+        </div>
+
+        <div style={{ marginTop: "auto", display: "flex", flexDirection: "column" as const, gap: 10 }}>
+          <button onClick={onSubmit} disabled={submitting}
+            style={{ padding: "16px 0", background: submitting ? C.muted : "linear-gradient(135deg, #0d9488, #0f766e)", color: "#fff", border: "none", borderRadius: 14, fontSize: 16, fontWeight: 800, cursor: submitting ? "default" : "pointer", fontFamily: "inherit", boxShadow: submitting ? "none" : "0 4px 14px rgba(13,148,136,0.4)" }}>
+            {submitting ? "Création en cours…" : `Créer le devis${freeItems.length > 0 ? " + BC gratuit" : ""}`}
+          </button>
+          <button onClick={onBack}
+            style={{ padding: "12px 0", background: "transparent", color: C.muted, border: `1px solid ${C.border}`, borderRadius: 12, fontSize: 14, cursor: "pointer", fontFamily: "inherit" }}>
+            ← Modifier le panier
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// PANNEAU RÈGLES
+// ═══════════════════════════════════════════════════════════════════════════
+function RulesPanel({ rules, onChange, onClose }: { rules: FreeRule[]; onChange: (r: FreeRule[]) => void; onClose: () => void }) {
+  const [panelTab, setPanelTab] = useState<"rules" | "cats">("rules");
+  const [form, setForm] = useState<FreeRule | null>(null);
+
+  const newRule = (): FreeRule => ({ id: uid(), name: "", triggerQty: 10, freeQty: 1, allProducts: true, productRefs: [] });
+
+  const save = (r: FreeRule) => {
+    if (rules.find(x => x.id === r.id)) onChange(rules.map(x => x.id === r.id ? r : x));
+    else onChange([...rules, r]);
+    setForm(null);
+  };
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column" as const, height: "100%", fontFamily: "'DM Sans', sans-serif" }}>
+      {/* Header */}
+      <div style={{ padding: "14px 16px", borderBottom: `1px solid ${C.border}`, display: "flex", alignItems: "center", gap: 10 }}>
+        <button onClick={onClose} style={{ background: C.bg, border: "none", borderRadius: 8, padding: 7, cursor: "pointer", display: "flex" }}>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={C.text} strokeWidth="2"><path d="M18 6l-12 12M6 6l12 12"/></svg>
+        </button>
+        <div style={{ fontSize: 15, fontWeight: 700, color: C.text, flex: 1 }}>Paramètres</div>
+        {panelTab === "rules" && <button onClick={() => setForm(newRule())} style={{ padding: "6px 12px", background: C.purple, color: "#fff", border: "none", borderRadius: 8, fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>+ Règle</button>}
+      </div>
+
+      {/* Onglets */}
+      <div style={{ display: "flex", borderBottom: `1px solid ${C.border}`, background: C.bg }}>
+        {([["rules", "🎁 Gratuités"], ["cats", "🏷️ Catégories"]] as const).map(([key, label]) => (
+          <button key={key} onClick={() => setPanelTab(key)}
+            style={{ flex: 1, padding: "10px 0", border: "none", background: panelTab === key ? C.white : "transparent", borderBottom: panelTab === key ? `2px solid ${C.purple}` : "2px solid transparent", cursor: "pointer", fontSize: 12, fontWeight: panelTab === key ? 700 : 400, color: panelTab === key ? C.purple : C.muted, fontFamily: "inherit", marginBottom: -1 }}>
+            {label}
+          </button>
+        ))}
+      </div>
+
+      <div style={{ flex: 1, overflowY: "auto" as const, padding: 16 }}>
+        {/* Onglet Catégories */}
+        {panelTab === "cats" && <CatsEditor />}
+        {panelTab === "rules" && <>
+        {form && (
+          <RuleForm rule={form} onChange={setForm} onSave={() => save(form!)} onCancel={() => setForm(null)} />
+        )}
+
+        {!form && rules.length === 0 && (
+          <div style={{ textAlign: "center", padding: "48px 24px", color: C.muted }}>
+            <div style={{ fontSize: 40, marginBottom: 12 }}>🎁</div>
+            <div style={{ fontSize: 14, fontWeight: 600 }}>Aucune règle configurée</div>
+            <div style={{ fontSize: 12, marginTop: 6, lineHeight: 1.5 }}>Exemple : 10 achetés → 2 offerts dans un BC séparé automatique</div>
+          </div>
+        )}
+
+        {!form && rules.map(r => (
+          <div key={r.id} style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 14, padding: 14, marginBottom: 10, display: "flex", alignItems: "center", gap: 12 }}>
+            <div style={{ width: 44, height: 44, borderRadius: 12, background: C.purpleSoft, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 22, flexShrink: 0 }}>🎁</div>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontSize: 14, fontWeight: 700, color: C.text }}>{r.name || `${r.triggerQty} → ${r.freeQty} gratuits`}</div>
+              <div style={{ fontSize: 12, color: C.muted, marginTop: 2 }}>
+                {r.triggerQty} achetés → <span style={{ color: C.green, fontWeight: 700 }}>{r.freeQty} offerts</span>
+                {" · "}{r.allProducts ? "Tous produits" : `${r.productRefs.length} refs`}
+              </div>
+            </div>
+            <button onClick={() => setForm(r)} style={{ background: C.bg, border: `1px solid ${C.border}`, borderRadius: 8, padding: "5px 10px", cursor: "pointer", fontSize: 13 }}>✏️</button>
+            <button onClick={() => onChange(rules.filter(x => x.id !== r.id))} style={{ background: C.redSoft, border: "none", borderRadius: 8, padding: "5px 10px", cursor: "pointer", fontSize: 13, color: C.red }}>🗑</button>
+          </div>
+        ))}
+        </>}
+      </div>
+    </div>
+  );
+}
+
+// ── Éditeur de catégories ─────────────────────────────────────────────────────
+function CatsEditor() {
+  const [cats, setCats] = useState<SmartCat[]>([]);
+  const [editId, setEditId] = useState<string | null>(null);
+  const [fEmoji, setFEmoji] = useState("");
+  const [fLabel, setFLabel] = useState("");
+  const [fCode, setFCode] = useState("");
+
+  useEffect(() => { setCats(loadSmartCats()); }, []);
+  const save_ = (updated: SmartCat[]) => { setCats(updated); saveSmartCats(updated); };
+  const openEdit = (c: SmartCat) => { setEditId(c.id); setFEmoji(c.emoji); setFLabel(c.label); setFCode(c.code); };
+  const openNew = () => { setEditId("new"); setFEmoji("🏷️"); setFLabel(""); setFCode(""); };
+
+  const saveEdit = () => {
+    const code = fCode.trim().padStart(2, "0").slice(0, 2);
+    if (!fLabel.trim() || !code) return;
+    if (editId === "new") {
+      save_([...cats, { id: code, code, emoji: fEmoji, label: fLabel.trim() }]);
+    } else {
+      save_(cats.map(c => c.id === editId ? { ...c, code, emoji: fEmoji, label: fLabel.trim() } : c));
+    }
+    setEditId(null);
+  };
+
+  return (
+    <div>
+      <div style={{ fontSize: 11, color: C.muted, marginBottom: 10, lineHeight: 1.5 }}>
+        Basé sur les 2ème et 3ème caractères de la référence produit.<br/>
+        Ex: <code style={{ background: C.bg, padding: "1px 4px", borderRadius: 4 }}>1<strong>01</strong>0101</code> → code <strong>01</strong>
+      </div>
+
+      {editId && (
+        <div style={{ background: C.white, border: `1.5px solid ${C.teal}`, borderRadius: 14, padding: 14, marginBottom: 14, display: "flex", flexDirection: "column" as const, gap: 10 }}>
+          <div style={{ display: "flex", gap: 8 }}>
+            <input value={fEmoji} onChange={e => setFEmoji(e.target.value)} style={{ width: 44, padding: "8px", border: `1px solid ${C.border}`, borderRadius: 8, fontSize: 18, textAlign: "center" as const }} />
+            <input value={fCode} onChange={e => setFCode(e.target.value)} placeholder="01" maxLength={2}
+              style={{ width: 52, padding: "8px", border: `1px solid ${C.border}`, borderRadius: 8, fontSize: 14, fontFamily: "monospace", fontWeight: 700, textAlign: "center" as const }} />
+            <input value={fLabel} onChange={e => setFLabel(e.target.value)} placeholder="Nom affiché"
+              style={{ flex: 1, padding: "8px 10px", border: `1px solid ${C.border}`, borderRadius: 8, fontSize: 13, fontFamily: "inherit" }} />
+          </div>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button onClick={() => setEditId(null)} style={{ flex: 1, padding: "8px 0", background: C.bg, border: `1px solid ${C.border}`, borderRadius: 8, cursor: "pointer", fontSize: 12, fontFamily: "inherit" }}>Annuler</button>
+            <button onClick={saveEdit} style={{ flex: 2, padding: "8px 0", background: C.teal, color: "#fff", border: "none", borderRadius: 8, cursor: "pointer", fontSize: 12, fontWeight: 700, fontFamily: "inherit" }}>Enregistrer</button>
+          </div>
+        </div>
+      )}
+
+      <button onClick={openNew} style={{ width: "100%", padding: "9px 0", background: C.tealSoft, border: `1px dashed ${C.teal}`, borderRadius: 10, cursor: "pointer", fontSize: 12, fontWeight: 600, color: C.tealDark, fontFamily: "inherit", marginBottom: 10 }}>
+        + Nouvelle catégorie
+      </button>
+
+      <div style={{ display: "flex", flexDirection: "column" as const, gap: 8 }}>
+        {cats.map(c => (
+          <div key={c.id} style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 12, padding: "10px 12px", display: "flex", alignItems: "center", gap: 10 }}>
+            <span style={{ fontSize: 20 }}>{c.emoji}</span>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontSize: 13, fontWeight: 700, color: C.text }}>{c.label}</div>
+              <div style={{ fontSize: 10, color: C.muted, fontFamily: "monospace" }}>code : {c.code}</div>
+            </div>
+            <button onClick={() => openEdit(c)} style={{ background: C.bg, border: `1px solid ${C.border}`, borderRadius: 7, padding: "4px 8px", cursor: "pointer", fontSize: 12 }}>✏️</button>
+            <button onClick={() => save_(cats.filter(x => x.id !== c.id))} style={{ background: C.redSoft, border: "none", borderRadius: 7, padding: "4px 8px", cursor: "pointer", fontSize: 12, color: C.red }}>🗑</button>
+          </div>
+        ))}
+      </div>
+
+      <button onClick={() => save_(DEFAULT_CATS)} style={{ width: "100%", marginTop: 12, padding: "7px 0", background: "transparent", border: `1px solid ${C.border}`, borderRadius: 8, cursor: "pointer", fontSize: 11, color: C.muted, fontFamily: "inherit" }}>
+        Réinitialiser les catégories par défaut
+      </button>
+    </div>
+  );
+}
+
+function RuleForm({ rule, onChange, onSave, onCancel }: { rule: FreeRule; onChange: (r: FreeRule) => void; onSave: () => void; onCancel: () => void }) {
+  const refsStr = rule.productRefs.join("\n");
+  const inp = (field: keyof FreeRule, value: any) => onChange({ ...rule, [field]: value });
+  return (
+    <div style={{ background: C.white, border: `1.5px solid ${C.purple}`, borderRadius: 16, padding: 16, marginBottom: 16, display: "flex", flexDirection: "column" as const, gap: 14 }}>
+      <div>
+        <label style={{ fontSize: 11, fontWeight: 700, color: C.muted, textTransform: "uppercase" as const, letterSpacing: "0.06em", display: "block", marginBottom: 5 }}>Nom de la règle</label>
+        <input value={rule.name} onChange={e => inp("name", e.target.value)} placeholder="Ex: 10+1 gratuit"
+          style={{ width: "100%", boxSizing: "border-box" as const, padding: "9px 12px", border: `1px solid ${C.border}`, borderRadius: 10, fontSize: 14, fontFamily: "inherit" }} />
+      </div>
+      <div style={{ display: "flex", gap: 10 }}>
+        <div style={{ flex: 1 }}>
+          <label style={{ fontSize: 11, fontWeight: 700, color: C.muted, textTransform: "uppercase" as const, letterSpacing: "0.06em", display: "block", marginBottom: 5 }}>Qté achetée</label>
+          <input type="number" value={rule.triggerQty} onChange={e => inp("triggerQty", Number(e.target.value))} min="1"
+            style={{ width: "100%", boxSizing: "border-box" as const, padding: "9px 12px", border: `1px solid ${C.border}`, borderRadius: 10, fontSize: 14, fontFamily: "inherit" }} />
+        </div>
+        <div style={{ flex: 1 }}>
+          <label style={{ fontSize: 11, fontWeight: 700, color: C.muted, textTransform: "uppercase" as const, letterSpacing: "0.06em", display: "block", marginBottom: 5 }}>Qté offerte</label>
+          <input type="number" value={rule.freeQty} onChange={e => inp("freeQty", Number(e.target.value))} min="1"
+            style={{ width: "100%", boxSizing: "border-box" as const, padding: "9px 12px", border: `1px solid ${C.border}`, borderRadius: 10, fontSize: 14, fontFamily: "inherit" }} />
+        </div>
+      </div>
+      <div>
+        <div style={{ fontSize: 11, fontWeight: 700, color: C.muted, textTransform: "uppercase" as const, letterSpacing: "0.06em", marginBottom: 8 }}>S'applique à</div>
+        <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
+          {([true, false] as const).map(v => (
+            <button key={String(v)} onClick={() => inp("allProducts", v)}
+              style={{ flex: 1, padding: "8px 0", background: rule.allProducts === v ? C.tealSoft : C.bg, border: `1px solid ${rule.allProducts === v ? C.teal : C.border}`, borderRadius: 8, cursor: "pointer", fontSize: 12, fontWeight: 600, color: rule.allProducts === v ? C.tealDark : C.muted, fontFamily: "inherit" }}>
+              {v ? "Tous les produits" : "Références spécifiques"}
+            </button>
+          ))}
+        </div>
+        {!rule.allProducts && (
+          <textarea value={refsStr} onChange={e => inp("productRefs", e.target.value.split(/[\n,;]+/).map((r: string) => r.trim()).filter(Boolean))}
+            placeholder={"REF001\nREF002"} rows={3}
+            style={{ width: "100%", boxSizing: "border-box" as const, padding: "8px 10px", border: `1px solid ${C.border}`, borderRadius: 8, fontSize: 12, fontFamily: "monospace", resize: "none" as const }} />
+        )}
+      </div>
+      <div style={{ display: "flex", gap: 8 }}>
+        <button onClick={onCancel} style={{ flex: 1, padding: "10px 0", background: C.bg, border: `1px solid ${C.border}`, borderRadius: 10, cursor: "pointer", fontSize: 13, fontWeight: 600, fontFamily: "inherit" }}>Annuler</button>
+        <button onClick={onSave} style={{ flex: 2, padding: "10px 0", background: C.purple, color: "#fff", border: "none", borderRadius: 10, cursor: "pointer", fontSize: 13, fontWeight: 700, fontFamily: "inherit" }}>Enregistrer</button>
+      </div>
+    </div>
+  );
+}
