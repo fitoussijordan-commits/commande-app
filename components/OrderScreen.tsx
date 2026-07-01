@@ -375,6 +375,20 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
   );
 }
 
+// Distance à vol d'oiseau entre deux points GPS (formule de Haversine), résultat en km.
+function haversineKm(lat1: number, lon1: number, lat2: number, lon2: number): number {
+  const R = 6371;
+  const dLat = (lat2 - lat1) * Math.PI / 180;
+  const dLon = (lon2 - lon1) * Math.PI / 180;
+  const a = Math.sin(dLat / 2) ** 2 + Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLon / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+function fmtDistance(km: number): string {
+  return km < 1 ? `${Math.round(km * 1000)} m` : `${km.toFixed(1)} km`;
+}
+
+const CLIENT_FIELDS = ["id", "name", "ref", "city", "country_id", "property_product_pricelist", "email", "phone"];
+
 // ═══════════════════════════════════════════════════════════════════════════
 // ÉTAPE 1 — Sélection client
 // ═══════════════════════════════════════════════════════════════════════════
@@ -384,6 +398,12 @@ function ClientStep({ session, onSelect }: { session: odoo.OdooSession; onSelect
   const [loading, setLoading] = useState(false);
   const timer = useRef<any>(null);
 
+  // ── Mode localisation ──────────────────────────────────────────────────
+  const [locMode, setLocMode] = useState(false);
+  const [locLoading, setLocLoading] = useState(false);
+  const [locError, setLocError] = useState("");
+  const [nearby, setNearby] = useState<any[]>([]);
+
   useEffect(() => {
     if (q.length < 2) { setResults([]); return; }
     clearTimeout(timer.current);
@@ -392,12 +412,53 @@ function ClientStep({ session, onSelect }: { session: odoo.OdooSession; onSelect
       try {
         const r = await odoo.searchRead(session, "res.partner",
           ["|", ["name", "ilike", q], ["ref", "ilike", q], ["customer_rank", ">", 0], ["active", "=", true]],
-          ["id", "name", "ref", "city", "country_id", "property_product_pricelist", "email", "phone"], 30);
+          CLIENT_FIELDS, 30);
         setResults(r);
       } catch {}
       setLoading(false);
     }, 300);
   }, [q, session]);
+
+  // Taper dans la recherche désactive le mode localisation (évite la confusion entre les deux listes)
+  useEffect(() => { if (q.length >= 2 && locMode) setLocMode(false); }, [q]); // eslint-disable-line
+
+  const enableLocation = () => {
+    setLocError("");
+    if (!("geolocation" in navigator)) {
+      setLocError("Géolocalisation non disponible sur cet appareil");
+      return;
+    }
+    setLocLoading(true);
+    navigator.geolocation.getCurrentPosition(
+      async (pos) => {
+        const { latitude, longitude } = pos.coords;
+        try {
+          const rows = await odoo.searchRead(session, "res.partner",
+            [["customer_rank", ">", 0], ["active", "=", true], ["partner_latitude", "!=", 0], ["partner_longitude", "!=", 0]],
+            [...CLIENT_FIELDS, "partner_latitude", "partner_longitude"], 500);
+          const withDist = rows
+            .map((r: any) => ({ ...r, _distKm: haversineKm(latitude, longitude, r.partner_latitude, r.partner_longitude) }))
+            .sort((a: any, b: any) => a._distKm - b._distKm)
+            .slice(0, 40);
+          if (!withDist.length) {
+            setLocError("Aucun client avec coordonnées GPS trouvé dans Odoo");
+          }
+          setNearby(withDist);
+          setLocMode(true);
+        } catch (e: any) {
+          setLocError("Erreur de chargement des clients : " + e.message);
+        }
+        setLocLoading(false);
+      },
+      () => {
+        setLocError("Position refusée ou indisponible — vérifie l'autorisation de localisation");
+        setLocLoading(false);
+      },
+      { enableHighAccuracy: true, timeout: 10000 }
+    );
+  };
+
+  const displayed = q.length >= 2 ? results : (locMode ? nearby : []);
 
   return (
     <div style={{ flex: 1, display: "flex", flexDirection: "column" as const, alignItems: "center", justifyContent: "center", padding: 40 }}>
@@ -408,19 +469,39 @@ function ClientStep({ session, onSelect }: { session: odoo.OdooSession; onSelect
           <div style={{ fontSize: 14, color: C.muted, marginTop: 6 }}>Recherche par nom, référence ou ville</div>
         </div>
 
-        <div style={{ position: "relative" as const, marginBottom: 16 }}>
-          <svg style={{ position: "absolute", left: 14, top: "50%", transform: "translateY(-50%)" }} width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={C.muted} strokeWidth="2">
-            <circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/>
-          </svg>
-          <input autoFocus value={q} onChange={e => setQ(e.target.value)}
-            placeholder="Nom du client..."
-            style={{ width: "100%", boxSizing: "border-box" as const, padding: "14px 14px 14px 44px", border: `1.5px solid ${C.border}`, borderRadius: 14, fontSize: 16, fontFamily: "inherit", background: C.white, color: C.text, boxShadow: C.shadowMd, outline: "none" }} />
+        <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
+          <div style={{ position: "relative" as const, flex: 1 }}>
+            <svg style={{ position: "absolute", left: 14, top: "50%", transform: "translateY(-50%)" }} width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={C.muted} strokeWidth="2">
+              <circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/>
+            </svg>
+            <input autoFocus value={q} onChange={e => setQ(e.target.value)}
+              placeholder="Nom du client..."
+              style={{ width: "100%", boxSizing: "border-box" as const, padding: "14px 14px 14px 44px", border: `1.5px solid ${C.border}`, borderRadius: 14, fontSize: 16, fontFamily: "inherit", background: C.white, color: C.text, boxShadow: C.shadowMd, outline: "none" }} />
+          </div>
+          <button
+            onClick={() => locMode ? setLocMode(false) : enableLocation()}
+            title="Proposer les clients les plus proches de ma position"
+            disabled={locLoading}
+            style={{ flexShrink: 0, width: 50, display: "flex", alignItems: "center", justifyContent: "center", background: locMode ? C.teal : C.white, border: `1.5px solid ${locMode ? C.teal : C.border}`, borderRadius: 14, cursor: locLoading ? "default" : "pointer", boxShadow: C.shadowMd, fontSize: 20 }}>
+            {locLoading ? "…" : "📍"}
+          </button>
         </div>
 
-        {loading && <div style={{ textAlign: "center", color: C.muted, padding: 12, fontSize: 14 }}>Recherche en cours…</div>}
+        {locMode && !locLoading && !locError && (
+          <div style={{ fontSize: 12, color: C.teal, fontWeight: 600, marginBottom: 10, textAlign: "center" as const }}>
+            Clients triés par proximité — {nearby.length} résultat{nearby.length > 1 ? "s" : ""}
+          </div>
+        )}
+        {locError && (
+          <div style={{ fontSize: 12, color: C.red, background: C.redSoft, borderRadius: 10, padding: "8px 12px", marginBottom: 10, textAlign: "center" as const }}>
+            {locError}
+          </div>
+        )}
+
+        {(loading || locLoading) && <div style={{ textAlign: "center", color: C.muted, padding: 12, fontSize: 14 }}>{locLoading ? "Localisation en cours…" : "Recherche en cours…"}</div>}
 
         <div style={{ display: "flex", flexDirection: "column" as const, gap: 8, maxHeight: "50vh", overflowY: "auto" as const }}>
-          {results.map(c => (
+          {displayed.map(c => (
             <button key={c.id} onClick={() => onSelect(c)}
               style={{ padding: "14px 16px", background: C.white, border: `1.5px solid ${C.border}`, borderRadius: 14, cursor: "pointer", textAlign: "left" as const, fontFamily: "inherit", boxShadow: C.shadow, transition: "all 0.12s", display: "flex", alignItems: "center", gap: 14 }}>
               <div style={{ width: 42, height: 42, borderRadius: 12, background: `hsl(${c.id % 360}, 60%, 90%)`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18, fontWeight: 800, color: `hsl(${c.id % 360}, 60%, 35%)`, flexShrink: 0 }}>
@@ -434,6 +515,11 @@ function ClientStep({ session, onSelect }: { session: odoo.OdooSession; onSelect
                   {c.phone && <span>📞 {c.phone}</span>}
                 </div>
               </div>
+              {typeof c._distKm === "number" && (
+                <div style={{ fontSize: 11, fontWeight: 700, color: C.teal, background: C.tealSoft, borderRadius: 8, padding: "3px 8px", flexShrink: 0 }}>
+                  {fmtDistance(c._distKm)}
+                </div>
+              )}
               {c.property_product_pricelist && (
                 <div style={{ fontSize: 11, fontWeight: 600, color: C.teal, background: C.tealSoft, borderRadius: 8, padding: "3px 8px", flexShrink: 0 }}>
                   {c.property_product_pricelist[1]}
