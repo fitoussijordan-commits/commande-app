@@ -723,74 +723,57 @@ function HomeScreen({ session, onNewOrder }: { session: odoo.OdooSession; onNewO
   const totalCount = events.length;
 
   return (
-    <div style={{ flex: 1, overflowY: "auto" as const, padding: "36px 24px 60px" }}>
-      <div style={{ maxWidth: 720, margin: "0 auto" }}>
-        {/* En-tête */}
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap" as const, gap: 16, marginBottom: 28 }}>
-          <div>
-            <div style={{ fontSize: 13, color: C.muted, fontWeight: 600 }}>Bonjour {session.name?.split(" ")[0] || ""} 👋</div>
-            <div style={{ fontSize: 24, fontWeight: 800, color: C.text, marginTop: 2 }}>Ta semaine</div>
-          </div>
-          <button onClick={onNewOrder}
-            style={{ display: "flex", alignItems: "center", gap: 8, padding: "13px 22px", background: "linear-gradient(135deg, #0d9488, #0f766e)", color: "#fff", border: "none", borderRadius: 14, fontSize: 14, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", boxShadow: "0 8px 20px rgba(13,148,136,0.3)" }}>
-            🛒 Nouvelle commande
-          </button>
+    <div style={{ flex: 1, overflowY: "auto" as const, padding: "28px 28px 40px", display: "flex", flexDirection: "column" as const }}>
+      {/* En-tête */}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap" as const, gap: 16, marginBottom: 18 }}>
+        <div>
+          <div style={{ fontSize: 13, color: C.muted, fontWeight: 600 }}>Bonjour {session.name?.split(" ")[0] || ""} 👋</div>
+          <div style={{ fontSize: 24, fontWeight: 800, color: C.text, marginTop: 2 }}>Ta semaine</div>
         </div>
-
-        {/* Bandeau résumé */}
-        <div style={{ background: "linear-gradient(135deg, #0d9488 0%, #7c3aed 100%)", borderRadius: 18, padding: "18px 22px", color: "#fff", marginBottom: 24, display: "flex", alignItems: "center", gap: 14, boxShadow: "0 10px 24px rgba(15,23,42,0.16)" }}>
-          <div style={{ fontSize: 28 }}>📅</div>
-          <div>
-            <div style={{ fontSize: 15, fontWeight: 800 }}>
-              {loading ? "Chargement du planning…" : totalCount === 0 ? "Aucun RDV cette semaine" : `${totalCount} RDV cette semaine`}
-            </div>
-            <div style={{ fontSize: 12, opacity: 0.85, marginTop: 2 }}>
-              {monday.toLocaleDateString("fr-FR", { day: "numeric", month: "long" })} — {days[6].toLocaleDateString("fr-FR", { day: "numeric", month: "long" })}
-            </div>
+        <div style={{ textAlign: "right" as const }}>
+          <div style={{ fontSize: 15, fontWeight: 800, color: C.tealDark }}>
+            {loading ? "Chargement…" : totalCount === 0 ? "Aucun RDV" : `${totalCount} RDV cette semaine`}
+          </div>
+          <div style={{ fontSize: 12, color: C.muted, marginTop: 2 }}>
+            {monday.toLocaleDateString("fr-FR", { day: "numeric", month: "long" })} — {days[6].toLocaleDateString("fr-FR", { day: "numeric", month: "long" })}
           </div>
         </div>
+      </div>
 
-        {/* Planning jour par jour */}
-        <div style={{ display: "flex", flexDirection: "column" as const, gap: 4 }}>
-          {days.map((d, i) => {
-            const dayEvents = eventsByDay[i];
-            const isToday = sameDay(d, today);
-            const isPast = d < today && !isToday;
-            return (
-              <div key={i} style={{ display: "flex", gap: 16, padding: "14px 4px", borderBottom: i < 6 ? `1px solid ${C.border}` : "none", opacity: isPast ? 0.5 : 1 }}>
-                {/* Colonne date */}
-                <div style={{ width: 64, flexShrink: 0, textAlign: "center" as const }}>
-                  <div style={{ fontSize: 10, fontWeight: 700, color: isToday ? C.teal : C.muted, textTransform: "uppercase" as const, letterSpacing: "0.04em" }}>{WEEKDAY_LABELS[i].slice(0, 3)}</div>
-                  <div style={{
-                    width: 34, height: 34, borderRadius: "50%", margin: "4px auto 0",
-                    display: "flex", alignItems: "center", justifyContent: "center",
-                    background: isToday ? "linear-gradient(135deg, #0d9488, #7c3aed)" : "transparent",
-                    color: isToday ? "#fff" : C.text, fontSize: 15, fontWeight: 800,
-                  }}>
-                    {d.getDate()}
-                  </div>
-                </div>
-
-                {/* Colonne événements */}
-                <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column" as const, gap: 6, paddingTop: 2 }}>
-                  {dayEvents.length === 0 ? (
-                    <div style={{ fontSize: 12, color: C.muted, paddingTop: 6 }}>Aucun RDV</div>
-                  ) : dayEvents.map(e => (
-                    <div key={e.id} style={{ display: "flex", alignItems: "center", gap: 10, background: C.tealSoft, border: `1px solid ${C.tealMid}`, borderRadius: 10, padding: "8px 12px" }}>
-                      <div style={{ fontSize: 11, fontWeight: 800, color: C.tealDark, flexShrink: 0, minWidth: 40 }}>
-                        {odooToLocalDate(e.start).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}
-                      </div>
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ fontSize: 13, fontWeight: 700, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>{e.name}</div>
-                        {e.location && <div style={{ fontSize: 11, color: C.muted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>📍 {e.location}</div>}
-                      </div>
-                    </div>
-                  ))}
-                </div>
+      {/* Vue semaine — 7 colonnes, utilise toute la largeur disponible */}
+      <div style={{ flex: 1, display: "grid", gridTemplateColumns: "repeat(7, minmax(130px, 1fr))", gap: 10, overflowX: "auto" as const }}>
+        {days.map((d, i) => {
+          const dayEvents = eventsByDay[i];
+          const isToday = sameDay(d, today);
+          const isPast = d < today && !isToday;
+          return (
+            <div key={i} style={{
+              display: "flex", flexDirection: "column" as const, borderRadius: 16,
+              background: isToday ? "linear-gradient(180deg, #f0fdfa 0%, #ffffff 120px)" : C.white,
+              border: `1.5px solid ${isToday ? C.teal : C.border}`, overflow: "hidden", opacity: isPast ? 0.55 : 1,
+            }}>
+              {/* En-tête jour */}
+              <div style={{ padding: "12px 10px", textAlign: "center" as const, borderBottom: `1px solid ${isToday ? C.tealMid : C.border}`, background: isToday ? "linear-gradient(135deg, #0d9488, #7c3aed)" : C.bg, flexShrink: 0 }}>
+                <div style={{ fontSize: 10, fontWeight: 700, color: isToday ? "rgba(255,255,255,0.85)" : C.muted, textTransform: "uppercase" as const, letterSpacing: "0.04em" }}>{WEEKDAY_LABELS[i].slice(0, 3)}</div>
+                <div style={{ fontSize: 20, fontWeight: 800, color: isToday ? "#fff" : C.text, marginTop: 2 }}>{d.getDate()}</div>
               </div>
-            );
-          })}
-        </div>
+
+              {/* Événements du jour */}
+              <div style={{ flex: 1, padding: 8, display: "flex", flexDirection: "column" as const, gap: 6, minHeight: 90 }}>
+                {dayEvents.length === 0 ? (
+                  <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, color: C.border, fontWeight: 600 }}>—</div>
+                ) : dayEvents.map(e => (
+                  <div key={e.id} style={{ background: C.tealSoft, border: `1px solid ${C.tealMid}`, borderRadius: 9, padding: "6px 8px" }}>
+                    <div style={{ fontSize: 10, fontWeight: 800, color: C.tealDark }}>
+                      {odooToLocalDate(e.start).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}
+                    </div>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: C.text, marginTop: 2, lineHeight: 1.3, overflow: "hidden", display: "-webkit-box" as const, WebkitLineClamp: 2, WebkitBoxOrient: "vertical" as const }}>{e.name}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          );
+        })}
       </div>
     </div>
   );
