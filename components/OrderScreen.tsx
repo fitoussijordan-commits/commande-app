@@ -217,7 +217,7 @@ async function getLoyaltyPrograms(session: odoo.OdooSession): Promise<loyalty.Lo
 
 // ═══════════════════════════════════════════════════════════════════════════
 export default function OrderScreen({ session, onBack, onToast, desktop }: Props) {
-  const [step, setStep] = useState<"home" | "client" | "hub" | "catalog" | "history">("home");
+  const [step, setStep] = useState<"home" | "client" | "hub" | "catalog" | "history">("client");
   const [client, setClient] = useState<any>(null);
   const [priceItems, setPriceItems] = useState<PriceItem[]>([]); // items pricelist du client
   const [cart, setCart] = useState<Record<number, CartItem>>({});
@@ -432,7 +432,7 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
         <button onClick={() => {
             if (step === "catalog" || step === "history") setStep("hub");
             else if (step === "hub") setStep("client");
-            else if (step === "client") setStep("home");
+            else if (step === "home") setStep("client");
             else onBack();
           }}
           title="Retour"
@@ -450,6 +450,14 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
         </div>
 
         <div style={{ flex: 1 }} />
+
+        {/* Voir planning — visible sur l'écran de recherche client (pas de client sélectionné) */}
+        {step === "client" && (
+          <button onClick={() => setStep("home")}
+            style={{ display: "flex", alignItems: "center", gap: 6, height: 36, padding: "0 14px", borderRadius: 10, background: C.bg, border: `1px solid ${C.border}`, cursor: "pointer", fontFamily: "inherit", fontSize: 13, fontWeight: 600, color: C.textSec }}>
+            📅 Voir planning
+          </button>
+        )}
 
         {/* Client badge — cliquable pour revenir au hub de ce client depuis n'importe où */}
         {client && (
