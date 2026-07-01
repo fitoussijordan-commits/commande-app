@@ -24,6 +24,29 @@ async function getCurrentUserPartnerId(session: odoo.OdooSession): Promise<numbe
   return _currentUserPartnerIdCache;
 }
 
+// Résout une étiquette de type de RDV (calendar.event.type, champ categ_ids sur calendar.event).
+// Une automatisation Odoo Studio existante plante si categ_ids est vide (record.categ_ids[0] sur
+// une liste vide) — on garantit donc toujours au moins une étiquette à la création.
+let _meetingCategIdCache: number | null | undefined = undefined;
+async function getMeetingCategId(session: odoo.OdooSession): Promise<number | null> {
+  if (_meetingCategIdCache !== undefined) return _meetingCategIdCache;
+  try {
+    const tags = await odoo.searchRead(session, "calendar.event.type",
+      ["|", ["name", "ilike", "rdv"], ["name", "ilike", "commercial"]], ["id", "name"], 5);
+    if (tags.length) { _meetingCategIdCache = tags[0].id; return _meetingCategIdCache ?? null; }
+
+    const any = await odoo.searchRead(session, "calendar.event.type", [], ["id", "name"], 1);
+    if (any.length) { _meetingCategIdCache = any[0].id; return _meetingCategIdCache ?? null; }
+
+    // Aucune étiquette du tout dans l'instance Odoo → on en crée une dédiée à l'app.
+    const newId = await odoo.create(session, "calendar.event.type", { name: "RDV Commercial" });
+    _meetingCategIdCache = typeof newId === "number" ? newId : null;
+  } catch {
+    _meetingCategIdCache = null;
+  }
+  return _meetingCategIdCache ?? null;
+}
+
 // Convertit une Date (locale navigateur) en chaîne UTC "YYYY-MM-DD HH:MM:SS" attendue par Odoo.
 function toOdooUTC(d: Date): string {
   const pad = (n: number) => String(n).padStart(2, "0");
@@ -72,7 +95,10 @@ export default function AppointmentModal({ session, client, onClose, onToast }: 
       if (isNaN(start.getTime())) throw new Error("Date invalide");
       const stop = new Date(start.getTime() + durationHours * 3600 * 1000);
 
-      const organizerPartnerId = await getCurrentUserPartnerId(session);
+      const [organizerPartnerId, categId] = await Promise.all([
+        getCurrentUserPartnerId(session),
+        getMeetingCategId(session), // évite le crash de l'automatisation Studio (categ_ids vide)
+      ]);
 
       // Important : le CLIENT n'est volontairement PAS ajouté comme participant (partner_ids).
       // Seul le commercial (organisateur) y figure — c'est ce qui évite l'envoi automatique
@@ -85,6 +111,7 @@ export default function AppointmentModal({ session, client, onClose, onToast }: 
         description: `Client : ${client?.name || ""}${client?.phone ? ` — ${client.phone}` : ""}${note ? `\n\n${note}` : ""}`,
         user_id: session.uid,
         ...(organizerPartnerId ? { partner_ids: [[6, 0, [organizerPartnerId]]] } : {}),
+        ...(categId ? { categ_ids: [[6, 0, [categId]]] } : {}),
       });
 
       onToast("RDV créé dans le calendrier Odoo", "success");
