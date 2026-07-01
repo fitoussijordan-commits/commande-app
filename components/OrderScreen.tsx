@@ -602,7 +602,8 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
       {step === "catalog" && client && (
         <CatalogStep session={session} cart={cart} onQtyChange={setQty} freeItems={freeItems}
           onValidate={handleValidate} submitting={submitting}
-          note={note} setNote={setNote} client={client} priceItems={priceItems} onToast={onToast} />
+          note={note} setNote={setNote} client={client} priceItems={priceItems} onToast={onToast}
+          appliedPromos={appliedPromos} />
       )}
 
       {showAppointment && client && (
@@ -776,13 +777,14 @@ function ClientStep({ session, onSelect }: { session: odoo.OdooSession; onSelect
 // ═══════════════════════════════════════════════════════════════════════════
 // ÉTAPE 2 — Catalogue + Panier persistant
 // ═══════════════════════════════════════════════════════════════════════════
-function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submitting, note, setNote, client, priceItems, onToast }: {
+function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submitting, note, setNote, client, priceItems, onToast, appliedPromos }: {
   session: odoo.OdooSession; cart: Record<number, CartItem>;
   onQtyChange: (p: any, q: number, price?: number) => void; freeItems: FreeItem[];
   onValidate: () => void; submitting: boolean;
   note: string; setNote: (n: string) => void; client: any;
   priceItems: PriceItem[];
   onToast: (msg: string, type?: "success" | "error" | "info") => void;
+  appliedPromos: Record<number, loyalty.AppliedPromo>;
 }) {
   const [smartCats, setSmartCats] = useState<SmartCat[]>([]);
   const [activeCatId, setActiveCatId] = useState<string | null>(null);
@@ -1206,6 +1208,21 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
                 <div key={i} style={{ fontSize: 11, color: C.green, marginBottom: 2 }}>
                   <strong>{fi.qty}×</strong> {fi.product.name}
                   <div style={{ fontSize: 10, opacity: 0.7 }}>{fi.ruleName}</div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Remises additionnelles appliquées */}
+          {Object.keys(appliedPromos).length > 0 && (
+            <div style={{ margin: "8px 0", padding: "8px 10px", background: C.orangeSoft, border: `1px solid ${C.orange}33`, borderRadius: 10 }}>
+              <div style={{ fontSize: 10, fontWeight: 700, color: C.orange, textTransform: "uppercase" as const, letterSpacing: "0.05em", marginBottom: 5 }}>🏷️ Remises appliquées</div>
+              {Object.values(appliedPromos).map(p => (
+                <div key={p.program.id} style={{ fontSize: 11, color: C.orange, marginBottom: 2 }}>
+                  <strong>{p.program.name}</strong>
+                  <div style={{ fontSize: 10, opacity: 0.8 }}>
+                    {p.type === "discount" ? `-${p.reward.discount}%` : `${p.productName} offert`}
+                  </div>
                 </div>
               ))}
             </div>
