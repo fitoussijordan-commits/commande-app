@@ -1,0 +1,169 @@
+"use client";
+import { useState } from "react";
+import * as odoo from "@/lib/odoo";
+
+const C = {
+  bg: "#f8fafc", white: "#fff", text: "#0f172a", textSec: "#334155",
+  muted: "#94a3b8", border: "#e2e8f0",
+  teal: "#0d9488", tealDark: "#0f766e",
+  red: "#dc2626", redSoft: "#fef2f2",
+  shadowXl: "0 20px 25px rgba(0,0,0,0.10), 0 8px 10px rgba(0,0,0,0.04)",
+};
+
+// Cache le partner_id de l'utilisateur courant (organisateur du RDV) — une résolution par session app.
+let _currentUserPartnerIdCache: number | null | undefined = undefined;
+async function getCurrentUserPartnerId(session: odoo.OdooSession): Promise<number | null> {
+  if (_currentUserPartnerIdCache !== undefined) return _currentUserPartnerIdCache;
+  try {
+    const users = await odoo.searchRead(session, "res.users", [["id", "=", session.uid]], ["id", "partner_id"], 1);
+    const pid = users[0]?.partner_id?.[0];
+    _currentUserPartnerIdCache = typeof pid === "number" ? pid : null;
+  } catch {
+    _currentUserPartnerIdCache = null;
+  }
+  return _currentUserPartnerIdCache;
+}
+
+// Convertit une Date (locale navigateur) en chaîne UTC "YYYY-MM-DD HH:MM:SS" attendue par Odoo.
+function toOdooUTC(d: Date): string {
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())} ${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}:00`;
+}
+
+const DURATIONS = [
+  { label: "30 min", hours: 0.5 },
+  { label: "45 min", hours: 0.75 },
+  { label: "1 h", hours: 1 },
+  { label: "1 h 30", hours: 1.5 },
+  { label: "2 h", hours: 2 },
+];
+
+// Prochain créneau arrondi au 1/4 d'heure suivant, pour pré-remplir le champ date/heure.
+function defaultStartLocal(): string {
+  const d = new Date();
+  d.setMinutes(Math.ceil(d.getMinutes() / 15) * 15, 0, 0);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+interface Props {
+  session: odoo.OdooSession;
+  client: any; // res.partner sélectionné dans la prise de commande
+  onClose: () => void;
+  onToast: (msg: string, type?: "success" | "error" | "info") => void;
+}
+
+export default function AppointmentModal({ session, client, onClose, onToast }: Props) {
+  const [title, setTitle] = useState(`RDV — ${client?.name || ""}`);
+  const [startLocal, setStartLocal] = useState(defaultStartLocal());
+  const [durationHours, setDurationHours] = useState(1);
+  const [location, setLocation] = useState(client?.city || "");
+  const [note, setNote] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError("");
+    if (!title.trim() || !startLocal) { setError("Titre et date/heure requis"); return; }
+    setSaving(true);
+    try {
+      const start = new Date(startLocal); // interprété en heure locale du navigateur
+      if (isNaN(start.getTime())) throw new Error("Date invalide");
+      const stop = new Date(start.getTime() + durationHours * 3600 * 1000);
+
+      const organizerPartnerId = await getCurrentUserPartnerId(session);
+
+      // Important : le CLIENT n'est volontairement PAS ajouté comme participant (partner_ids).
+      // Seul le commercial (organisateur) y figure — c'est ce qui évite l'envoi automatique
+      // d'une invitation Outlook au client lors de la synchro du calendrier Odoo.
+      await odoo.create(session, "calendar.event", {
+        name: title.trim(),
+        start: toOdooUTC(start),
+        stop: toOdooUTC(stop),
+        location: location.trim(),
+        description: `Client : ${client?.name || ""}${client?.phone ? ` — ${client.phone}` : ""}${note ? `\n\n${note}` : ""}`,
+        user_id: session.uid,
+        ...(organizerPartnerId ? { partner_ids: [[6, 0, [organizerPartnerId]]] } : {}),
+      });
+
+      onToast("RDV créé dans le calendrier Odoo", "success");
+      onClose();
+    } catch (e: any) {
+      setError(e.message || "Erreur lors de la création du RDV");
+    }
+    setSaving(false);
+  };
+
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 200, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }} onClick={onClose}>
+      <form onSubmit={handleSubmit} onClick={e => e.stopPropagation()}
+        style={{ width: "100%", maxWidth: 420, background: C.white, borderRadius: 20, padding: "28px 26px", boxShadow: C.shadowXl, fontFamily: "'DM Sans', sans-serif" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 20 }}>
+          <div style={{ width: 40, height: 40, borderRadius: 12, background: "linear-gradient(135deg, #0d9488, #7c3aed)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18 }}>📅</div>
+          <div>
+            <div style={{ fontSize: 16, fontWeight: 800, color: C.text }}>Prendre un RDV</div>
+            <div style={{ fontSize: 12, color: C.muted }}>{client?.name}</div>
+          </div>
+        </div>
+
+        {error && (
+          <div style={{ background: C.redSoft, color: C.red, borderRadius: 10, padding: "10px 14px", fontSize: 13, marginBottom: 14 }}>{error}</div>
+        )}
+
+        <Field label="Titre">
+          <input value={title} onChange={e => setTitle(e.target.value)} style={inputStyle} />
+        </Field>
+
+        <Field label="Date et heure">
+          <input type="datetime-local" value={startLocal} onChange={e => setStartLocal(e.target.value)} style={inputStyle} />
+        </Field>
+
+        <Field label="Durée">
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" as const }}>
+            {DURATIONS.map(d => (
+              <button type="button" key={d.hours} onClick={() => setDurationHours(d.hours)}
+                style={{ padding: "7px 12px", borderRadius: 8, border: `1.5px solid ${durationHours === d.hours ? C.teal : C.border}`, background: durationHours === d.hours ? C.teal : C.white, color: durationHours === d.hours ? "#fff" : C.textSec, fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>
+                {d.label}
+              </button>
+            ))}
+          </div>
+        </Field>
+
+        <Field label="Lieu">
+          <input value={location} onChange={e => setLocation(e.target.value)} placeholder="Adresse du RDV" style={inputStyle} />
+        </Field>
+
+        <Field label="Note (optionnel)">
+          <textarea value={note} onChange={e => setNote(e.target.value)} rows={2} style={{ ...inputStyle, resize: "vertical" as const, fontFamily: "inherit" }} />
+        </Field>
+
+        <div style={{ fontSize: 11, color: C.muted, marginBottom: 18, lineHeight: 1.4 }}>
+          Le client ne sera pas ajouté comme participant — aucune invitation ne lui sera envoyée par e-mail lors de la synchro Outlook.
+        </div>
+
+        <div style={{ display: "flex", gap: 10 }}>
+          <button type="button" onClick={onClose} style={{ flex: 1, padding: "12px", background: C.bg, color: C.textSec, border: `1px solid ${C.border}`, borderRadius: 12, fontSize: 14, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>
+            Annuler
+          </button>
+          <button type="submit" disabled={saving} style={{ flex: 1, padding: "12px", background: saving ? C.muted : C.teal, color: "#fff", border: "none", borderRadius: 12, fontSize: 14, fontWeight: 700, cursor: saving ? "default" : "pointer", fontFamily: "inherit" }}>
+            {saving ? "Création…" : "Créer le RDV"}
+          </button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
+const inputStyle: React.CSSProperties = {
+  width: "100%", boxSizing: "border-box", padding: "10px 12px", border: `1.5px solid ${C.border}`, borderRadius: 10, fontSize: 14, color: C.text, outline: "none",
+};
+
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div style={{ marginBottom: 14 }}>
+      <label style={{ display: "block", fontSize: 12, fontWeight: 600, color: C.textSec, marginBottom: 6 }}>{label}</label>
+      {children}
+    </div>
+  );
+}

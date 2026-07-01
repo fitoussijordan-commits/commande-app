@@ -1,6 +1,7 @@
 "use client";
 import { useState, useEffect, useCallback, useRef } from "react";
 import * as odoo from "@/lib/odoo";
+import AppointmentModal from "@/components/AppointmentModal";
 
 // ── Palette ───────────────────────────────────────────────────────────────────
 const C = {
@@ -215,6 +216,7 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
   // Liste de tous les brouillons en attente (tous clients confondus) — accès discret, jamais affiché tout seul
   const [pendingDrafts, setPendingDrafts] = useState<{ clientId: string; draft: Draft }[]>([]);
   const [showDraftsPanel, setShowDraftsPanel] = useState(false);
+  const [showAppointment, setShowAppointment] = useState(false);
   const refreshPendingDrafts = useCallback(() => setPendingDrafts(listDrafts()), []);
 
   // Chargement initial : règles + migration de l'ancien format de brouillon unique
@@ -404,6 +406,14 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
           </div>
         )}
 
+        {/* RDV — visible dès qu'un client est sélectionné */}
+        {client && (
+          <button onClick={() => setShowAppointment(true)} title="Prendre un RDV avec ce client"
+            style={{ width: 36, height: 36, borderRadius: 10, background: C.bg, border: `1px solid ${C.border}`, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16, flexShrink: 0 }}>
+            📅
+          </button>
+        )}
+
 
         {/* Accès discret aux brouillons en attente — jamais affiché sans action volontaire */}
         {pendingDrafts.length > 0 && (
@@ -494,6 +504,10 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
         <CatalogStep session={session} cart={cart} onQtyChange={setQty} freeItems={freeItems}
           onValidate={handleValidate} submitting={submitting}
           note={note} setNote={setNote} client={client} priceItems={priceItems} onToast={onToast} />
+      )}
+
+      {showAppointment && client && (
+        <AppointmentModal session={session} client={client} onClose={() => setShowAppointment(false)} onToast={onToast} />
       )}
     </div>
   );
