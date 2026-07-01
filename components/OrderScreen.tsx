@@ -290,21 +290,33 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
       const tagVals = validatedTagId ? { tag_ids: [[6, 0, [validatedTagId]]] } : {};
 
       const pricelistId = client.property_product_pricelist?.[0] || false;
+
+      // Commande + toutes ses lignes créées en UN SEUL appel Odoo (commandes one2many [0,0,{...}])
+      // au lieu d'un appel par ligne — c'est ça qui rendait les gros devis lents.
       const mainId = await odoo.create(session, "sale.order", {
         partner_id: client.id, state: "draft",
         ...(pricelistId ? { pricelist_id: pricelistId } : {}),
         note: note || "",
         ...tagVals,
+        order_line: Object.values(cart).map(item => [0, 0, {
+          product_id: item.product.id,
+          product_uom_qty: item.qty,
+          price_unit: item.unitPrice,
+        }]),
       });
-      for (const item of Object.values(cart)) {
-        await odoo.create(session, "sale.order.line", { order_id: mainId, product_id: item.product.id, product_uom_qty: item.qty, price_unit: item.unitPrice });
-      }
+
       let freeId: number | null = null;
       if (freeItems.length > 0) {
-        freeId = await odoo.create(session, "sale.order", { partner_id: client.id, state: "draft", note: `Articles offerts — lié au devis #${mainId}`, ...tagVals });
-        for (const fi of freeItems) {
-          await odoo.create(session, "sale.order.line", { order_id: freeId, product_id: fi.product.id, product_uom_qty: fi.qty, price_unit: 0 });
-        }
+        freeId = await odoo.create(session, "sale.order", {
+          partner_id: client.id, state: "draft",
+          note: `Articles offerts — lié au devis #${mainId}`,
+          ...tagVals,
+          order_line: freeItems.map(fi => [0, 0, {
+            product_id: fi.product.id,
+            product_uom_qty: fi.qty,
+            price_unit: 0,
+          }]),
+        });
       }
       removeDraftForClient(client.id); // effacer le brouillon de CE client après création réussie
       refreshPendingDrafts();
