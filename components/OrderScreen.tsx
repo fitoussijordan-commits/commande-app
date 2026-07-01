@@ -280,14 +280,16 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
           {(["client", "catalog"] as const).map((s, i) => {
             const labels = ["Client", "Catalogue & Panier"];
             const done_ = ["client", "catalog"].indexOf(step) > i;
+            // Accessible dès qu'un client est sélectionné (panier en cours), pas seulement une fois "dépassée"
+            const reachable = done_ || (s === "catalog" && !!client);
             const active = step === s;
             return (
               <div key={s} style={{ display: "flex", alignItems: "center", gap: 6 }}>
                 {i > 0 && <div style={{ width: 20, height: 1, background: C.border }} />}
                 <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "4px 10px", borderRadius: 20,
                   background: active ? C.teal : done_ ? C.tealMid : C.bg,
-                  cursor: done_ ? "pointer" : "default" }}
-                  onClick={() => done_ && setStep(s)}>
+                  cursor: reachable ? "pointer" : "default" }}
+                  onClick={() => reachable && setStep(s)}>
                   <div style={{ width: 18, height: 18, borderRadius: 9, background: active ? "#fff" : done_ ? C.teal : C.border, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10, fontWeight: 800, color: active ? C.teal : done_ ? "#fff" : C.muted }}>
                     {done_ ? "✓" : i + 1}
                   </div>
@@ -300,9 +302,12 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
 
         <div style={{ flex: 1 }} />
 
-        {/* Client badge */}
+        {/* Client badge — cliquable pour revenir au panier en cours quand on est sur l'étape Client */}
         {client && (
-          <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 12px", background: C.tealSoft, borderRadius: 10, border: `1px solid ${C.tealMid}` }}>
+          <div
+            onClick={() => { if (step === "client") setStep("catalog"); }}
+            title={step === "client" ? "Reprendre la commande en cours" : undefined}
+            style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 12px", background: C.tealSoft, borderRadius: 10, border: `1px solid ${C.tealMid}`, cursor: step === "client" ? "pointer" : "default" }}>
             <div style={{ width: 28, height: 28, borderRadius: 8, background: C.teal, display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", fontSize: 12, fontWeight: 700 }}>
               {client.name.charAt(0).toUpperCase()}
             </div>
@@ -310,7 +315,7 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
               <div style={{ fontSize: 12, fontWeight: 700, color: C.tealDark }}>{client.name}</div>
               {client.property_product_pricelist && <div style={{ fontSize: 10, color: C.teal }}>{client.property_product_pricelist[1]}</div>}
             </div>
-            {step !== "client" && <button onClick={() => { setClient(null); setCart({}); setStep("client"); }} style={{ background: "none", border: "none", cursor: "pointer", color: C.muted, fontSize: 14, lineHeight: 1 }}>✕</button>}
+            {step !== "client" && <button onClick={(e) => { e.stopPropagation(); setClient(null); setCart({}); setStep("client"); }} style={{ background: "none", border: "none", cursor: "pointer", color: C.muted, fontSize: 14, lineHeight: 1 }}>✕</button>}
           </div>
         )}
 
