@@ -24,27 +24,24 @@ async function getCurrentUserPartnerId(session: odoo.OdooSession): Promise<numbe
   return _currentUserPartnerIdCache;
 }
 
-// Résout une étiquette de type de RDV (calendar.event.type, champ categ_ids sur calendar.event).
-// Une automatisation Odoo Studio existante plante si categ_ids est vide (record.categ_ids[0] sur
-// une liste vide) — on garantit donc toujours au moins une étiquette à la création.
-let _meetingCategIdCache: number | null | undefined = undefined;
-async function getMeetingCategId(session: odoo.OdooSession): Promise<number | null> {
-  if (_meetingCategIdCache !== undefined) return _meetingCategIdCache;
+// Une automatisation Odoo Studio existante réécrit toujours le titre du RDV à partir du nom
+// de la 1ère étiquette (categ_ids[0].name) quand le client n'est pas participant — ce qui est
+// notre cas (volontairement, pour ne pas déclencher d'invitation Outlook). Plutôt que de toucher
+// à cette automatisation, on s'appuie dessus : on crée/réutilise une étiquette qui porte EXACTEMENT
+// le titre voulu, donc l'automatisation affiche le bon titre sans qu'on ait à changer quoi que ce
+// soit côté Odoo. (Seul effet de bord : le champ "Code Client CLI" reste vide, il n'est rempli par
+// l'automatisation que dans le cas — non utilisé ici — où le client est participant.)
+async function getOrCreateTagForTitle(session: odoo.OdooSession, title: string): Promise<number | null> {
+  const clean = title.trim();
+  if (!clean) return null;
   try {
-    const tags = await odoo.searchRead(session, "calendar.event.type",
-      ["|", ["name", "ilike", "rdv"], ["name", "ilike", "commercial"]], ["id", "name"], 5);
-    if (tags.length) { _meetingCategIdCache = tags[0].id; return _meetingCategIdCache ?? null; }
-
-    const any = await odoo.searchRead(session, "calendar.event.type", [], ["id", "name"], 1);
-    if (any.length) { _meetingCategIdCache = any[0].id; return _meetingCategIdCache ?? null; }
-
-    // Aucune étiquette du tout dans l'instance Odoo → on en crée une dédiée à l'app.
-    const newId = await odoo.create(session, "calendar.event.type", { name: "RDV Commercial" });
-    _meetingCategIdCache = typeof newId === "number" ? newId : null;
+    const existing = await odoo.searchRead(session, "calendar.event.type", [["name", "=ilike", clean]], ["id"], 1);
+    if (existing.length) return existing[0].id;
+    const newId = await odoo.create(session, "calendar.event.type", { name: clean });
+    return typeof newId === "number" ? newId : null;
   } catch {
-    _meetingCategIdCache = null;
+    return null;
   }
-  return _meetingCategIdCache ?? null;
 }
 
 // Convertit une Date (locale navigateur) en chaîne UTC "YYYY-MM-DD HH:MM:SS" attendue par Odoo.
@@ -97,7 +94,7 @@ export default function AppointmentModal({ session, client, onClose, onToast }: 
 
       const [organizerPartnerId, categId] = await Promise.all([
         getCurrentUserPartnerId(session),
-        getMeetingCategId(session), // évite le crash de l'automatisation Studio (categ_ids vide)
+        getOrCreateTagForTitle(session, title), // fait aussi office de titre affiché (voir commentaire au-dessus)
       ]);
 
       // Important : le CLIENT n'est volontairement PAS ajouté comme participant (partner_ids).
