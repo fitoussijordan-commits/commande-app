@@ -37,6 +37,11 @@ const LS_RULES  = "wms_order_rules_v2";
 const LS_DRAFTS = "wms_order_drafts_v1"; // un brouillon PAR client (map clientId → Draft), plus d'écrasement
 const LS_CATS   = "wms_order_smart_cats";
 
+// Règles "maison" (articles offerts configurés localement, panneau ⚙️) — masquées pour le moment
+// au profit des vraies remises Odoo. Code conservé intact, juste désactivé : remettre à true pour
+// réactiver l'accès (bouton ⚙️ + déclenchement des règles) sans rien avoir à réécrire.
+const HOMEMADE_RULES_ENABLED = false;
+
 // ── Catégories par codification référence (chars 1-2 de default_code) ─────────
 // Ex : 1010101 → "01" = Visage
 interface SmartCat { id: string; code: string; emoji: string; label: string; }
@@ -272,7 +277,7 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
     }
   }, [cart, client, note, refreshPendingDrafts]);
 
-  useEffect(() => { setFreeItems(computeFreeItems(cart, rules)); }, [cart, rules]);
+  useEffect(() => { setFreeItems(HOMEMADE_RULES_ENABLED ? computeFreeItems(cart, rules) : []); }, [cart, rules]);
 
   const cartCount = Object.values(cart).reduce((s, i) => s + i.qty, 0);
   const cartTotal = Object.values(cart).reduce((s, i) => s + i.qty * i.unitPrice, 0);
@@ -485,9 +490,11 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
           </button>
         )}
 
-        <button onClick={() => setShowRules(!showRules)} style={{ width: 36, height: 36, borderRadius: 10, background: showRules ? C.purpleSoft : C.bg, border: `1px solid ${showRules ? C.purple : C.border}`, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16 }}>
-          ⚙️
-        </button>
+        {HOMEMADE_RULES_ENABLED && (
+          <button onClick={() => setShowRules(!showRules)} style={{ width: 36, height: 36, borderRadius: 10, background: showRules ? C.purpleSoft : C.bg, border: `1px solid ${showRules ? C.purple : C.border}`, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16 }}>
+            ⚙️
+          </button>
+        )}
       </div>
 
       {/* ── Bandeau reprise — scopé UNIQUEMENT au client qu'on vient de sélectionner,
