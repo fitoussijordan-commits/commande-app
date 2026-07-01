@@ -406,8 +406,8 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
           </div>
         )}
 
-        {/* RDV — visible dès qu'un client est sélectionné */}
-        {client && (
+        {/* RDV — uniquement sur l'écran de commande (catalogue & panier), pas sur la sélection client */}
+        {client && step === "catalog" && (
           <button onClick={() => setShowAppointment(true)} title="Prendre un RDV avec ce client"
             style={{ width: 36, height: 36, borderRadius: 10, background: C.bg, border: `1px solid ${C.border}`, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16, flexShrink: 0 }}>
             📅
