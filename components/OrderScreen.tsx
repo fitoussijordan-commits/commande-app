@@ -386,6 +386,8 @@ function haversineKm(lat1: number, lon1: number, lat2: number, lon2: number): nu
 function fmtDistance(km: number): string {
   return km < 1 ? `${Math.round(km * 1000)} m` : `${km.toFixed(1)} km`;
 }
+// Rayon de recherche du mode localisation — facile à ajuster si besoin.
+const LOC_RADIUS_KM = 0.5;
 
 const CLIENT_FIELDS = ["id", "name", "ref", "city", "country_id", "property_product_pricelist", "email", "phone"];
 
@@ -438,10 +440,10 @@ function ClientStep({ session, onSelect }: { session: odoo.OdooSession; onSelect
             [...CLIENT_FIELDS, "partner_latitude", "partner_longitude"], 500);
           const withDist = rows
             .map((r: any) => ({ ...r, _distKm: haversineKm(latitude, longitude, r.partner_latitude, r.partner_longitude) }))
-            .sort((a: any, b: any) => a._distKm - b._distKm)
-            .slice(0, 40);
+            .filter((r: any) => r._distKm <= LOC_RADIUS_KM)
+            .sort((a: any, b: any) => a._distKm - b._distKm);
           if (!withDist.length) {
-            setLocError("Aucun client avec coordonnées GPS trouvé dans Odoo");
+            setLocError(`Aucun client à moins de ${fmtDistance(LOC_RADIUS_KM)} de ta position`);
           }
           setNearby(withDist);
           setLocMode(true);
@@ -489,7 +491,7 @@ function ClientStep({ session, onSelect }: { session: odoo.OdooSession; onSelect
 
         {locMode && !locLoading && !locError && (
           <div style={{ fontSize: 12, color: C.teal, fontWeight: 600, marginBottom: 10, textAlign: "center" as const }}>
-            Clients triés par proximité — {nearby.length} résultat{nearby.length > 1 ? "s" : ""}
+            Clients à moins de {fmtDistance(LOC_RADIUS_KM)} — {nearby.length} résultat{nearby.length > 1 ? "s" : ""}
           </div>
         )}
         {locError && (
