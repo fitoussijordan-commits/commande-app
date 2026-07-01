@@ -32,7 +32,7 @@ interface FreeRule {
 interface FreeItem { product: any; qty: number; ruleName: string; }
 
 const LS_RULES  = "wms_order_rules_v2";
-const LS_DRAFT  = "wms_order_draft";
+const LS_DRAFTS = "wms_order_drafts_v1"; // un brouillon PAR client (map clientId → Draft), plus d'écrasement
 const LS_CATS   = "wms_order_smart_cats";
 
 // ── Catégories par codification référence (chars 1-2 de default_code) ─────────
@@ -72,10 +72,45 @@ interface Draft {
   note: string;
   savedAt: number; // timestamp
 }
-function loadDraft(): Draft | null { try { const r = localStorage.getItem(LS_DRAFT); return r ? JSON.parse(r) : null; } catch { return null; } }
-function saveDraft(d: Draft | null) {
-  if (d) localStorage.setItem(LS_DRAFT, JSON.stringify(d));
-  else localStorage.removeItem(LS_DRAFT);
+
+// Brouillons stockés par client (clientId → Draft) — changer de client n'écrase plus rien.
+function loadAllDrafts(): Record<string, Draft> {
+  try { return JSON.parse(localStorage.getItem(LS_DRAFTS) || "{}"); } catch { return {}; }
+}
+function saveAllDrafts(d: Record<string, Draft>) { localStorage.setItem(LS_DRAFTS, JSON.stringify(d)); }
+
+function loadDraftForClient(clientId: number): Draft | null {
+  return loadAllDrafts()[String(clientId)] || null;
+}
+function saveDraftForClient(clientId: number, draft: Draft) {
+  const all = loadAllDrafts();
+  all[String(clientId)] = draft;
+  saveAllDrafts(all);
+}
+function removeDraftForClient(clientId: number) {
+  const all = loadAllDrafts();
+  delete all[String(clientId)];
+  saveAllDrafts(all);
+}
+// Liste triée (plus récent d'abord) pour le panneau discret "brouillons en attente"
+function listDrafts(): { clientId: string; draft: Draft }[] {
+  const all = loadAllDrafts();
+  return Object.entries(all)
+    .map(([clientId, draft]) => ({ clientId, draft }))
+    .sort((a, b) => b.draft.savedAt - a.draft.savedAt);
+}
+
+// ── Migration douce de l'ancien format (1 seul brouillon global) ──────────────
+function migrateLegacyDraft() {
+  try {
+    const legacy = localStorage.getItem("wms_order_draft");
+    if (!legacy) return;
+    const d: Draft = JSON.parse(legacy);
+    if (d?.client?.id && Object.keys(d.cart || {}).length > 0) {
+      saveDraftForClient(d.client.id, d);
+    }
+    localStorage.removeItem("wms_order_draft");
+  } catch {}
 }
 
 function uid() { return Math.random().toString(36).slice(2, 9); }
@@ -160,29 +195,28 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
   const [submitting, setSubmitting] = useState(false);
   const [done, setDone] = useState<{ mainId: number; freeId: number | null } | null>(null);
   const [note, setNote] = useState("");
-  const [draft, setDraft] = useState<Draft | null>(null); // brouillon détecté au démarrage
-  const [showDraftBanner, setShowDraftBanner] = useState(false);
+  // Brouillon détecté pour le client qu'on vient de sélectionner (jamais un autre client — pas de fuite visuelle)
+  const [resumePrompt, setResumePrompt] = useState<Draft | null>(null);
+  // Liste de tous les brouillons en attente (tous clients confondus) — accès discret, jamais affiché tout seul
+  const [pendingDrafts, setPendingDrafts] = useState<{ clientId: string; draft: Draft }[]>([]);
+  const [showDraftsPanel, setShowDraftsPanel] = useState(false);
+  const refreshPendingDrafts = useCallback(() => setPendingDrafts(listDrafts()), []);
 
-  // Chargement initial : règles + détection brouillon
+  // Chargement initial : règles + migration de l'ancien format de brouillon unique
   useEffect(() => {
     setRules(loadRules());
-    const d = loadDraft();
-    if (d && Object.keys(d.cart).length > 0) {
-      // Recharger les items pricelist du brouillon
-      if (d.client?.property_product_pricelist?.[0]) {
-        fetchPricelistItems(session, d.client.property_product_pricelist[0]).then(setPriceItems).catch(() => {});
-      }
-      setDraft(d);
-      setShowDraftBanner(true);
-    }
-  }, [session]);
+    migrateLegacyDraft();
+    refreshPendingDrafts();
+  }, [session, refreshPendingDrafts]);
 
-  // Sauvegarde auto du brouillon dès que le panier ou le client change
+  // Sauvegarde auto du brouillon du client courant dès que le panier ou la note change —
+  // stocké par client, ne touche jamais aux brouillons des autres clients.
   useEffect(() => {
     if (client && Object.keys(cart).length > 0) {
-      saveDraft({ client, cart, note, savedAt: Date.now() });
+      saveDraftForClient(client.id, { client, cart, note, savedAt: Date.now() });
+      refreshPendingDrafts();
     }
-  }, [cart, client, note]);
+  }, [cart, client, note, refreshPendingDrafts]);
 
   useEffect(() => { setFreeItems(computeFreeItems(cart, rules)); }, [cart, rules]);
 
@@ -198,21 +232,37 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
     });
   };
 
-  const restoreDraft = () => {
-    if (!draft) return;
-    setClient(draft.client);
-    setCart(draft.cart);
-    setNote(draft.note || "");
-    setStep("catalog");
-    setShowDraftBanner(false);
-    setDraft(null);
+  // Reprendre le brouillon proposé pour le client qu'on vient de sélectionner
+  const acceptResumePrompt = () => {
+    if (!resumePrompt) return;
+    setCart(resumePrompt.cart);
+    setNote(resumePrompt.note || "");
+    setResumePrompt(null);
     onToast("Brouillon restauré", "success");
   };
+  // Repartir de zéro pour ce client — supprime son brouillon en attente
+  const discardResumePrompt = () => {
+    if (resumePrompt?.client?.id) removeDraftForClient(resumePrompt.client.id);
+    setResumePrompt(null);
+    refreshPendingDrafts();
+  };
 
-  const discardDraft = () => {
-    saveDraft(null);
-    setDraft(null);
-    setShowDraftBanner(false);
+  // Reprendre un brouillon depuis le panneau global (n'importe quel client)
+  const resumeDraftFromPanel = (d: Draft) => {
+    setClient(d.client);
+    setCart(d.cart);
+    setNote(d.note || "");
+    setResumePrompt(null);
+    setShowDraftsPanel(false);
+    setStep("catalog");
+    const plId = d.client?.property_product_pricelist?.[0];
+    if (plId) fetchPricelistItems(session, plId).then(setPriceItems).catch(() => setPriceItems([]));
+    else setPriceItems([]);
+    onToast("Brouillon restauré", "success");
+  };
+  const deleteDraftFromPanel = (clientId: string) => {
+    removeDraftForClient(Number(clientId));
+    refreshPendingDrafts();
   };
 
   const handleValidate = async () => {
@@ -234,7 +284,8 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
           await odoo.create(session, "sale.order.line", { order_id: freeId, product_id: fi.product.id, product_uom_qty: fi.qty, price_unit: 0 });
         }
       }
-      saveDraft(null); // effacer le brouillon après création réussie
+      removeDraftForClient(client.id); // effacer le brouillon de CE client après création réussie
+      refreshPendingDrafts();
       setDone({ mainId, freeId });
     } catch (e: any) { onToast("Erreur : " + e.message, "error"); }
     setSubmitting(false);
@@ -251,7 +302,7 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
           {done.freeId && <><br/>BC gratuit <span style={{ color: C.purple, fontWeight: 700 }}>#{done.freeId}</span> créé automatiquement</>}
         </div>
         <div style={{ display: "flex", gap: 12, justifyContent: "center" }}>
-          <button onClick={() => { setDone(null); setCart({}); setClient(null); setNote(""); setStep("client"); saveDraft(null); }}
+          <button onClick={() => { setDone(null); setCart({}); setClient(null); setNote(""); setResumePrompt(null); setStep("client"); }}
             style={{ padding: "14px 28px", background: C.teal, color: "#fff", border: "none", borderRadius: 12, fontSize: 15, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
             Nouvelle commande
           </button>
@@ -319,32 +370,65 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
           </div>
         )}
 
-  
+
+        {/* Accès discret aux brouillons en attente — jamais affiché sans action volontaire */}
+        {pendingDrafts.length > 0 && (
+          <button onClick={() => setShowDraftsPanel(v => !v)} title="Commandes en attente de finalisation"
+            style={{ display: "flex", alignItems: "center", gap: 5, height: 36, padding: "0 10px", borderRadius: 10, background: showDraftsPanel ? "#fef9c3" : C.bg, border: `1px solid ${showDraftsPanel ? "#fde047" : C.border}`, cursor: "pointer", fontFamily: "inherit" }}>
+            <span style={{ fontSize: 14 }}>📝</span>
+            <span style={{ fontSize: 12, fontWeight: 700, color: "#92400e" }}>{pendingDrafts.length}</span>
+          </button>
+        )}
+
         <button onClick={() => setShowRules(!showRules)} style={{ width: 36, height: 36, borderRadius: 10, background: showRules ? C.purpleSoft : C.bg, border: `1px solid ${showRules ? C.purple : C.border}`, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16 }}>
           ⚙️
         </button>
       </div>
 
-      {/* ── Bannière brouillon ── */}
-      {showDraftBanner && draft && (
+      {/* ── Bandeau reprise — scopé UNIQUEMENT au client qu'on vient de sélectionner,
+           jamais un autre client : pas de fuite d'info si on est en face d'un client. ── */}
+      {resumePrompt && step === "catalog" && client?.id === resumePrompt.client?.id && (
         <div style={{ background: "#fefce8", borderBottom: `1px solid #fde047`, padding: "10px 20px", display: "flex", alignItems: "center", gap: 12, flexShrink: 0 }}>
           <span style={{ fontSize: 18 }}>📝</span>
           <div style={{ flex: 1 }}>
             <div style={{ fontSize: 13, fontWeight: 700, color: "#713f12" }}>
-              Commande en cours — {draft.client?.name}
+              Brouillon en attente pour ce client
             </div>
             <div style={{ fontSize: 11, color: "#92400e" }}>
-              {Object.keys(draft.cart).length} produit{Object.keys(draft.cart).length > 1 ? "s" : ""} · sauvegardé {fmtDate(draft.savedAt)}
+              {Object.keys(resumePrompt.cart).length} produit{Object.keys(resumePrompt.cart).length > 1 ? "s" : ""} · sauvegardé {fmtDate(resumePrompt.savedAt)}
             </div>
           </div>
-          <button onClick={restoreDraft}
+          <button onClick={acceptResumePrompt}
             style={{ padding: "7px 16px", background: "#ca8a04", color: "#fff", border: "none", borderRadius: 8, fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
             Reprendre
           </button>
-          <button onClick={discardDraft}
+          <button onClick={discardResumePrompt}
             style={{ padding: "7px 12px", background: "transparent", color: "#92400e", border: `1px solid #fde047`, borderRadius: 8, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>
-            Ignorer
+            Nouvelle commande
           </button>
+        </div>
+      )}
+
+      {/* ── Panneau global des brouillons en attente (tous clients) — ouvert uniquement au clic ── */}
+      {showDraftsPanel && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 100, display: "flex", alignItems: "flex-start", justifyContent: "flex-end" }} onClick={() => setShowDraftsPanel(false)}>
+          <div style={{ width: 360, maxHeight: "80vh", marginTop: 60, marginRight: 16, background: "#fff", borderRadius: 16, boxShadow: C.shadowXl, overflowY: "auto" as const }} onClick={e => e.stopPropagation()}>
+            <div style={{ padding: "14px 18px", borderBottom: `1px solid ${C.border}`, fontSize: 14, fontWeight: 800, color: C.text }}>
+              Commandes en attente ({pendingDrafts.length})
+            </div>
+            {pendingDrafts.length === 0 ? (
+              <div style={{ padding: 24, textAlign: "center" as const, color: C.muted, fontSize: 13 }}>Aucun brouillon</div>
+            ) : pendingDrafts.map(({ clientId, draft: d }) => (
+              <div key={clientId} style={{ padding: "12px 18px", borderBottom: `1px solid ${C.border}`, display: "flex", alignItems: "center", gap: 10 }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>{d.client?.name}</div>
+                  <div style={{ fontSize: 11, color: C.muted }}>{Object.keys(d.cart).length} produit{Object.keys(d.cart).length > 1 ? "s" : ""} · {fmtDate(d.savedAt)}</div>
+                </div>
+                <button onClick={() => resumeDraftFromPanel(d)} style={{ padding: "6px 10px", background: C.teal, color: "#fff", border: "none", borderRadius: 8, fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", flexShrink: 0 }}>Reprendre</button>
+                <button onClick={() => deleteDraftFromPanel(clientId)} style={{ padding: "6px 10px", background: "transparent", color: C.muted, border: `1px solid ${C.border}`, borderRadius: 8, fontSize: 11, cursor: "pointer", fontFamily: "inherit", flexShrink: 0 }}>✕</button>
+              </div>
+            ))}
+          </div>
         </div>
       )}
 
@@ -360,6 +444,12 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
       {/* ── Étapes ── */}
       {step === "client" && <ClientStep session={session} onSelect={c => {
         setClient(c);
+        // Repartir d'un panier vide à chaque nouveau client — évite de traîner le panier
+        // d'un client précédent si on revient en arrière sans passer par la croix ✕.
+        setCart({});
+        setNote("");
+        // Brouillon existant pour CE client précisément (jamais un autre) → bandeau scopé à l'écran suivant
+        setResumePrompt(loadDraftForClient(c.id));
         setStep("catalog");
         // 1 seul appel pricelist au moment du choix client
         const plId = c.property_product_pricelist?.[0];
@@ -387,7 +477,7 @@ function fmtDistance(km: number): string {
   return km < 1 ? `${Math.round(km * 1000)} m` : `${km.toFixed(1)} km`;
 }
 // Rayon de recherche du mode localisation — facile à ajuster si besoin.
-const LOC_RADIUS_KM = 0.5;
+const LOC_RADIUS_KM = 1;
 
 const CLIENT_FIELDS = ["id", "name", "ref", "city", "country_id", "property_product_pricelist", "email", "phone"];
 
