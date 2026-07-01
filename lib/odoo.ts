@@ -59,3 +59,7 @@ export async function create(session: OdooSession, model: string, values: any) {
 export async function write(session: OdooSession, model: string, ids: number[], values: any) {
   return call(session, "/web/dataset/call_kw", { model, method: "write", args: [ids, values], kwargs: {} });
 }
+
+export async function callMethod(session: OdooSession, model: string, method: string, args: any[] = [], kwargs: any = {}) {
+  return call(session, "/web/dataset/call_kw", { model, method, args, kwargs });
+}

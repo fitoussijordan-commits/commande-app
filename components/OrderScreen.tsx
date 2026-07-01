@@ -2,6 +2,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import * as odoo from "@/lib/odoo";
 import AppointmentModal from "@/components/AppointmentModal";
+import ClientNoteModal from "@/components/ClientNoteModal";
 import * as loyalty from "@/lib/loyalty";
 
 // ── Palette ───────────────────────────────────────────────────────────────────
@@ -216,7 +217,7 @@ async function getLoyaltyPrograms(session: odoo.OdooSession): Promise<loyalty.Lo
 
 // ═══════════════════════════════════════════════════════════════════════════
 export default function OrderScreen({ session, onBack, onToast, desktop }: Props) {
-  const [step, setStep] = useState<"client" | "catalog">("client");
+  const [step, setStep] = useState<"client" | "hub" | "catalog" | "history">("client");
   const [client, setClient] = useState<any>(null);
   const [priceItems, setPriceItems] = useState<PriceItem[]>([]); // items pricelist du client
   const [cart, setCart] = useState<Record<number, CartItem>>({});
@@ -232,6 +233,7 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
   const [pendingDrafts, setPendingDrafts] = useState<{ clientId: string; draft: Draft }[]>([]);
   const [showDraftsPanel, setShowDraftsPanel] = useState(false);
   const [showAppointment, setShowAppointment] = useState(false);
+  const [showClientNote, setShowClientNote] = useState(false);
   // Remises additionnelles Odoo (Ventes → Réductions & fidélité)
   const [loyaltyPrograms, setLoyaltyPrograms] = useState<loyalty.LoyaltyProgram[]>([]);
   const [appliedPromos, setAppliedPromos] = useState<Record<number, loyalty.AppliedPromo>>({});
@@ -266,6 +268,20 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
   };
   const removePromo = (programId: number) => {
     setAppliedPromos(prev => { const n = { ...prev }; delete n[programId]; return n; });
+  };
+
+  // Depuis le hub client → "Prise de commande" : repart d'un panier vide, détecte un brouillon
+  // existant pour CE client précisément, charge sa pricelist, puis entre dans le catalogue.
+  const enterOrderMode = () => {
+    if (!client) return;
+    setCart({});
+    setNote("");
+    setAppliedPromos({});
+    setResumePrompt(loadDraftForClient(client.id));
+    const plId = client.property_product_pricelist?.[0];
+    if (plId) fetchPricelistItems(session, plId).then(setPriceItems).catch(() => setPriceItems([]));
+    else setPriceItems([]);
+    setStep("catalog");
   };
 
   // Sauvegarde auto du brouillon du client courant dès que le panier ou la note change —
@@ -413,45 +429,32 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
 
       {/* ── Top bar ── */}
       <div style={{ height: 56, background: "#fff", borderBottom: `1px solid ${C.border}`, display: "flex", alignItems: "center", padding: "0 20px", gap: 16, flexShrink: 0, boxShadow: C.shadow }}>
-        <button onClick={() => step === "catalog" ? setStep("client") : onBack()}
-          title={step === "catalog" ? "Retour à la recherche client" : "Retour au WMS"}
-          style={{ width: 36, height: 36, borderRadius: 10, background: C.bg, border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
+        <button onClick={() => {
+            if (step === "catalog" || step === "history") setStep("hub");
+            else if (step === "hub") setStep("client");
+            else onBack();
+          }}
+          title="Retour"
+          style={{ width: 36, height: 36, borderRadius: 10, background: C.bg, border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={C.text} strokeWidth="2.5"><path d="M19 12H5M12 5l-7 7 7 7"/></svg>
         </button>
 
-        {/* Breadcrumb / steps */}
-        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-          {(["client", "catalog"] as const).map((s, i) => {
-            const labels = ["Client", "Catalogue & Panier"];
-            const done_ = ["client", "catalog"].indexOf(step) > i;
-            // Accessible dès qu'un client est sélectionné (panier en cours), pas seulement une fois "dépassée"
-            const reachable = done_ || (s === "catalog" && !!client);
-            const active = step === s;
-            return (
-              <div key={s} style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                {i > 0 && <div style={{ width: 20, height: 1, background: C.border }} />}
-                <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "4px 10px", borderRadius: 20,
-                  background: active ? C.teal : done_ ? C.tealMid : C.bg,
-                  cursor: reachable ? "pointer" : "default" }}
-                  onClick={() => reachable && setStep(s)}>
-                  <div style={{ width: 18, height: 18, borderRadius: 9, background: active ? "#fff" : done_ ? C.teal : C.border, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10, fontWeight: 800, color: active ? C.teal : done_ ? "#fff" : C.muted }}>
-                    {done_ ? "✓" : i + 1}
-                  </div>
-                  <span style={{ fontSize: 12, fontWeight: 600, color: active ? "#fff" : done_ ? C.tealDark : C.muted }}>{labels[i]}</span>
-                </div>
-              </div>
-            );
-          })}
+        {/* Fil d'ariane simple : où on en est pour ce client */}
+        <div style={{ fontSize: 13, fontWeight: 700, color: C.muted }}>
+          {step === "client" && "Choisir un client"}
+          {step === "hub" && "Fiche client"}
+          {step === "catalog" && "Prise de commande"}
+          {step === "history" && "Historique des commandes"}
         </div>
 
         <div style={{ flex: 1 }} />
 
-        {/* Client badge — cliquable pour revenir au panier en cours quand on est sur l'étape Client */}
+        {/* Client badge — cliquable pour revenir au hub de ce client depuis n'importe où */}
         {client && (
           <div
-            onClick={() => { if (step === "client") setStep("catalog"); }}
-            title={step === "client" ? "Reprendre la commande en cours" : undefined}
-            style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 12px", background: C.tealSoft, borderRadius: 10, border: `1px solid ${C.tealMid}`, cursor: step === "client" ? "pointer" : "default" }}>
+            onClick={() => { if (step !== "hub") setStep("hub"); }}
+            title={step !== "hub" ? "Revenir à la fiche client" : undefined}
+            style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 12px", background: C.tealSoft, borderRadius: 10, border: `1px solid ${C.tealMid}`, cursor: step !== "hub" ? "pointer" : "default" }}>
             <div style={{ width: 28, height: 28, borderRadius: 8, background: C.teal, display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", fontSize: 12, fontWeight: 700 }}>
               {client.name.charAt(0).toUpperCase()}
             </div>
@@ -593,19 +596,28 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
       {/* ── Étapes ── */}
       {step === "client" && <ClientStep session={session} onSelect={c => {
         setClient(c);
-        // Repartir d'un panier vide à chaque nouveau client — évite de traîner le panier
-        // d'un client précédent si on revient en arrière sans passer par la croix ✕.
-        setCart({});
-        setNote("");
-        setAppliedPromos({});
-        // Brouillon existant pour CE client précisément (jamais un autre) → bandeau scopé à l'écran suivant
-        setResumePrompt(loadDraftForClient(c.id));
-        setStep("catalog");
-        // 1 seul appel pricelist au moment du choix client
+        setStep("hub");
+        // 1 seul appel pricelist, réutilisé plus tard par la prise de commande
         const plId = c.property_product_pricelist?.[0];
         if (plId) fetchPricelistItems(session, plId).then(setPriceItems).catch(() => setPriceItems([]));
         else setPriceItems([]);
       }} />}
+
+      {step === "hub" && client && (
+        <ClientHub
+          client={client}
+          hasDraft={!!loadDraftForClient(client.id)}
+          onOrder={enterOrderMode}
+          onHistory={() => setStep("history")}
+          onAppointment={() => setShowAppointment(true)}
+          onNote={() => setShowClientNote(true)}
+        />
+      )}
+
+      {step === "history" && client && (
+        <ClientHistory session={session} client={client} />
+      )}
+
       {step === "catalog" && client && (
         <CatalogStep session={session} cart={cart} onQtyChange={setQty} freeItems={freeItems}
           onValidate={handleValidate} submitting={submitting}
@@ -615,6 +627,9 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
 
       {showAppointment && client && (
         <AppointmentModal session={session} client={client} onClose={() => setShowAppointment(false)} onToast={onToast} />
+      )}
+      {showClientNote && client && (
+        <ClientNoteModal session={session} client={client} onClose={() => setShowClientNote(false)} onToast={onToast} />
       )}
     </div>
   );
@@ -776,6 +791,130 @@ function ClientStep({ session, onSelect }: { session: odoo.OdooSession; onSelect
             </button>
           ))}
         </div>
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// HUB CLIENT — écran d'accueil une fois le client sélectionné
+// ═══════════════════════════════════════════════════════════════════════════
+function ClientHub({ client, hasDraft, onOrder, onHistory, onAppointment, onNote }: {
+  client: any; hasDraft: boolean;
+  onOrder: () => void; onHistory: () => void; onAppointment: () => void; onNote: () => void;
+}) {
+  const cards = [
+    { key: "order", icon: "🛒", title: "Prise de commande", subtitle: hasDraft ? "Brouillon en attente" : "Nouveau devis", gradient: "linear-gradient(135deg, #0d9488, #0f766e)", badge: hasDraft, onClick: onOrder },
+    { key: "history", icon: "🕓", title: "Historique", subtitle: "Commandes passées", gradient: "linear-gradient(135deg, #2563eb, #1d4ed8)", badge: false, onClick: onHistory },
+    { key: "rdv", icon: "📅", title: "Prendre un RDV", subtitle: "Agenda Odoo", gradient: "linear-gradient(135deg, #7c3aed, #6d28d9)", badge: false, onClick: onAppointment },
+    { key: "note", icon: "🗒️", title: "Note client", subtitle: "Compte rendu, vocal ou écrit", gradient: "linear-gradient(135deg, #ea580c, #c2410c)", badge: false, onClick: onNote },
+  ];
+
+  return (
+    <div style={{ flex: 1, display: "flex", flexDirection: "column" as const, alignItems: "center", padding: "48px 24px", overflowY: "auto" as const }}>
+      <div style={{ width: "100%", maxWidth: 640 }}>
+        {/* Carte identité client */}
+        <div style={{ display: "flex", alignItems: "center", gap: 18, marginBottom: 36 }}>
+          <div style={{ width: 72, height: 72, borderRadius: 20, background: "linear-gradient(135deg, #0d9488, #7c3aed)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 28, fontWeight: 800, color: "#fff", flexShrink: 0, boxShadow: "0 8px 20px rgba(13,148,136,0.3)" }}>
+            {client.name.charAt(0).toUpperCase()}
+          </div>
+          <div style={{ minWidth: 0 }}>
+            <div style={{ fontSize: 24, fontWeight: 800, color: C.text, lineHeight: 1.2 }}>{client.name}</div>
+            <div style={{ display: "flex", flexWrap: "wrap" as const, gap: 10, marginTop: 6 }}>
+              {client.ref && <span style={{ fontSize: 12, color: C.muted }}>Réf: {client.ref}</span>}
+              {client.city && <span style={{ fontSize: 12, color: C.muted }}>📍 {client.city}</span>}
+              {client.phone && <span style={{ fontSize: 12, color: C.muted }}>📞 {client.phone}</span>}
+            </div>
+            {client.property_product_pricelist && (
+              <div style={{ display: "inline-block", marginTop: 8, fontSize: 11, fontWeight: 700, color: C.teal, background: C.tealSoft, borderRadius: 8, padding: "3px 9px" }}>
+                {client.property_product_pricelist[1]}
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Grille d'actions */}
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 16 }}>
+          {cards.map(c => (
+            <button key={c.key} onClick={c.onClick}
+              style={{ position: "relative" as const, textAlign: "left" as const, padding: "22px 20px", borderRadius: 20, border: "none", background: c.gradient, color: "#fff", cursor: "pointer", fontFamily: "inherit", boxShadow: "0 10px 24px rgba(15,23,42,0.14)", transition: "transform 0.15s" }}>
+              {c.badge && (
+                <div style={{ position: "absolute" as const, top: 14, right: 14, width: 10, height: 10, borderRadius: "50%", background: "#fde047", boxShadow: "0 0 0 3px rgba(255,255,255,0.35)" }} />
+              )}
+              <div style={{ fontSize: 30, marginBottom: 14 }}>{c.icon}</div>
+              <div style={{ fontSize: 15, fontWeight: 800 }}>{c.title}</div>
+              <div style={{ fontSize: 12, opacity: 0.85, marginTop: 3 }}>{c.subtitle}</div>
+            </button>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// HISTORIQUE DES COMMANDES — devis/commandes passés de ce client
+// ═══════════════════════════════════════════════════════════════════════════
+function ClientHistory({ session, client }: { session: odoo.OdooSession; client: any }) {
+  const [orders, setOrders] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    (async () => {
+      setLoading(true);
+      setError("");
+      try {
+        const rows = await odoo.searchRead(session, "sale.order",
+          [["partner_id", "=", client.id]],
+          ["id", "name", "date_order", "amount_total", "state"], 60, "date_order desc");
+        setOrders(rows);
+      } catch (e: any) {
+        setError(e.message || "Erreur de chargement");
+      }
+      setLoading(false);
+    })();
+  }, [session, client.id]);
+
+  const stateInfo: Record<string, { label: string; color: string; bg: string }> = {
+    draft:    { label: "Devis",     color: C.muted,  bg: C.bg },
+    sent:     { label: "Envoyé",    color: C.blue,   bg: C.blueSoft },
+    sale:     { label: "Confirmée", color: C.green,  bg: C.greenSoft },
+    done:     { label: "Terminée",  color: C.teal,   bg: C.tealSoft },
+    cancel:   { label: "Annulée",   color: C.red,    bg: C.redSoft },
+  };
+
+  return (
+    <div style={{ flex: 1, display: "flex", flexDirection: "column" as const, alignItems: "center", padding: "32px 24px", overflowY: "auto" as const }}>
+      <div style={{ width: "100%", maxWidth: 640 }}>
+        <div style={{ fontSize: 13, color: C.muted, marginBottom: 18 }}>{client.name}</div>
+
+        {loading ? (
+          <div style={{ textAlign: "center" as const, color: C.muted, padding: 40 }}>Chargement…</div>
+        ) : error ? (
+          <div style={{ background: C.redSoft, color: C.red, borderRadius: 12, padding: "12px 16px", fontSize: 13 }}>{error}</div>
+        ) : orders.length === 0 ? (
+          <div style={{ textAlign: "center" as const, color: C.muted, padding: 60 }}>
+            <div style={{ fontSize: 40, marginBottom: 12 }}>📭</div>
+            <div style={{ fontSize: 14, fontWeight: 600 }}>Aucune commande pour ce client</div>
+          </div>
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column" as const, gap: 10 }}>
+            {orders.map(o => {
+              const info = stateInfo[o.state] || { label: o.state, color: C.muted, bg: C.bg };
+              return (
+                <div key={o.id} style={{ display: "flex", alignItems: "center", gap: 14, padding: "14px 16px", background: C.white, border: `1px solid ${C.border}`, borderRadius: 14, boxShadow: C.shadow }}>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 14, fontWeight: 700, color: C.text }}>{o.name}</div>
+                    <div style={{ fontSize: 12, color: C.muted, marginTop: 2 }}>{o.date_order ? fmtDate(new Date(o.date_order.replace(" ", "T") + "Z").getTime()) : "—"}</div>
+                  </div>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: info.color, background: info.bg, borderRadius: 8, padding: "4px 10px", flexShrink: 0 }}>{info.label}</div>
+                  <div style={{ fontSize: 14, fontWeight: 800, color: C.tealDark, minWidth: 80, textAlign: "right" as const }}>{fmtPrice(o.amount_total)}</div>
+                </div>
+              );
+            })}
+          </div>
+        )}
       </div>
     </div>
   );
