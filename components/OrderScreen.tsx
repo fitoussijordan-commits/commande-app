@@ -2,6 +2,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import * as odoo from "@/lib/odoo";
 import AppointmentModal from "@/components/AppointmentModal";
+import * as loyalty from "@/lib/loyalty";
 
 // ── Palette ───────────────────────────────────────────────────────────────────
 const C = {
@@ -199,6 +200,15 @@ async function getValidatedTagId(session: odoo.OdooSession): Promise<number | nu
   return _validatedTagIdCache ?? null;
 }
 
+// Programmes de remise Odoo (Ventes → Réductions & fidélité) — récupérés une fois par session app,
+// ce sont des données globales (pas liées à un client précis).
+let _loyaltyProgramsCache: loyalty.LoyaltyProgram[] | null = null;
+async function getLoyaltyPrograms(session: odoo.OdooSession): Promise<loyalty.LoyaltyProgram[]> {
+  if (_loyaltyProgramsCache !== null) return _loyaltyProgramsCache;
+  _loyaltyProgramsCache = await loyalty.fetchActiveLoyaltyPrograms(session);
+  return _loyaltyProgramsCache;
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 export default function OrderScreen({ session, onBack, onToast, desktop }: Props) {
   const [step, setStep] = useState<"client" | "catalog">("client");
@@ -217,14 +227,41 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
   const [pendingDrafts, setPendingDrafts] = useState<{ clientId: string; draft: Draft }[]>([]);
   const [showDraftsPanel, setShowDraftsPanel] = useState(false);
   const [showAppointment, setShowAppointment] = useState(false);
+  // Remises additionnelles Odoo (Ventes → Réductions & fidélité)
+  const [loyaltyPrograms, setLoyaltyPrograms] = useState<loyalty.LoyaltyProgram[]>([]);
+  const [appliedPromos, setAppliedPromos] = useState<Record<number, loyalty.AppliedPromo>>({});
+  const [showPromoPanel, setShowPromoPanel] = useState(false);
   const refreshPendingDrafts = useCallback(() => setPendingDrafts(listDrafts()), []);
 
-  // Chargement initial : règles + migration de l'ancien format de brouillon unique
+  // Chargement initial : règles + migration de l'ancien format de brouillon unique + remises Odoo
   useEffect(() => {
     setRules(loadRules());
     migrateLegacyDraft();
     refreshPendingDrafts();
+    getLoyaltyPrograms(session).then(setLoyaltyPrograms);
   }, [session, refreshPendingDrafts]);
+
+  // Programmes dont les conditions sont actuellement remplies par le panier
+  const triggeredPromos = loyaltyPrograms.filter(p => loyalty.isProgramTriggered(p, cart));
+  const availablePromoCount = triggeredPromos.filter(p => !appliedPromos[p.id]).length;
+
+  const applyPromo = async (program: loyalty.LoyaltyProgram) => {
+    const reward = program.rewards[0];
+    if (!reward) return;
+    if (reward.reward_type === "product" && reward.reward_product_id) {
+      const prod = await loyalty.fetchProductBasics(session, reward.reward_product_id);
+      setAppliedPromos(prev => ({ ...prev, [program.id]: { type: "product", program, reward, productName: prod?.name || "Produit offert" } }));
+    } else if (reward.reward_type === "discount") {
+      setAppliedPromos(prev => ({ ...prev, [program.id]: { type: "discount", program, reward } }));
+    } else {
+      onToast("Type de récompense non géré par l'app (livraison gratuite ?)", "info");
+      return;
+    }
+    onToast(`Remise « ${program.name} » appliquée`, "success");
+  };
+  const removePromo = (programId: number) => {
+    setAppliedPromos(prev => { const n = { ...prev }; delete n[programId]; return n; });
+  };
 
   // Sauvegarde auto du brouillon du client courant dès que le panier ou la note change —
   // stocké par client, ne touche jamais aux brouillons des autres clients.
@@ -270,6 +307,7 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
     setCart(d.cart);
     setNote(d.note || "");
     setResumePrompt(null);
+    setAppliedPromos({});
     setShowDraftsPanel(false);
     setStep("catalog");
     const plId = d.client?.property_product_pricelist?.[0];
@@ -293,6 +331,11 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
 
       const pricelistId = client.property_product_pricelist?.[0] || false;
 
+      // Remises additionnelles Odoo appliquées manuellement (bouton 🏷️) : % par produit du panier
+      const lineDiscounts = loyalty.computeLineDiscounts(appliedPromos, cart);
+      // Produits offerts par une remise "Achetez X" (distincts des règles maison du panneau ⚙️)
+      const promoFreeLines = Object.values(appliedPromos).filter((p): p is loyalty.AppliedFreePromo => p.type === "product");
+
       // Commande + toutes ses lignes créées en UN SEUL appel Odoo (commandes one2many [0,0,{...}])
       // au lieu d'un appel par ligne — c'est ça qui rendait les gros devis lents.
       const mainId = await odoo.create(session, "sale.order", {
@@ -300,11 +343,19 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
         ...(pricelistId ? { pricelist_id: pricelistId } : {}),
         note: note || "",
         ...tagVals,
-        order_line: Object.values(cart).map(item => [0, 0, {
-          product_id: item.product.id,
-          product_uom_qty: item.qty,
-          price_unit: item.unitPrice,
-        }]),
+        order_line: [
+          ...Object.values(cart).map(item => [0, 0, {
+            product_id: item.product.id,
+            product_uom_qty: item.qty,
+            price_unit: item.unitPrice,
+            ...(lineDiscounts[item.product.id] ? { discount: lineDiscounts[item.product.id] } : {}),
+          }]),
+          ...promoFreeLines.map(p => [0, 0, {
+            product_id: p.reward.reward_product_id,
+            product_uom_qty: p.reward.reward_product_qty,
+            price_unit: 0,
+          }]),
+        ],
       });
 
       let freeId: number | null = null;
@@ -322,6 +373,7 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
       }
       removeDraftForClient(client.id); // effacer le brouillon de CE client après création réussie
       refreshPendingDrafts();
+      setAppliedPromos({});
       setDone({ mainId, freeId });
     } catch (e: any) { onToast("Erreur : " + e.message, "error"); }
     setSubmitting(false);
@@ -338,7 +390,7 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
           {done.freeId && <><br/>BC gratuit <span style={{ color: C.purple, fontWeight: 700 }}>#{done.freeId}</span> créé automatiquement</>}
         </div>
         <div style={{ display: "flex", gap: 12, justifyContent: "center" }}>
-          <button onClick={() => { setDone(null); setCart({}); setClient(null); setNote(""); setResumePrompt(null); setStep("client"); }}
+          <button onClick={() => { setDone(null); setCart({}); setClient(null); setNote(""); setResumePrompt(null); setAppliedPromos({}); setStep("client"); }}
             style={{ padding: "14px 28px", background: C.teal, color: "#fff", border: "none", borderRadius: 12, fontSize: 15, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
             Nouvelle commande
           </button>
@@ -402,7 +454,7 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
               <div style={{ fontSize: 12, fontWeight: 700, color: C.tealDark }}>{client.name}</div>
               {client.property_product_pricelist && <div style={{ fontSize: 10, color: C.teal }}>{client.property_product_pricelist[1]}</div>}
             </div>
-            {step !== "client" && <button onClick={(e) => { e.stopPropagation(); setClient(null); setCart({}); setStep("client"); }} style={{ background: "none", border: "none", cursor: "pointer", color: C.muted, fontSize: 14, lineHeight: 1 }}>✕</button>}
+            {step !== "client" && <button onClick={(e) => { e.stopPropagation(); setClient(null); setCart({}); setAppliedPromos({}); setStep("client"); }} style={{ background: "none", border: "none", cursor: "pointer", color: C.muted, fontSize: 14, lineHeight: 1 }}>✕</button>}
           </div>
         )}
 
@@ -411,6 +463,15 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
           <button onClick={() => setShowAppointment(true)} title="Prendre un RDV avec ce client"
             style={{ width: 36, height: 36, borderRadius: 10, background: C.bg, border: `1px solid ${C.border}`, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16, flexShrink: 0 }}>
             📅
+          </button>
+        )}
+
+        {/* Remises additionnelles Odoo disponibles pour ce panier */}
+        {step === "catalog" && availablePromoCount > 0 && (
+          <button onClick={() => setShowPromoPanel(v => !v)} title="Remises disponibles pour ce panier"
+            style={{ display: "flex", alignItems: "center", gap: 5, height: 36, padding: "0 10px", borderRadius: 10, background: showPromoPanel ? C.orangeSoft : C.orange, border: `1px solid ${C.orange}`, cursor: "pointer", fontFamily: "inherit" }}>
+            <span style={{ fontSize: 14 }}>🏷️</span>
+            <span style={{ fontSize: 12, fontWeight: 800, color: showPromoPanel ? C.orange : "#fff" }}>{availablePromoCount}</span>
           </button>
         )}
 
@@ -453,6 +514,43 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
         </div>
       )}
 
+      {/* ── Panneau des remises additionnelles Odoo déclenchées par le panier en cours ── */}
+      {showPromoPanel && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 100, display: "flex", alignItems: "flex-start", justifyContent: "flex-end" }} onClick={() => setShowPromoPanel(false)}>
+          <div style={{ width: 360, maxHeight: "80vh", marginTop: 60, marginRight: 16, background: "#fff", borderRadius: 16, boxShadow: C.shadowXl, overflowY: "auto" as const }} onClick={e => e.stopPropagation()}>
+            <div style={{ padding: "14px 18px", borderBottom: `1px solid ${C.border}`, fontSize: 14, fontWeight: 800, color: C.text }}>
+              Remises disponibles ({triggeredPromos.length})
+            </div>
+            {triggeredPromos.length === 0 ? (
+              <div style={{ padding: 24, textAlign: "center" as const, color: C.muted, fontSize: 13 }}>Aucune remise ne correspond au panier actuel</div>
+            ) : triggeredPromos.map(program => {
+              const applied = appliedPromos[program.id];
+              const reward = program.rewards[0];
+              const desc = !reward ? "" :
+                reward.reward_type === "discount"
+                  ? `-${reward.discount}% ${reward.discount_applicability === "order" ? "sur tout le panier" : reward.discount_applicability === "cheapest" ? "sur l'article le moins cher" : "sur les articles concernés"}`
+                  : reward.reward_type === "product"
+                    ? `${reward.reward_product_qty} produit${reward.reward_product_qty > 1 ? "s" : ""} offert${reward.reward_product_qty > 1 ? "s" : ""}`
+                    : "Récompense non gérée par l'app";
+              return (
+                <div key={program.id} style={{ padding: "12px 18px", borderBottom: `1px solid ${C.border}` }}>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: C.text }}>{program.name}</div>
+                  <div style={{ fontSize: 12, color: C.orange, fontWeight: 600, marginTop: 2 }}>{desc}</div>
+                  {applied ? (
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 8 }}>
+                      <span style={{ fontSize: 11, fontWeight: 700, color: C.green }}>✓ Appliquée</span>
+                      <button onClick={() => removePromo(program.id)} style={{ padding: "5px 10px", background: "transparent", color: C.muted, border: `1px solid ${C.border}`, borderRadius: 8, fontSize: 11, cursor: "pointer", fontFamily: "inherit" }}>Retirer</button>
+                    </div>
+                  ) : (
+                    <button onClick={() => applyPromo(program)} style={{ marginTop: 8, padding: "6px 14px", background: C.orange, color: "#fff", border: "none", borderRadius: 8, fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>Appliquer</button>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
       {/* ── Panneau global des brouillons en attente (tous clients) — ouvert uniquement au clic ── */}
       {showDraftsPanel && (
         <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 100, display: "flex", alignItems: "flex-start", justifyContent: "flex-end" }} onClick={() => setShowDraftsPanel(false)}>
@@ -492,6 +590,7 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
         // d'un client précédent si on revient en arrière sans passer par la croix ✕.
         setCart({});
         setNote("");
+        setAppliedPromos({});
         // Brouillon existant pour CE client précisément (jamais un autre) → bandeau scopé à l'écran suivant
         setResumePrompt(loadDraftForClient(c.id));
         setStep("catalog");
