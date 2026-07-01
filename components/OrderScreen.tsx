@@ -217,7 +217,7 @@ async function getLoyaltyPrograms(session: odoo.OdooSession): Promise<loyalty.Lo
 
 // ═══════════════════════════════════════════════════════════════════════════
 export default function OrderScreen({ session, onBack, onToast, desktop }: Props) {
-  const [step, setStep] = useState<"client" | "hub" | "catalog" | "history">("client");
+  const [step, setStep] = useState<"home" | "client" | "hub" | "catalog" | "history">("home");
   const [client, setClient] = useState<any>(null);
   const [priceItems, setPriceItems] = useState<PriceItem[]>([]); // items pricelist du client
   const [cart, setCart] = useState<Record<number, CartItem>>({});
@@ -432,6 +432,7 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
         <button onClick={() => {
             if (step === "catalog" || step === "history") setStep("hub");
             else if (step === "hub") setStep("client");
+            else if (step === "client") setStep("home");
             else onBack();
           }}
           title="Retour"
@@ -441,6 +442,7 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
 
         {/* Fil d'ariane simple : où on en est pour ce client */}
         <div style={{ fontSize: 13, fontWeight: 700, color: C.muted }}>
+          {step === "home" && "Accueil"}
           {step === "client" && "Choisir un client"}
           {step === "hub" && "Fiche client"}
           {step === "catalog" && "Prise de commande"}
@@ -594,6 +596,10 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
       )}
 
       {/* ── Étapes ── */}
+      {step === "home" && (
+        <HomeScreen session={session} onNewOrder={() => setStep("client")} />
+      )}
+
       {step === "client" && <ClientStep session={session} onSelect={c => {
         setClient(c);
         setStep("hub");
@@ -650,6 +656,137 @@ function fmtDistance(km: number): string {
 const LOC_RADIUS_KM = 1;
 
 const CLIENT_FIELDS = ["id", "name", "ref", "city", "country_id", "property_product_pricelist", "email", "phone"];
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ACCUEIL — planning de la semaine du commercial connecté
+// ═══════════════════════════════════════════════════════════════════════════
+const WEEKDAY_LABELS = ["Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi", "Samedi", "Dimanche"];
+
+function startOfWeek(d: Date): Date {
+  const day = d.getDay(); // 0 = dimanche
+  const diff = day === 0 ? -6 : 1 - day; // lundi = début de semaine
+  const monday = new Date(d);
+  monday.setHours(0, 0, 0, 0);
+  monday.setDate(d.getDate() + diff);
+  return monday;
+}
+function toOdooDateStr(d: Date): string {
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:00`;
+}
+function odooToLocalDate(s: string): Date {
+  return new Date(s.replace(" ", "T") + "Z"); // Odoo renvoie de l'UTC naïf
+}
+function sameDay(a: Date, b: Date): boolean {
+  return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+}
+
+function HomeScreen({ session, onNewOrder }: { session: odoo.OdooSession; onNewOrder: () => void }) {
+  const [events, setEvents] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  const monday = startOfWeek(new Date());
+  const days = Array.from({ length: 7 }, (_, i) => {
+    const d = new Date(monday);
+    d.setDate(monday.getDate() + i);
+    return d;
+  });
+  const today = new Date();
+
+  useEffect(() => {
+    (async () => {
+      setLoading(true);
+      try {
+        const sunday = new Date(monday);
+        sunday.setDate(monday.getDate() + 7);
+        const rows = await odoo.searchRead(session, "calendar.event",
+          [["user_id", "=", session.uid], ["start", "<", toOdooDateStr(sunday)], ["stop", ">=", toOdooDateStr(monday)]],
+          ["id", "name", "start", "stop", "location"], 200, "start asc");
+        setEvents(rows);
+      } catch {
+        setEvents([]);
+      }
+      setLoading(false);
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session]);
+
+  const eventsByDay = days.map(d => events.filter(e => sameDay(odooToLocalDate(e.start), d)));
+  const totalCount = events.length;
+
+  return (
+    <div style={{ flex: 1, overflowY: "auto" as const, padding: "36px 24px 60px" }}>
+      <div style={{ maxWidth: 720, margin: "0 auto" }}>
+        {/* En-tête */}
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap" as const, gap: 16, marginBottom: 28 }}>
+          <div>
+            <div style={{ fontSize: 13, color: C.muted, fontWeight: 600 }}>Bonjour {session.name?.split(" ")[0] || ""} 👋</div>
+            <div style={{ fontSize: 24, fontWeight: 800, color: C.text, marginTop: 2 }}>Ta semaine</div>
+          </div>
+          <button onClick={onNewOrder}
+            style={{ display: "flex", alignItems: "center", gap: 8, padding: "13px 22px", background: "linear-gradient(135deg, #0d9488, #0f766e)", color: "#fff", border: "none", borderRadius: 14, fontSize: 14, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", boxShadow: "0 8px 20px rgba(13,148,136,0.3)" }}>
+            🛒 Nouvelle commande
+          </button>
+        </div>
+
+        {/* Bandeau résumé */}
+        <div style={{ background: "linear-gradient(135deg, #0d9488 0%, #7c3aed 100%)", borderRadius: 18, padding: "18px 22px", color: "#fff", marginBottom: 24, display: "flex", alignItems: "center", gap: 14, boxShadow: "0 10px 24px rgba(15,23,42,0.16)" }}>
+          <div style={{ fontSize: 28 }}>📅</div>
+          <div>
+            <div style={{ fontSize: 15, fontWeight: 800 }}>
+              {loading ? "Chargement du planning…" : totalCount === 0 ? "Aucun RDV cette semaine" : `${totalCount} RDV cette semaine`}
+            </div>
+            <div style={{ fontSize: 12, opacity: 0.85, marginTop: 2 }}>
+              {monday.toLocaleDateString("fr-FR", { day: "numeric", month: "long" })} — {days[6].toLocaleDateString("fr-FR", { day: "numeric", month: "long" })}
+            </div>
+          </div>
+        </div>
+
+        {/* Planning jour par jour */}
+        <div style={{ display: "flex", flexDirection: "column" as const, gap: 4 }}>
+          {days.map((d, i) => {
+            const dayEvents = eventsByDay[i];
+            const isToday = sameDay(d, today);
+            const isPast = d < today && !isToday;
+            return (
+              <div key={i} style={{ display: "flex", gap: 16, padding: "14px 4px", borderBottom: i < 6 ? `1px solid ${C.border}` : "none", opacity: isPast ? 0.5 : 1 }}>
+                {/* Colonne date */}
+                <div style={{ width: 64, flexShrink: 0, textAlign: "center" as const }}>
+                  <div style={{ fontSize: 10, fontWeight: 700, color: isToday ? C.teal : C.muted, textTransform: "uppercase" as const, letterSpacing: "0.04em" }}>{WEEKDAY_LABELS[i].slice(0, 3)}</div>
+                  <div style={{
+                    width: 34, height: 34, borderRadius: "50%", margin: "4px auto 0",
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                    background: isToday ? "linear-gradient(135deg, #0d9488, #7c3aed)" : "transparent",
+                    color: isToday ? "#fff" : C.text, fontSize: 15, fontWeight: 800,
+                  }}>
+                    {d.getDate()}
+                  </div>
+                </div>
+
+                {/* Colonne événements */}
+                <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column" as const, gap: 6, paddingTop: 2 }}>
+                  {dayEvents.length === 0 ? (
+                    <div style={{ fontSize: 12, color: C.muted, paddingTop: 6 }}>Aucun RDV</div>
+                  ) : dayEvents.map(e => (
+                    <div key={e.id} style={{ display: "flex", alignItems: "center", gap: 10, background: C.tealSoft, border: `1px solid ${C.tealMid}`, borderRadius: 10, padding: "8px 12px" }}>
+                      <div style={{ fontSize: 11, fontWeight: 800, color: C.tealDark, flexShrink: 0, minWidth: 40 }}>
+                        {odooToLocalDate(e.start).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}
+                      </div>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 13, fontWeight: 700, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>{e.name}</div>
+                        {e.location && <div style={{ fontSize: 11, color: C.muted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>📍 {e.location}</div>}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
 
 // ═══════════════════════════════════════════════════════════════════════════
 // ÉTAPE 1 — Sélection client
