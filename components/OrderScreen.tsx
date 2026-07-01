@@ -859,6 +859,22 @@ function ClientHistory({ session, client }: { session: odoo.OdooSession; client:
   const [orders, setOrders] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [selectedOrder, setSelectedOrder] = useState<any | null>(null);
+  const [orderLines, setOrderLines] = useState<any[]>([]);
+  const [loadingLines, setLoadingLines] = useState(false);
+
+  const openOrder = async (o: any) => {
+    setSelectedOrder(o);
+    setLoadingLines(true);
+    setOrderLines([]);
+    try {
+      const lines = await odoo.searchRead(session, "sale.order.line",
+        [["order_id", "=", o.id], ["display_type", "=", false]],
+        ["id", "product_id", "name", "product_uom_qty", "price_unit", "price_subtotal", "discount"], 200);
+      setOrderLines(lines);
+    } catch {}
+    setLoadingLines(false);
+  };
 
   useEffect(() => {
     (async () => {
@@ -903,19 +919,69 @@ function ClientHistory({ session, client }: { session: odoo.OdooSession; client:
             {orders.map(o => {
               const info = stateInfo[o.state] || { label: o.state, color: C.muted, bg: C.bg };
               return (
-                <div key={o.id} style={{ display: "flex", alignItems: "center", gap: 14, padding: "14px 16px", background: C.white, border: `1px solid ${C.border}`, borderRadius: 14, boxShadow: C.shadow }}>
+                <button key={o.id} onClick={() => openOrder(o)}
+                  style={{ display: "flex", alignItems: "center", gap: 14, padding: "14px 16px", background: C.white, border: `1px solid ${C.border}`, borderRadius: 14, boxShadow: C.shadow, cursor: "pointer", fontFamily: "inherit", textAlign: "left" as const, width: "100%" }}>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ fontSize: 14, fontWeight: 700, color: C.text }}>{o.name}</div>
                     <div style={{ fontSize: 12, color: C.muted, marginTop: 2 }}>{o.date_order ? fmtDate(new Date(o.date_order.replace(" ", "T") + "Z").getTime()) : "—"}</div>
                   </div>
                   <div style={{ fontSize: 11, fontWeight: 700, color: info.color, background: info.bg, borderRadius: 8, padding: "4px 10px", flexShrink: 0 }}>{info.label}</div>
                   <div style={{ fontSize: 14, fontWeight: 800, color: C.tealDark, minWidth: 80, textAlign: "right" as const }}>{fmtPrice(o.amount_total)}</div>
-                </div>
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={C.muted} strokeWidth="2" style={{ flexShrink: 0 }}><path d="M9 18l6-6-6-6"/></svg>
+                </button>
               );
             })}
           </div>
         )}
       </div>
+
+      {/* ── Détail d'une commande (overlay) ── */}
+      {selectedOrder && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 200, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }} onClick={() => setSelectedOrder(null)}>
+          <div onClick={e => e.stopPropagation()}
+            style={{ width: "100%", maxWidth: 480, maxHeight: "85vh", display: "flex", flexDirection: "column" as const, background: C.white, borderRadius: 20, boxShadow: C.shadowXl, fontFamily: "'DM Sans', sans-serif", overflow: "hidden" }}>
+            <div style={{ padding: "20px 22px 14px", borderBottom: `1px solid ${C.border}`, flexShrink: 0 }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                <div style={{ fontSize: 16, fontWeight: 800, color: C.text }}>{selectedOrder.name}</div>
+                <button onClick={() => setSelectedOrder(null)} style={{ background: "none", border: "none", cursor: "pointer", color: C.muted, fontSize: 18, lineHeight: 1 }}>✕</button>
+              </div>
+              <div style={{ fontSize: 12, color: C.muted, marginTop: 4 }}>
+                {selectedOrder.date_order ? fmtDate(new Date(selectedOrder.date_order.replace(" ", "T") + "Z").getTime()) : "—"}
+                {" · "}
+                {(stateInfo[selectedOrder.state] || { label: selectedOrder.state }).label}
+              </div>
+            </div>
+
+            <div style={{ flex: 1, overflowY: "auto" as const, padding: "12px 22px" }}>
+              {loadingLines ? (
+                <div style={{ textAlign: "center" as const, color: C.muted, padding: 30 }}>Chargement…</div>
+              ) : orderLines.length === 0 ? (
+                <div style={{ textAlign: "center" as const, color: C.muted, padding: 30, fontSize: 13 }}>Aucune ligne trouvée</div>
+              ) : (
+                <div style={{ display: "flex", flexDirection: "column" as const, gap: 8 }}>
+                  {orderLines.map(l => (
+                    <div key={l.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 0", borderBottom: `1px solid ${C.border}` }}>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 13, fontWeight: 600, color: C.text }}>{l.product_id ? l.product_id[1] : l.name}</div>
+                        <div style={{ fontSize: 11, color: C.muted, marginTop: 2 }}>
+                          {l.product_uom_qty} × {fmtPrice(l.price_unit)}
+                          {l.discount > 0 && ` · -${l.discount}%`}
+                        </div>
+                      </div>
+                      <div style={{ fontSize: 13, fontWeight: 800, color: C.tealDark, flexShrink: 0 }}>{fmtPrice(l.price_subtotal)}</div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div style={{ padding: "14px 22px 20px", borderTop: `1px solid ${C.border}`, display: "flex", justifyContent: "space-between", alignItems: "center", flexShrink: 0 }}>
+              <span style={{ fontSize: 13, color: C.muted }}>Total HT</span>
+              <span style={{ fontSize: 17, fontWeight: 800, color: C.tealDark }}>{fmtPrice(selectedOrder.amount_total)}</span>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
