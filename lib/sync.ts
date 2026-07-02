@@ -34,7 +34,7 @@ export interface SyncProgress {
 export async function preloadCatalog(
   session: odoo.OdooSession,
   onProgress?: (p: SyncProgress) => void
-): Promise<{ products: number; clients: number; pricelistItems: number }> {
+): Promise<{ products: number; clients: number; pricelistItems: number; mea: number; meaError?: string }> {
   const steps = 4;
 
   // 1. Produits vendables
@@ -73,8 +73,10 @@ export async function preloadCatalog(
   );
   await db.kvSet(db.STORES.pricelist, KEY, pricelistItems);
 
-  // 4. MEA (modèles d'offre) — partagés, légers, préchargés une fois pour tous.
+  // 4. MEA (modèles d'offre) — partagés, préchargés une fois pour tous.
   onProgress?.({ step: "Offres (MEA)", done: 3, total: steps });
+  let meaCount = 0;
+  let meaError: string | undefined;
   try {
     const templates = await odoo.searchRead(
       session, "sale.order.template",
@@ -83,7 +85,10 @@ export async function preloadCatalog(
       200, "name"
     );
     await db.kvSet(db.STORES.mea, KEY, templates);
-  } catch { /* MEA optionnel — ne bloque pas le préchargement */ }
+    meaCount = Array.isArray(templates) ? templates.length : 0;
+  } catch (e: any) {
+    meaError = e?.message || String(e);
+  }
 
   await db.kvSet(db.STORES.meta, "lastSync", Date.now());
   onProgress?.({ step: "Terminé", done: steps, total: steps });
@@ -92,6 +97,8 @@ export async function preloadCatalog(
     products: products.length,
     clients: clients.length,
     pricelistItems: pricelistItems.length,
+    mea: meaCount,
+    meaError,
   };
 }
 

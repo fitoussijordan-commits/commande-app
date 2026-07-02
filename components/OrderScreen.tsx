@@ -978,7 +978,7 @@ function ClientStep({ session, onSelect }: { session: odoo.OdooSession; onSelect
             <svg style={{ position: "absolute", left: 14, top: "50%", transform: "translateY(-50%)" }} width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={C.muted} strokeWidth="2">
               <circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/>
             </svg>
-            <input autoFocus value={q} onChange={e => setQ(e.target.value)}
+            <input value={q} onChange={e => setQ(e.target.value)}
               placeholder="Nom du client..."
               style={{ width: "100%", boxSizing: "border-box" as const, padding: "14px 14px 14px 44px", border: `1.5px solid ${C.border}`, borderRadius: 14, fontSize: 16, fontFamily: "inherit", background: C.white, color: C.text, boxShadow: C.shadowMd, outline: "none" }} />
           </div>

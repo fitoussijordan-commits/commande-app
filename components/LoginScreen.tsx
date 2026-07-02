@@ -38,8 +38,13 @@ export default function LoginScreen({ onLogin }: Props) {
       }
     } catch {}
     // iOS/WKWebView peut ouvrir le clavier en mettant le focus sur un champ au
-    // lancement. On retire tout focus au montage pour éviter ça.
-    try { (document.activeElement as HTMLElement | null)?.blur?.(); } catch {}
+    // lancement. On retire le focus au montage ET après un court délai, car iOS
+    // le redonne parfois après le premier rendu.
+    const blurAll = () => { try { (document.activeElement as HTMLElement | null)?.blur?.(); } catch {} };
+    blurAll();
+    const t1 = setTimeout(blurAll, 100);
+    const t2 = setTimeout(blurAll, 400);
+    return () => { clearTimeout(t1); clearTimeout(t2); };
   }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
