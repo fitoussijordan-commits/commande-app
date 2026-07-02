@@ -142,7 +142,7 @@ export default function OfflineBar({
           disabled={preloading || !online}
           style={btnStyle(preloading || !online)}
         >
-          {preloading ? "Préparation…" : "Préparer le hors-ligne"}
+          {preloading ? "Téléchargement…" : "Télécharger les données"}
         </button>
 
         {pending > 0 && (
@@ -165,7 +165,7 @@ export default function OfflineBar({
   );
 }
 
-function btnStyle(disabled: boolean, bg = "#7c3aed"): React.CSSProperties {
+function btnStyle(disabled: boolean, bg = "#0f766e"): React.CSSProperties {
   return {
     background: disabled ? "#d1d5db" : bg,
     color: "#fff", border: "none", borderRadius: 8,
