@@ -240,6 +240,16 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
   const [showPromoPanel, setShowPromoPanel] = useState(false);
   const refreshPendingDrafts = useCallback(() => setPendingDrafts(listDrafts()), []);
 
+  // Sélectionne un client (depuis la recherche ou depuis un RDV du planning) et ouvre sa fiche.
+  const selectClient = useCallback((c: any) => {
+    setClient(c);
+    setStep("hub");
+    // 1 seul appel pricelist, réutilisé plus tard par la prise de commande
+    const plId = c.property_product_pricelist?.[0];
+    if (plId) fetchPricelistItems(session, plId).then(setPriceItems).catch(() => setPriceItems([]));
+    else setPriceItems([]);
+  }, [session]);
+
   // Chargement initial : règles + migration de l'ancien format de brouillon unique + remises Odoo
   useEffect(() => {
     setRules(loadRules());
@@ -605,17 +615,10 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
 
       {/* ── Étapes ── */}
       {step === "home" && (
-        <HomeScreen session={session} onNewOrder={() => setStep("client")} />
+        <HomeScreen session={session} onNewOrder={() => setStep("client")} onOpenClient={selectClient} onToast={onToast} />
       )}
 
-      {step === "client" && <ClientStep session={session} onSelect={c => {
-        setClient(c);
-        setStep("hub");
-        // 1 seul appel pricelist, réutilisé plus tard par la prise de commande
-        const plId = c.property_product_pricelist?.[0];
-        if (plId) fetchPricelistItems(session, plId).then(setPriceItems).catch(() => setPriceItems([]));
-        else setPriceItems([]);
-      }} />}
+      {step === "client" && <ClientStep session={session} onSelect={selectClient} />}
 
       {step === "hub" && client && (
         <ClientHub
@@ -690,7 +693,11 @@ function sameDay(a: Date, b: Date): boolean {
   return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
 }
 
-function HomeScreen({ session, onNewOrder }: { session: odoo.OdooSession; onNewOrder: () => void }) {
+function HomeScreen({ session, onNewOrder, onOpenClient, onToast }: {
+  session: odoo.OdooSession; onNewOrder: () => void;
+  onOpenClient: (client: any) => void;
+  onToast: (msg: string, type?: "success" | "error" | "info") => void;
+}) {
   const [events, setEvents] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [weekOffset, setWeekOffset] = useState(0); // 0 = semaine en cours, ±1 = semaine précédente/suivante
@@ -715,7 +722,7 @@ function HomeScreen({ session, onNewOrder }: { session: odoo.OdooSession; onNewO
         sunday.setDate(monday.getDate() + 7);
         const rows = await odoo.searchRead(session, "calendar.event",
           [["user_id", "=", session.uid], ["start", "<", toOdooDateStr(sunday)], ["stop", ">=", toOdooDateStr(monday)]],
-          ["id", "name", "start", "stop", "location"], 200, "start asc");
+          ["id", "name", "start", "stop", "location", "description"], 200, "start asc");
         setEvents(rows);
       } catch {
         setEvents([]);
@@ -728,72 +735,100 @@ function HomeScreen({ session, onNewOrder }: { session: odoo.OdooSession; onNewO
   const eventsByDay = days.map(d => events.filter(e => sameDay(odooToLocalDate(e.start), d)));
   const totalCount = events.length;
 
+  // Les RDV créés depuis l'outil Commande indiquent le client dans la description
+  // (le champ partner_ids n'est volontairement pas utilisé, cf. AppointmentModal — anti-invitation Outlook).
+  // On retrouve donc le client en relisant cette description plutôt que via un lien structuré.
+  const openEventClient = async (e: any) => {
+    const desc: string = e.description || "";
+    const match = desc.match(/Client\s*:\s*([^\n—]+)/i);
+    const name = match ? match[1].trim() : "";
+    if (!name) { onToast("Aucun client associé à ce RDV", "info"); return; }
+    try {
+      let rows = await odoo.searchRead(session, "res.partner", [["name", "=", name], ["active", "=", true]], CLIENT_FIELDS, 2);
+      if (rows.length !== 1) rows = await odoo.searchRead(session, "res.partner", [["name", "ilike", name], ["active", "=", true]], CLIENT_FIELDS, 2);
+      if (rows.length === 1) onOpenClient(rows[0]);
+      else onToast("Client introuvable pour ce RDV", "info");
+    } catch {
+      onToast("Erreur lors de l'ouverture du client", "error");
+    }
+  };
+
+  const EVENT_COLORS = [
+    { bg: "#f0fdfa", text: C.tealDark },
+    { bg: "#eff6ff", text: "#1d4ed8" },
+    { bg: "#fff7ed", text: "#c2410c" },
+    { bg: "#faf5ff", text: "#7c3aed" },
+  ];
+
   return (
-    <div style={{ flex: 1, overflowY: "auto" as const, padding: "28px 28px 40px", display: "flex", flexDirection: "column" as const }}>
-      {/* En-tête */}
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap" as const, gap: 16, marginBottom: 18 }}>
+    <div style={{ flex: 1, overflowY: "auto" as const, padding: "32px 28px 40px", display: "flex", flexDirection: "column" as const }}>
+      {/* En-tête minimaliste */}
+      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", flexWrap: "wrap" as const, gap: 16, marginBottom: 24 }}>
         <div>
-          <div style={{ fontSize: 13, color: C.muted, fontWeight: 600 }}>Bonjour {session.name?.split(" ")[0] || ""} 👋</div>
-          <div style={{ fontSize: 24, fontWeight: 800, color: C.text, marginTop: 2 }}>Ta semaine</div>
+          <div style={{ display: "inline-block", fontSize: 11, fontWeight: 700, color: C.tealDark, background: C.tealSoft, borderRadius: 999, padding: "4px 12px", textTransform: "uppercase" as const, letterSpacing: "0.04em", marginBottom: 10 }}>
+            {today.toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long" })}
+          </div>
+          <div style={{ fontSize: 26, fontWeight: 800, color: C.text }}>
+            Salut {session.name?.split(" ")[0] || ""}, {loading ? "…" : <span style={{ color: C.teal }}>{totalCount} RDV</span>} cette semaine
+          </div>
         </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-          <div style={{ textAlign: "right" as const }}>
-            <div style={{ fontSize: 15, fontWeight: 800, color: C.tealDark }}>
-              {loading ? "Chargement…" : totalCount === 0 ? "Aucun RDV" : `${totalCount} RDV cette semaine`}
-            </div>
-            <div style={{ fontSize: 12, color: C.muted, marginTop: 2 }}>
-              {monday.toLocaleDateString("fr-FR", { day: "numeric", month: "long" })} — {days[6].toLocaleDateString("fr-FR", { day: "numeric", month: "long" })}
-            </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          <button onClick={() => setWeekOffset(o => o - 1)} title="Semaine précédente"
+            style={{ width: 30, height: 30, borderRadius: "50%", background: "transparent", border: `1px solid ${C.border}`, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: C.textSec }}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M15 18l-6-6 6-6"/></svg>
+          </button>
+          <div onClick={() => weekOffset !== 0 && setWeekOffset(0)}
+            style={{ fontSize: 12, fontWeight: 700, color: C.tealDark, background: C.tealSoft, borderRadius: 999, padding: "6px 14px", cursor: weekOffset !== 0 ? "pointer" : "default", whiteSpace: "nowrap" as const }}>
+            {monday.toLocaleDateString("fr-FR", { day: "numeric", month: "short" })} — {days[6].toLocaleDateString("fr-FR", { day: "numeric", month: "short" })}
           </div>
-          <div style={{ display: "flex", alignItems: "center", gap: 4, background: C.white, border: `1.5px solid ${C.border}`, borderRadius: 12, padding: 4, boxShadow: C.shadow }}>
-            <button onClick={() => setWeekOffset(o => o - 1)} title="Semaine précédente"
-              style={{ width: 30, height: 30, borderRadius: 8, background: "transparent", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: C.textSec }}>
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M15 18l-6-6 6-6"/></svg>
-            </button>
-            {weekOffset !== 0 && (
-              <button onClick={() => setWeekOffset(0)}
-                style={{ padding: "5px 10px", background: C.tealSoft, border: "none", borderRadius: 8, cursor: "pointer", fontSize: 11, fontWeight: 700, color: C.tealDark, fontFamily: "inherit" }}>
-                Aujourd'hui
-              </button>
-            )}
-            <button onClick={() => setWeekOffset(o => o + 1)} title="Semaine suivante"
-              style={{ width: 30, height: 30, borderRadius: 8, background: "transparent", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: C.textSec }}>
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M9 18l6-6-6-6"/></svg>
-            </button>
-          </div>
+          <button onClick={() => setWeekOffset(o => o + 1)} title="Semaine suivante"
+            style={{ width: 30, height: 30, borderRadius: "50%", background: "transparent", border: `1px solid ${C.border}`, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: C.textSec }}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M9 18l6-6-6-6"/></svg>
+          </button>
         </div>
       </div>
 
-      {/* Vue semaine — 7 colonnes, utilise toute la largeur disponible */}
-      <div style={{ flex: 1, display: "grid", gridTemplateColumns: "repeat(7, minmax(130px, 1fr))", gap: 10, overflowX: "auto" as const }}>
+      {/* Vue semaine — 7 colonnes, style épuré */}
+      <div style={{ flex: 1, display: "grid", gridTemplateColumns: "repeat(7, minmax(120px, 1fr))", gap: 8, overflowX: "auto" as const }}>
         {days.map((d, i) => {
           const dayEvents = eventsByDay[i];
           const isToday = sameDay(d, today);
           const isPast = d < today && !isToday;
           return (
             <div key={i} style={{
-              display: "flex", flexDirection: "column" as const, borderRadius: 16,
-              background: isToday ? "linear-gradient(180deg, #f0fdfa 0%, #ffffff 120px)" : C.white,
-              border: `1.5px solid ${isToday ? C.teal : C.border}`, overflow: "hidden", opacity: isPast ? 0.55 : 1,
+              display: "flex", flexDirection: "column" as const, borderRadius: 14,
+              background: isToday ? C.tealSoft : "transparent",
+              opacity: isPast ? 0.5 : 1,
             }}>
               {/* En-tête jour */}
-              <div style={{ padding: "12px 10px", textAlign: "center" as const, borderBottom: `1px solid ${isToday ? C.tealMid : C.border}`, background: isToday ? "linear-gradient(135deg, #0d9488, #7c3aed)" : C.bg, flexShrink: 0 }}>
-                <div style={{ fontSize: 10, fontWeight: 700, color: isToday ? "rgba(255,255,255,0.85)" : C.muted, textTransform: "uppercase" as const, letterSpacing: "0.04em" }}>{WEEKDAY_LABELS[i].slice(0, 3)}</div>
-                <div style={{ fontSize: 20, fontWeight: 800, color: isToday ? "#fff" : C.text, marginTop: 2 }}>{d.getDate()}</div>
+              <div style={{ padding: "8px 4px", textAlign: "center" as const, flexShrink: 0 }}>
+                <div style={{ fontSize: 10, fontWeight: 700, color: C.muted, textTransform: "uppercase" as const, letterSpacing: "0.04em" }}>{WEEKDAY_LABELS[i].slice(0, 3)}</div>
+                <div style={{
+                  width: 26, height: 26, borderRadius: "50%", margin: "4px auto 0",
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                  background: isToday ? C.teal : "transparent",
+                  color: isToday ? "#fff" : C.text, fontSize: 14, fontWeight: 800,
+                }}>
+                  {d.getDate()}
+                </div>
               </div>
 
               {/* Événements du jour */}
-              <div style={{ flex: 1, padding: 8, display: "flex", flexDirection: "column" as const, gap: 6, minHeight: 90 }}>
+              <div style={{ flex: 1, padding: "2px 4px 4px", display: "flex", flexDirection: "column" as const, gap: 5, minHeight: 70 }}>
                 {dayEvents.length === 0 ? (
-                  <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, color: C.border, fontWeight: 600 }}>—</div>
-                ) : dayEvents.map(e => (
-                  <div key={e.id} style={{ background: C.tealSoft, border: `1px solid ${C.tealMid}`, borderRadius: 9, padding: "6px 8px" }}>
-                    <div style={{ fontSize: 10, fontWeight: 800, color: C.tealDark }}>
-                      {odooToLocalDate(e.start).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}
-                    </div>
-                    <div style={{ fontSize: 11, fontWeight: 700, color: C.text, marginTop: 2, lineHeight: 1.3, overflow: "hidden", display: "-webkit-box" as const, WebkitLineClamp: 2, WebkitBoxOrient: "vertical" as const }}>{e.name}</div>
-                  </div>
-                ))}
+                  <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, color: C.border }}>—</div>
+                ) : dayEvents.map((e, idx) => {
+                  const col = EVENT_COLORS[idx % EVENT_COLORS.length];
+                  return (
+                    <button key={e.id} onClick={() => openEventClient(e)} title="Ouvrir la fiche client"
+                      style={{ background: col.bg, border: "none", borderRadius: 8, padding: "6px 8px", cursor: "pointer", fontFamily: "inherit", textAlign: "left" as const, width: "100%" }}>
+                      <div style={{ fontSize: 10, fontWeight: 800, color: col.text }}>
+                        {odooToLocalDate(e.start).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}
+                      </div>
+                      <div style={{ fontSize: 11, fontWeight: 700, color: C.text, marginTop: 2, lineHeight: 1.3, overflow: "hidden", display: "-webkit-box" as const, WebkitLineClamp: 2, WebkitBoxOrient: "vertical" as const }}>{e.name}</div>
+                    </button>
+                  );
+                })}
               </div>
             </div>
           );
