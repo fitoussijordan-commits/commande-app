@@ -1416,17 +1416,32 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
       // Utilise les IDs de lignes déjà chargés pour éviter le filtre sur order_template_id
       const lineIds: number[] = template.sale_order_template_line_ids || [];
       if (!lineIds.length) { onToast("Aucun produit dans cette offre", "error"); setApplyingMea(null); return; }
-      const lines = await odoo.searchRead(session, "sale.order.template.line",
-        [["id", "in", lineIds], ["product_id", "!=", false]],
-        ["product_id", "product_uom_qty"],
-        200);
+
+      let lines: any[];
+      try {
+        lines = await odoo.searchRead(session, "sale.order.template.line",
+          [["id", "in", lineIds], ["product_id", "!=", false]],
+          ["id", "product_id", "product_uom_qty"],
+          200);
+      } catch {
+        // Hors ligne → lignes préchargées
+        lines = await sync.getCachedMeaLines(lineIds);
+      }
       if (!lines.length) { onToast("Aucun produit dans cette offre", "error"); setApplyingMea(null); return; }
 
       const productIds = lines.map((l: any) => l.product_id[0]);
-      const products = await odoo.searchRead(session, "product.product",
-        [["id", "in", productIds]],
-        ["id", "name", "default_code", "barcode", "lst_price", "product_tmpl_id", "virtual_available"],
-        productIds.length);
+      let products: any[];
+      try {
+        products = await odoo.searchRead(session, "product.product",
+          [["id", "in", productIds]],
+          ["id", "name", "default_code", "barcode", "lst_price", "product_tmpl_id", "virtual_available"],
+          productIds.length);
+      } catch {
+        // Hors ligne → produits depuis le catalogue préchargé
+        const cached = await sync.getCachedProducts();
+        const set = new Set(productIds);
+        products = cached.filter((p: any) => set.has(p.id));
+      }
       const productMap = new Map<number, any>(products.map((p: any) => [p.id as number, p]));
 
       let added = 0;

@@ -86,7 +86,19 @@ export async function preloadCatalog(
       ["id", "name", "sale_order_template_line_ids"],
       200, "name"
     );
-    await db.kvSet(db.STORES.mea, KEY, templates);
+    // Précharge aussi les LIGNES de tous les templates (produit + quantité),
+    // pour que « Ajouter au panier » fonctionne hors ligne.
+    const allLineIds = templates.flatMap((t: any) => t.sale_order_template_line_ids || []);
+    let lines: any[] = [];
+    if (allLineIds.length) {
+      lines = await odoo.searchRead(
+        session, "sale.order.template.line",
+        [["id", "in", allLineIds], ["product_id", "!=", false]],
+        ["id", "product_id", "product_uom_qty"],
+        allLineIds.length
+      );
+    }
+    await db.kvSet(db.STORES.mea, KEY, { templates, lines });
     meaCount = Array.isArray(templates) ? templates.length : 0;
   } catch (e: any) {
     meaError = e?.message || String(e);
@@ -104,12 +116,28 @@ export async function preloadCatalog(
   };
 }
 
+// Le cache MEA stocke { templates, lines }. On tolère l'ancien format (tableau).
+async function readMeaCache(): Promise<{ templates: any[]; lines: any[] }> {
+  const raw = await db.kvGet<any>(db.STORES.mea, KEY);
+  if (Array.isArray(raw)) return { templates: raw, lines: [] };
+  return { templates: raw?.templates || [], lines: raw?.lines || [] };
+}
+
 export async function getCachedMea(): Promise<any[]> {
-  return (await db.kvGet<any[]>(db.STORES.mea, KEY)) || [];
+  return (await readMeaCache()).templates;
+}
+
+// Lignes (produit + qty) d'un template donné, depuis le cache.
+export async function getCachedMeaLines(lineIds: number[]): Promise<any[]> {
+  const { lines } = await readMeaCache();
+  const set = new Set(lineIds);
+  return lines.filter((l: any) => set.has(l.id));
 }
 
 export async function cacheMea(templates: any[]): Promise<void> {
-  return db.kvSet(db.STORES.mea, KEY, templates);
+  // Conserve les lignes déjà en cache si on ne réécrit que les templates.
+  const { lines } = await readMeaCache();
+  return db.kvSet(db.STORES.mea, KEY, { templates, lines });
 }
 
 // ---- Données par client (favoris, CA, historique) ----
