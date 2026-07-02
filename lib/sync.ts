@@ -83,6 +83,69 @@ export async function getLastSync(): Promise<number | undefined> {
   return db.kvGet<number>(db.STORES.meta, "lastSync");
 }
 
+// ---- Préchargement des images produit (offline) ----
+
+import { apiUrl } from "@/lib/apiBase";
+
+// Télécharge une image via le proxy et la convertit en data URL base64.
+async function fetchImageAsDataUrl(session: odoo.OdooSession, productId: number): Promise<string | null> {
+  const url = apiUrl(
+    `/api/odoo/image?odooUrl=${encodeURIComponent(session.config.url)}&id=${productId}&s=${session.sessionId}`
+  );
+  try {
+    const res = await fetch(url, { cache: "no-store" });
+    if (!res.ok) return null;
+    const blob = await res.blob();
+    if (!blob.size) return null;
+    return await new Promise<string | null>((resolve) => {
+      const reader = new FileReader();
+      reader.onloadend = () => resolve(typeof reader.result === "string" ? reader.result : null);
+      reader.onerror = () => resolve(null);
+      reader.readAsDataURL(blob);
+    });
+  } catch {
+    return null;
+  }
+}
+
+// Précharge les images de tous les produits en cache. Par lots pour ne pas
+// saturer le réseau, en sautant celles déjà stockées (reprise possible).
+export async function preloadImages(
+  session: odoo.OdooSession,
+  onProgress?: (p: SyncProgress) => void,
+  batchSize = 8
+): Promise<{ downloaded: number; total: number }> {
+  const products = await getCachedProducts();
+  const total = products.length;
+  let done = 0, downloaded = 0;
+
+  for (let i = 0; i < products.length; i += batchSize) {
+    const batch = products.slice(i, i + batchSize);
+    await Promise.all(
+      batch.map(async (p: any) => {
+        const id = p.id;
+        if (!(await db.hasImage(id))) {
+          const dataUrl = await fetchImageAsDataUrl(session, id);
+          if (dataUrl) { await db.setImage(id, dataUrl); downloaded++; }
+        }
+        done++;
+      })
+    );
+    onProgress?.({ step: "Images produit", done, total });
+  }
+
+  await db.kvSet(db.STORES.meta, "lastImageSync", Date.now());
+  return { downloaded, total };
+}
+
+export async function getCachedImage(productId: number): Promise<string | undefined> {
+  return db.getImage(productId);
+}
+
+export async function countCachedImages(): Promise<number> {
+  return db.countImages();
+}
+
 export async function hasCache(): Promise<boolean> {
   const p = await db.kvGet(db.STORES.products, KEY);
   return Array.isArray(p) && p.length > 0;

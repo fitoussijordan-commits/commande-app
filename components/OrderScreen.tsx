@@ -219,6 +219,27 @@ async function getLoyaltyPrograms(session: odoo.OdooSession): Promise<loyalty.Lo
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// Image produit : privilégie l'image préchargée en local (offline), sinon le
+// proxy réseau. Rend le même <img> qu'avant, avec les styles passés en props.
+function ProductImage({ id, networkUrl, style }: { id: number; networkUrl: string; style: React.CSSProperties }) {
+  const [src, setSrc] = useState<string>("");
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const cached = await sync.getCachedImage(id);
+        if (alive) setSrc(cached || networkUrl);
+      } catch {
+        if (alive) setSrc(networkUrl);
+      }
+    })();
+    return () => { alive = false; };
+  }, [id, networkUrl]);
+  if (!src) return null;
+  return <img src={src} alt="" loading="lazy" style={style} onError={e => { (e.currentTarget as HTMLImageElement).style.display = "none"; }} />;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 export default function OrderScreen({ session, onBack, onToast, desktop }: Props) {
   const [step, setStep] = useState<"home" | "client" | "hub" | "catalog" | "history">("client");
   const [client, setClient] = useState<any>(null);
@@ -1635,7 +1656,7 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
                   <div key={p.id} style={{ background: C.white, borderRadius: 14, overflow: "hidden", border: `2px solid ${qty > 0 ? C.teal : isFree ? C.green : C.border}`, boxShadow: qty > 0 ? `0 0 0 3px ${C.tealSoft}` : C.shadow, transition: "all 0.15s" }}>
                     <div onClick={() => openZoom(p)} title="Agrandir l'image" style={{ height: 80, background: C.bg, display: "flex", alignItems: "center", justifyContent: "center", position: "relative" as const, cursor: "zoom-in" }}>
                       <div style={{ position: "absolute", fontSize: 32 }}>📦</div>
-                      <img src={imgUrl(p.id)} alt="" loading="lazy" style={{ height: 72, objectFit: "contain", position: "relative" as const, zIndex: 1 }} onError={e => { (e.currentTarget as HTMLImageElement).style.display = "none"; }} />
+                      <ProductImage id={p.id} networkUrl={imgUrl(p.id)} style={{ height: 72, objectFit: "contain", position: "relative" as const, zIndex: 1 }} />
                       <div style={{ position: "absolute", bottom: 4, right: 4, background: "rgba(255,255,255,0.85)", borderRadius: 6, width: 20, height: 20, display: "flex", alignItems: "center", justifyContent: "center" }}>
                         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke={C.muted} strokeWidth="2.5"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3M11 8v6M8 11h6"/></svg>
                       </div>
@@ -1805,7 +1826,7 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
               ) : zoomImg ? (
                 <img src={`data:image/png;base64,${zoomImg}`} alt="" style={{ maxHeight: 320, maxWidth: "90%", objectFit: "contain" }} />
               ) : (
-                <img src={imgUrl(zoom.id)} alt="" style={{ maxHeight: 200, maxWidth: "90%", objectFit: "contain" }} onError={e => { (e.currentTarget as HTMLImageElement).style.display = "none"; }} />
+                <ProductImage id={zoom.id} networkUrl={imgUrl(zoom.id)} style={{ maxHeight: 200, maxWidth: "90%", objectFit: "contain" }} />
               )}
             </div>
             {/* Infos */}

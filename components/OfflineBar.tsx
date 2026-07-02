@@ -63,7 +63,10 @@ export default function OfflineBar({
     setProgress({ step: "Démarrage", done: 0, total: 3 });
     try {
       const res = await sync.preloadCatalog(session, setProgress);
-      onToast?.(`Hors-ligne prêt : ${res.products} produits, ${res.clients} clients`, "success");
+      onToast?.(`Catalogue prêt : ${res.products} produits, ${res.clients} clients. Téléchargement des images…`, "success");
+      // Puis les images produit (le plus lourd) — reprend là où c'était si interrompu.
+      const img = await sync.preloadImages(session, setProgress);
+      onToast?.(`Hors-ligne prêt : ${res.products} produits, ${res.clients} clients, ${img.downloaded} images`, "success");
       await refreshStatus();
     } catch (e: any) {
       onToast?.("Échec du préchargement : " + (e?.message || e), "error");

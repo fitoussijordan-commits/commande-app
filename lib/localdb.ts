@@ -7,7 +7,6 @@
 // car IndexedDB est disponible dans les deux environnements (WKWebView inclus).
 
 const DB_NAME = "commande_offline";
-const DB_VERSION = 1;
 
 // Object stores. `keyPath` par store :
 //  - products / clients / pricelistItems : cache clé/valeur (keyPath "key")
@@ -17,9 +16,13 @@ export const STORES = {
   products: "products",
   clients: "clients",
   pricelist: "pricelist",
+  images: "images",
   syncQueue: "syncQueue",
   meta: "meta",
 } as const;
+
+// Bump de version pour créer le nouveau store "images".
+const DB_VERSION_WITH_IMAGES = 2;
 
 let _dbPromise: Promise<IDBDatabase> | null = null;
 
@@ -30,12 +33,14 @@ function openDB(): Promise<IDBDatabase> {
   if (_dbPromise) return _dbPromise;
 
   _dbPromise = new Promise((resolve, reject) => {
-    const req = indexedDB.open(DB_NAME, DB_VERSION);
+    const req = indexedDB.open(DB_NAME, DB_VERSION_WITH_IMAGES);
     req.onupgradeneeded = () => {
       const db = req.result;
       if (!db.objectStoreNames.contains(STORES.products)) db.createObjectStore(STORES.products, { keyPath: "key" });
       if (!db.objectStoreNames.contains(STORES.clients)) db.createObjectStore(STORES.clients, { keyPath: "key" });
       if (!db.objectStoreNames.contains(STORES.pricelist)) db.createObjectStore(STORES.pricelist, { keyPath: "key" });
+      // Store images : clé = product id, valeur = data URL base64.
+      if (!db.objectStoreNames.contains(STORES.images)) db.createObjectStore(STORES.images, { keyPath: "key" });
       if (!db.objectStoreNames.contains(STORES.meta)) db.createObjectStore(STORES.meta, { keyPath: "key" });
       if (!db.objectStoreNames.contains(STORES.syncQueue)) {
         const q = db.createObjectStore(STORES.syncQueue, { keyPath: "id", autoIncrement: true });
@@ -125,4 +130,25 @@ export async function updateQueuedOrder(id: number, patch: Partial<QueuedOrder>)
 export async function deleteQueuedOrder(id: number): Promise<void> {
   const db = await openDB();
   await reqToPromise(tx(db, STORES.syncQueue, "readwrite").delete(id));
+}
+
+// ---- Cache des images produit (base64 data URL, clé = product id) ----
+
+export async function getImage(productId: number): Promise<string | undefined> {
+  return kvGet<string>(STORES.images, String(productId));
+}
+
+export async function setImage(productId: number, dataUrl: string): Promise<void> {
+  return kvSet(STORES.images, String(productId), dataUrl);
+}
+
+export async function hasImage(productId: number): Promise<boolean> {
+  const db = await openDB();
+  const key = await reqToPromise(tx(db, STORES.images, "readonly").getKey(String(productId)));
+  return key !== undefined;
+}
+
+export async function countImages(): Promise<number> {
+  const db = await openDB();
+  return reqToPromise(tx(db, STORES.images, "readonly").count());
 }
