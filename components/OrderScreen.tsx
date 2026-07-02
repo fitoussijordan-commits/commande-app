@@ -3,6 +3,7 @@ import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import * as odoo from "@/lib/odoo";
 import AppointmentModal from "@/components/AppointmentModal";
 import ClientNoteModal from "@/components/ClientNoteModal";
+import OfflineBar from "@/components/OfflineBar";
 import * as loyalty from "@/lib/loyalty";
 
 // ── Palette ───────────────────────────────────────────────────────────────────
@@ -518,6 +519,11 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
             ⚙️
           </button>
         )}
+      </div>
+
+      {/* ── Barre d'état hors-ligne : réseau, préchargement cache, file de synchro ── */}
+      <div style={{ padding: "8px 20px 0", flexShrink: 0 }}>
+        <OfflineBar session={session} onToast={onToast} />
       </div>
 
       {/* ── Bandeau reprise — scopé UNIQUEMENT au client qu'on vient de sélectionner,

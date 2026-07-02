@@ -29,6 +29,13 @@ export async function POST(req: NextRequest) {
     const body = await req.json();
     const { odooUrl, endpoint, params, sessionId } = body;
 
+    // ── Ping de connectivité (utilisé par lib/network.ts) ──
+    // Répond immédiatement sans contacter Odoo : sert uniquement à prouver
+    // que le réseau/serveur est joignable côté client.
+    if (body.ping === true) {
+      return NextResponse.json({ pong: true });
+    }
+
     if (!odooUrl || !endpoint) {
       return NextResponse.json({ error: "odooUrl et endpoint requis" }, { status: 400 });
     }

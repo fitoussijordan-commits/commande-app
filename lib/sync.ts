@@ -1,0 +1,192 @@
+// lib/sync.ts
+// Orchestration du mode hors ligne :
+//  1. Préchargement (online) du catalogue produits + clients + règles de prix
+//     vers IndexedDB, pour consultation sans réseau.
+//  2. Lecture cache-first : renvoie les données locales quand on est hors ligne.
+//  3. Rejeu de la file de commandes créées hors ligne vers Odoo au retour réseau.
+
+import * as odoo from "@/lib/odoo";
+import * as db from "@/lib/localdb";
+
+// Champs produits — identiques à ceux consommés dans OrderScreen (favoris, MEA, recherche).
+export const PRODUCT_FIELDS = [
+  "id", "name", "default_code", "barcode", "lst_price",
+  "product_tmpl_id", "virtual_available",
+];
+
+// Champs clients — alignés sur CLIENT_FIELDS d'OrderScreen (+ géoloc pour la carte).
+export const CLIENT_FIELDS = [
+  "id", "name", "ref", "city", "country_id",
+  "property_product_pricelist", "email", "phone",
+  "partner_latitude", "partner_longitude",
+];
+
+const KEY = "all";
+
+export interface SyncProgress {
+  step: string;
+  done: number;
+  total: number;
+}
+
+// ---- Préchargement (à lancer quand online, ex: bouton "Préparer le hors-ligne") ----
+
+export async function preloadCatalog(
+  session: odoo.OdooSession,
+  onProgress?: (p: SyncProgress) => void
+): Promise<{ products: number; clients: number; pricelistItems: number }> {
+  const steps = 3;
+
+  // 1. Produits vendables
+  onProgress?.({ step: "Catalogue produits", done: 0, total: steps });
+  const products = await odoo.searchRead(
+    session, "product.product",
+    [["sale_ok", "=", true]],
+    PRODUCT_FIELDS,
+    0, "name"
+  );
+  await db.kvSet(db.STORES.products, KEY, products);
+
+  // 2. Clients (res.partner de type contact/société ; on garde large et on filtre côté UI)
+  onProgress?.({ step: "Clients", done: 1, total: steps });
+  const clients = await odoo.searchRead(
+    session, "res.partner",
+    [["active", "=", true], ["customer_rank", ">", 0]],
+    CLIENT_FIELDS,
+    0, "name"
+  );
+  await db.kvSet(db.STORES.clients, KEY, clients);
+
+  // 3. Règles de prix (toutes pricelists actives, pour appliquer les tarifs hors ligne)
+  onProgress?.({ step: "Grilles tarifaires", done: 2, total: steps });
+  const pricelistItems = await odoo.searchRead(
+    session, "product.pricelist.item",
+    [["active", "=", true]],
+    ["pricelist_id", "applied_on", "compute_price", "product_id", "product_tmpl_id",
+     "categ_id", "fixed_price", "percent_price", "price_discount", "price_surcharge",
+     "min_quantity"],
+    0, "sequence asc"
+  );
+  await db.kvSet(db.STORES.pricelist, KEY, pricelistItems);
+
+  await db.kvSet(db.STORES.meta, "lastSync", Date.now());
+  onProgress?.({ step: "Terminé", done: steps, total: steps });
+
+  return {
+    products: products.length,
+    clients: clients.length,
+    pricelistItems: pricelistItems.length,
+  };
+}
+
+export async function getLastSync(): Promise<number | undefined> {
+  return db.kvGet<number>(db.STORES.meta, "lastSync");
+}
+
+export async function hasCache(): Promise<boolean> {
+  const p = await db.kvGet(db.STORES.products, KEY);
+  return Array.isArray(p) && p.length > 0;
+}
+
+// ---- Lecture depuis le cache (mode hors ligne) ----
+
+export async function getCachedProducts(): Promise<any[]> {
+  return (await db.kvGet<any[]>(db.STORES.products, KEY)) || [];
+}
+
+export async function getCachedClients(): Promise<any[]> {
+  return (await db.kvGet<any[]>(db.STORES.clients, KEY)) || [];
+}
+
+export async function getCachedPricelistItems(pricelistId?: number): Promise<any[]> {
+  const all = (await db.kvGet<any[]>(db.STORES.pricelist, KEY)) || [];
+  if (!pricelistId) return all;
+  return all.filter(it => Array.isArray(it.pricelist_id) && it.pricelist_id[0] === pricelistId);
+}
+
+// Recherche locale simple sur nom / code / code-barres.
+export async function searchCachedProducts(query: string, limit = 50): Promise<any[]> {
+  const q = query.trim().toLowerCase();
+  const all = await getCachedProducts();
+  if (!q) return all.slice(0, limit);
+  const out = all.filter(p =>
+    (p.name || "").toLowerCase().includes(q) ||
+    (p.default_code || "").toLowerCase().includes(q) ||
+    (p.barcode || "").toLowerCase().includes(q)
+  );
+  return out.slice(0, limit);
+}
+
+export async function searchCachedClients(query: string, limit = 30): Promise<any[]> {
+  const q = query.trim().toLowerCase();
+  const all = await getCachedClients();
+  if (!q) return all.slice(0, limit);
+  const out = all.filter(c =>
+    (c.name || "").toLowerCase().includes(q) ||
+    (c.ref || "").toLowerCase().includes(q) ||
+    (c.city || "").toLowerCase().includes(q)
+  );
+  return out.slice(0, limit);
+}
+
+// ---- File de synchro des commandes hors ligne ----
+
+// Enfile une commande (un ou plusieurs payloads sale.order) pour synchro ultérieure.
+export async function queueOrder(
+  clientName: string,
+  total: number,
+  payloads: any[]
+): Promise<{ localRef: string; id: number }> {
+  const localRef = `LOCAL-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const id = await db.enqueueOrder({ localRef, clientName, total, payloads });
+  return { localRef, id };
+}
+
+let _flushing = false;
+
+// Rejoue toutes les commandes en attente vers Odoo. Idempotent : ne tourne
+// qu'une fois à la fois, et ignore les commandes déjà synchronisées.
+export async function flushQueue(
+  session: odoo.OdooSession,
+  onOrderSynced?: (order: db.QueuedOrder) => void
+): Promise<{ synced: number; failed: number }> {
+  if (_flushing) return { synced: 0, failed: 0 };
+  _flushing = true;
+  let synced = 0, failed = 0;
+
+  try {
+    const orders = await db.getQueuedOrders();
+    for (const order of orders) {
+      if (order.status === "synced" || order.status === "syncing") continue;
+      if (order.id == null) continue;
+
+      await db.updateQueuedOrder(order.id, { status: "syncing" });
+      try {
+        const odooIds: number[] = [];
+        for (const payload of order.payloads) {
+          const oid = await odoo.create(session, "sale.order", payload);
+          odooIds.push(oid);
+        }
+        await db.updateQueuedOrder(order.id, {
+          status: "synced",
+          odooId: odooIds[0],
+          attempts: (order.attempts || 0) + 1,
+          lastError: undefined,
+        });
+        synced++;
+        onOrderSynced?.({ ...order, status: "synced", odooId: odooIds[0] });
+      } catch (e: any) {
+        await db.updateQueuedOrder(order.id, {
+          status: "error",
+          attempts: (order.attempts || 0) + 1,
+          lastError: e?.message || String(e),
+        });
+        failed++;
+      }
+    }
+  } finally {
+    _flushing = false;
+  }
+
+  return { synced, failed };
+}
