@@ -4,6 +4,7 @@ import * as odoo from "@/lib/odoo";
 import AppointmentModal from "@/components/AppointmentModal";
 import ClientNoteModal from "@/components/ClientNoteModal";
 import OfflineBar from "@/components/OfflineBar";
+import * as sync from "@/lib/sync";
 import * as loyalty from "@/lib/loyalty";
 
 // ── Palette ───────────────────────────────────────────────────────────────────
@@ -865,7 +866,13 @@ function ClientStep({ session, onSelect }: { session: odoo.OdooSession; onSelect
           ["|", ["name", "ilike", q], ["ref", "ilike", q], ["customer_rank", ">", 0], ["active", "=", true]],
           CLIENT_FIELDS, 30);
         setResults(r);
-      } catch {}
+      } catch {
+        // Réseau indisponible → on cherche dans le cache local préchargé.
+        try {
+          const cached = await sync.searchCachedClients(q, 30);
+          setResults(cached);
+        } catch { setResults([]); }
+      }
       setLoading(false);
     }, 300);
   }, [q, session]);
@@ -979,6 +986,17 @@ function ClientStep({ session, onSelect }: { session: odoo.OdooSession; onSelect
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={C.muted} strokeWidth="2"><path d="M9 18l6-6-6-6"/></svg>
             </button>
           ))}
+
+          {/* Aucun résultat sur une recherche active → aide contextuelle (utile hors ligne) */}
+          {q.length >= 2 && !loading && displayed.length === 0 && (
+            <div style={{ textAlign: "center" as const, color: C.muted, padding: 16, fontSize: 13, lineHeight: 1.5 }}>
+              Aucun client trouvé.
+              {typeof navigator !== "undefined" && !navigator.onLine && (
+                <><br />Tu es hors ligne : seuls les clients préchargés sont disponibles.
+                Reconnecte-toi et lance « Préparer le hors-ligne » pour mettre le cache à jour.</>
+              )}
+            </div>
+          )}
         </div>
       </div>
     </div>
