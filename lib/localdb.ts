@@ -23,8 +23,14 @@ export const STORES = {
   meta: "meta",
 } as const;
 
-// Bump de version pour créer les nouveaux stores (images, mea, favorites).
-const DB_VERSION_WITH_IMAGES = 3;
+// Bump de version pour créer/réparer les stores. Incrémenter à chaque nouveau store.
+const DB_VERSION_WITH_IMAGES = 4;
+
+// Liste des stores attendus, pour détecter/réparer une base incomplète.
+const EXPECTED_STORES = [
+  STORES.products, STORES.clients, STORES.pricelist, STORES.images,
+  STORES.mea, STORES.favorites, STORES.meta, STORES.syncQueue,
+];
 
 let _dbPromise: Promise<IDBDatabase> | null = null;
 
@@ -53,7 +59,35 @@ function openDB(): Promise<IDBDatabase> {
         q.createIndex("status", "status", { unique: false });
       }
     };
-    req.onsuccess = () => resolve(req.result);
+    req.onsuccess = () => {
+      const db = req.result;
+      // Auto-réparation : si un store attendu manque (base créée par une version
+      // antérieure incomplète), on rouvre en forçant une montée de version pour
+      // recréer les stores manquants.
+      const missing = EXPECTED_STORES.some(s => !db.objectStoreNames.contains(s));
+      if (missing) {
+        const bumped = db.version + 1;
+        db.close();
+        const req2 = indexedDB.open(DB_NAME, bumped);
+        req2.onupgradeneeded = () => {
+          const d2 = req2.result;
+          for (const s of EXPECTED_STORES) {
+            if (!d2.objectStoreNames.contains(s)) {
+              if (s === STORES.syncQueue) {
+                const q = d2.createObjectStore(s, { keyPath: "id", autoIncrement: true });
+                q.createIndex("status", "status", { unique: false });
+              } else {
+                d2.createObjectStore(s, { keyPath: "key" });
+              }
+            }
+          }
+        };
+        req2.onsuccess = () => resolve(req2.result);
+        req2.onerror = () => reject(req2.error || new Error("Réparation IndexedDB échouée"));
+        return;
+      }
+      resolve(db);
+    };
     req.onerror = () => reject(req.error || new Error("Ouverture IndexedDB échouée"));
   });
   return _dbPromise;

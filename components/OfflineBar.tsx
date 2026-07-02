@@ -33,6 +33,7 @@ export default function OfflineBar({
   const [preloading, setPreloading] = useState(false);
   const [progress, setProgress] = useState<sync.SyncProgress | null>(null);
   const [syncing, setSyncing] = useState(false);
+  const [preloadError, setPreloadError] = useState<string>("");
 
   const refreshStatus = useCallback(async () => {
     // Séparés : une erreur sur l'un ne doit pas empêcher l'autre de s'afficher.
@@ -58,8 +59,9 @@ export default function OfflineBar({
 
   const doPreload = async () => {
     if (!online) { onToast?.("Connexion requise pour préparer le hors-ligne", "error"); return; }
+    setPreloadError("");
     setPreloading(true);
-    setProgress({ step: "Démarrage", done: 0, total: 3 });
+    setProgress({ step: "Démarrage", done: 0, total: 4 });
     try {
       const res = await sync.preloadCatalog(session, setProgress);
       // Rend visible un éventuel échec du chargement MEA (au lieu de l'ignorer).
@@ -70,7 +72,9 @@ export default function OfflineBar({
       onToast?.(`Hors-ligne prêt : ${res.products} produits, ${res.clients} clients, ${res.mea} offres, ${img.downloaded} images`, "success");
       await refreshStatus();
     } catch (e: any) {
-      onToast?.("Échec du préchargement : " + (e?.message || e), "error");
+      const msg = e?.message || String(e);
+      onToast?.("Échec du préchargement : " + msg, "error");
+      setPreloadError(msg);   // affiché de façon persistante dans la barre
     } finally {
       setPreloading(false);
       setProgress(null);
@@ -112,6 +116,12 @@ export default function OfflineBar({
       <span style={{ color: "#6b7280" }}>
         Dernière synchro cache : {fmtDate(lastSync)}
       </span>
+
+      {preloadError && (
+        <span style={{ flexBasis: "100%", color: "#991b1b", fontWeight: 600, fontSize: 12 }}>
+          ⚠️ Préchargement : {preloadError}
+        </span>
+      )}
 
       {pending > 0 && (
         <span style={{
