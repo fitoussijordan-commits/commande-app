@@ -2,6 +2,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { fetchT } from "@/lib/fetchTimeout";
 import { checkRateLimit, getClientIp } from "@/lib/rateLimiter";
+import { withCors, preflight } from "@/lib/cors";
+
+// Préflight CORS (l'app native envoie un OPTIONS avant le POST).
+export async function OPTIONS(req: NextRequest) {
+  return preflight(req.headers.get("origin"));
+}
 
 // Allowlist des endpoints Odoo autorisés — bloque toute tentative SSRF
 const ALLOWED_ENDPOINTS = [
@@ -15,11 +21,14 @@ function isEndpointAllowed(endpoint: string): boolean {
 }
 
 export async function POST(req: NextRequest) {
+  const origin = req.headers.get("origin");
+  const J = (body: any, init?: ResponseInit) => withCors(NextResponse.json(body, init), origin);
+
   // ── Rate limiting : 300 req / 60s par IP ──
   const ip = getClientIp(req);
   const rl = checkRateLimit(`proxy:${ip}`, 300, 60_000);
   if (!rl.allowed) {
-    return NextResponse.json(
+    return J(
       { error: "Trop de requêtes" },
       { status: 429, headers: { "Retry-After": String(Math.ceil(rl.resetIn / 1000)) } }
     );
@@ -33,11 +42,11 @@ export async function POST(req: NextRequest) {
     // Répond immédiatement sans contacter Odoo : sert uniquement à prouver
     // que le réseau/serveur est joignable côté client.
     if (body.ping === true) {
-      return NextResponse.json({ pong: true });
+      return J({ pong: true });
     }
 
     if (!odooUrl || !endpoint) {
-      return NextResponse.json({ error: "odooUrl et endpoint requis" }, { status: 400 });
+      return J({ error: "odooUrl et endpoint requis" }, { status: 400 });
     }
 
     // ── Protection SSRF : l'URL doit correspondre exactement à ODOO_URL ──────
@@ -46,7 +55,7 @@ export async function POST(req: NextRequest) {
 
     if (allowedBase && requestedBase !== allowedBase) {
       console.warn(`[proxy] SSRF bloqué — URL non autorisée: ${odooUrl}`);
-      return NextResponse.json({ error: "URL Odoo non autorisée" }, { status: 403 });
+      return J({ error: "URL Odoo non autorisée" }, { status: 403 });
     }
 
     // Bloquer les IPs privées et metadata cloud même si ODOO_URL n'est pas défini
@@ -62,12 +71,12 @@ export async function POST(req: NextRequest) {
     ];
     if (BLOCKED_PATTERNS.some(p => p.test(odooUrl))) {
       console.warn(`[proxy] SSRF bloqué — IP réservée: ${odooUrl}`);
-      return NextResponse.json({ error: "URL non autorisée" }, { status: 403 });
+      return J({ error: "URL non autorisée" }, { status: 403 });
     }
 
     if (!isEndpointAllowed(endpoint)) {
       console.warn(`[proxy] Endpoint non autorisé: ${endpoint}`);
-      return NextResponse.json({ error: "Endpoint non autorisé" }, { status: 403 });
+      return J({ error: "Endpoint non autorisé" }, { status: 403 });
     }
 
     const headers: Record<string, string> = { "Content-Type": "application/json" };
@@ -99,20 +108,20 @@ export async function POST(req: NextRequest) {
 
     if (data.error) {
       const msg = data.error.data?.message || data.error.message || JSON.stringify(data.error);
-      return NextResponse.json({ error: msg }, { status: 400 });
+      return J({ error: msg }, { status: 400 });
     }
 
     if (endpoint === "/web/session/authenticate" && data.result) {
       if (newSessionId) data.result.session_id = newSessionId;
       if (!data.result.uid || data.result.uid === false) {
-        return NextResponse.json({ error: "Identifiants incorrects" }, { status: 401 });
+        return J({ error: "Identifiants incorrects" }, { status: 401 });
       }
     }
 
-    return NextResponse.json({ result: data.result, sessionId: newSessionId });
+    return J({ result: data.result, sessionId: newSessionId });
   } catch (e: any) {
     console.error("Proxy Odoo error:", e);
-    return NextResponse.json(
+    return J(
       { error: "Erreur de connexion au serveur Odoo" },
       { status: 500 }
     );
