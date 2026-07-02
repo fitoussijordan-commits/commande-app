@@ -1,5 +1,5 @@
 "use client";
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import * as odoo from "@/lib/odoo";
 import AppointmentModal from "@/components/AppointmentModal";
 import ClientNoteModal from "@/components/ClientNoteModal";
@@ -619,6 +619,7 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
 
       {step === "hub" && client && (
         <ClientHub
+          session={session}
           client={client}
           hasDraft={!!loadDraftForClient(client.id)}
           onOrder={enterOrderMode}
@@ -692,13 +693,18 @@ function sameDay(a: Date, b: Date): boolean {
 function HomeScreen({ session, onNewOrder }: { session: odoo.OdooSession; onNewOrder: () => void }) {
   const [events, setEvents] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [weekOffset, setWeekOffset] = useState(0); // 0 = semaine en cours, ±1 = semaine précédente/suivante
 
-  const monday = startOfWeek(new Date());
-  const days = Array.from({ length: 7 }, (_, i) => {
+  const monday = useMemo(() => {
+    const m = startOfWeek(new Date());
+    m.setDate(m.getDate() + weekOffset * 7);
+    return m;
+  }, [weekOffset]);
+  const days = useMemo(() => Array.from({ length: 7 }, (_, i) => {
     const d = new Date(monday);
     d.setDate(monday.getDate() + i);
     return d;
-  });
+  }), [monday]);
   const today = new Date();
 
   useEffect(() => {
@@ -717,7 +723,7 @@ function HomeScreen({ session, onNewOrder }: { session: odoo.OdooSession; onNewO
       setLoading(false);
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [session]);
+  }, [session, monday]);
 
   const eventsByDay = days.map(d => events.filter(e => sameDay(odooToLocalDate(e.start), d)));
   const totalCount = events.length;
@@ -730,12 +736,30 @@ function HomeScreen({ session, onNewOrder }: { session: odoo.OdooSession; onNewO
           <div style={{ fontSize: 13, color: C.muted, fontWeight: 600 }}>Bonjour {session.name?.split(" ")[0] || ""} 👋</div>
           <div style={{ fontSize: 24, fontWeight: 800, color: C.text, marginTop: 2 }}>Ta semaine</div>
         </div>
-        <div style={{ textAlign: "right" as const }}>
-          <div style={{ fontSize: 15, fontWeight: 800, color: C.tealDark }}>
-            {loading ? "Chargement…" : totalCount === 0 ? "Aucun RDV" : `${totalCount} RDV cette semaine`}
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          <div style={{ textAlign: "right" as const }}>
+            <div style={{ fontSize: 15, fontWeight: 800, color: C.tealDark }}>
+              {loading ? "Chargement…" : totalCount === 0 ? "Aucun RDV" : `${totalCount} RDV cette semaine`}
+            </div>
+            <div style={{ fontSize: 12, color: C.muted, marginTop: 2 }}>
+              {monday.toLocaleDateString("fr-FR", { day: "numeric", month: "long" })} — {days[6].toLocaleDateString("fr-FR", { day: "numeric", month: "long" })}
+            </div>
           </div>
-          <div style={{ fontSize: 12, color: C.muted, marginTop: 2 }}>
-            {monday.toLocaleDateString("fr-FR", { day: "numeric", month: "long" })} — {days[6].toLocaleDateString("fr-FR", { day: "numeric", month: "long" })}
+          <div style={{ display: "flex", alignItems: "center", gap: 4, background: C.white, border: `1.5px solid ${C.border}`, borderRadius: 12, padding: 4, boxShadow: C.shadow }}>
+            <button onClick={() => setWeekOffset(o => o - 1)} title="Semaine précédente"
+              style={{ width: 30, height: 30, borderRadius: 8, background: "transparent", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: C.textSec }}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M15 18l-6-6 6-6"/></svg>
+            </button>
+            {weekOffset !== 0 && (
+              <button onClick={() => setWeekOffset(0)}
+                style={{ padding: "5px 10px", background: C.tealSoft, border: "none", borderRadius: 8, cursor: "pointer", fontSize: 11, fontWeight: 700, color: C.tealDark, fontFamily: "inherit" }}>
+                Aujourd'hui
+              </button>
+            )}
+            <button onClick={() => setWeekOffset(o => o + 1)} title="Semaine suivante"
+              style={{ width: 30, height: 30, borderRadius: 8, background: "transparent", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: C.textSec }}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M9 18l6-6-6-6"/></svg>
+            </button>
           </div>
         </div>
       </div>
@@ -927,10 +951,39 @@ function ClientStep({ session, onSelect }: { session: odoo.OdooSession; onSelect
 // ═══════════════════════════════════════════════════════════════════════════
 // HUB CLIENT — écran d'accueil une fois le client sélectionné
 // ═══════════════════════════════════════════════════════════════════════════
-function ClientHub({ client, hasDraft, onOrder, onHistory, onAppointment, onNote }: {
-  client: any; hasDraft: boolean;
+function ClientHub({ session, client, hasDraft, onOrder, onHistory, onAppointment, onNote }: {
+  session: odoo.OdooSession; client: any; hasDraft: boolean;
   onOrder: () => void; onHistory: () => void; onAppointment: () => void; onNote: () => void;
 }) {
+  const [stats, setStats] = useState<{ ca: number; count: number; lastDate: string | null } | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setStats(null);
+    (async () => {
+      try {
+        const yearAgo = new Date();
+        yearAgo.setFullYear(yearAgo.getFullYear() - 1);
+        const yearAgoStr = toOdooDateStr(yearAgo);
+        const rows = await odoo.searchRead(session, "sale.order",
+          [["partner_id", "=", client.id], ["state", "in", ["sale", "done"]]],
+          ["amount_total", "date_order"], 300, "date_order desc");
+        if (cancelled) return;
+        const ca = rows
+          .filter((r: any) => r.date_order && r.date_order >= yearAgoStr)
+          .reduce((s: number, r: any) => s + (r.amount_total || 0), 0);
+        setStats({ ca, count: rows.length, lastDate: rows[0]?.date_order || null });
+      } catch {
+        if (!cancelled) setStats({ ca: 0, count: 0, lastDate: null });
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [session, client.id]);
+
+  const lastDateLabel = stats?.lastDate
+    ? odooToLocalDate(stats.lastDate).toLocaleDateString("fr-FR", { day: "numeric", month: "short" })
+    : "—";
+
   const cards = [
     { key: "order", icon: "🛒", title: "Prise de commande", subtitle: hasDraft ? "Brouillon en attente" : "Nouveau devis", gradient: "linear-gradient(135deg, #0d9488, #0f766e)", badge: hasDraft, onClick: onOrder },
     { key: "history", icon: "🕓", title: "Historique", subtitle: "Commandes passées", gradient: "linear-gradient(135deg, #2563eb, #1d4ed8)", badge: false, onClick: onHistory },
@@ -958,6 +1011,22 @@ function ClientHub({ client, hasDraft, onOrder, onHistory, onAppointment, onNote
                 {client.property_product_pricelist[1]}
               </div>
             )}
+          </div>
+        </div>
+
+        {/* Statistiques client */}
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12, marginBottom: 28 }}>
+          <div style={{ background: "linear-gradient(135deg, #0d9488, #7c3aed)", borderRadius: 16, padding: "14px 16px", color: "#fff", boxShadow: "0 8px 20px rgba(13,148,136,0.25)" }}>
+            <div style={{ fontSize: 19, fontWeight: 800 }}>{stats ? fmtPrice(stats.ca) : "…"}</div>
+            <div style={{ fontSize: 10.5, opacity: 0.85, fontWeight: 600, marginTop: 2, textTransform: "uppercase" as const, letterSpacing: "0.03em" }}>CA 12 mois</div>
+          </div>
+          <div style={{ background: C.white, border: `1.5px solid ${C.border}`, borderRadius: 16, padding: "14px 16px", boxShadow: C.shadow }}>
+            <div style={{ fontSize: 19, fontWeight: 800, color: C.text }}>{stats ? stats.count : "…"}</div>
+            <div style={{ fontSize: 10.5, color: C.muted, fontWeight: 600, marginTop: 2, textTransform: "uppercase" as const, letterSpacing: "0.03em" }}>Commandes</div>
+          </div>
+          <div style={{ background: C.white, border: `1.5px solid ${C.border}`, borderRadius: 16, padding: "14px 16px", boxShadow: C.shadow }}>
+            <div style={{ fontSize: 19, fontWeight: 800, color: C.text }}>{lastDateLabel}</div>
+            <div style={{ fontSize: 10.5, color: C.muted, fontWeight: 600, marginTop: 2, textTransform: "uppercase" as const, letterSpacing: "0.03em" }}>Dernière cmd</div>
           </div>
         </div>
 
@@ -1313,6 +1382,12 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
   const cartCount = cartItems.reduce((s, i) => s + i.qty, 0);
   const cartTotal = cartItems.reduce((s, i) => s + i.qty * i.unitPrice, 0);
   const freeCount = freeItems.reduce((s, i) => s + i.qty, 0);
+  const lineDiscounts = loyalty.computeLineDiscounts(appliedPromos, cart);
+  const discountTotal = cartItems.reduce((s, i) => {
+    const pct = lineDiscounts[i.product.id] || 0;
+    return s + (i.qty * i.unitPrice * pct) / 100;
+  }, 0);
+  const netTotal = cartTotal - discountTotal;
 
   return (
     <div style={{ flex: 1, display: "flex", overflow: "hidden", minHeight: 0 }}>
@@ -1507,7 +1582,7 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
       </div>
 
       {/* ── Panier persistant (droite) ── */}
-      <div style={{ width: 280, background: C.white, borderLeft: `1px solid ${C.border}`, display: "flex", flexDirection: "column" as const, flexShrink: 0 }}>
+      <div style={{ width: 310, background: C.white, borderLeft: `1px solid ${C.border}`, display: "flex", flexDirection: "column" as const, flexShrink: 0 }}>
         {/* Header panier */}
         <div style={{ padding: "12px 14px", background: "linear-gradient(135deg, #0d9488, #0f766e)", color: "#fff" }}>
           <div style={{ fontSize: 13, fontWeight: 700 }}>🛒 Panier — {client.name}</div>
@@ -1525,19 +1600,37 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
               <div style={{ fontSize: 12 }}>Ajoute des produits</div>
             </div>
           ) : (
-            cartItems.map(item => (
-              <div key={item.product.id} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8, padding: "7px 8px", background: C.bg, borderRadius: 10 }}>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 11, fontWeight: 700, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>{item.product.name}</div>
-                  <div style={{ fontSize: 10, color: C.muted }}>{fmtPrice(item.qty * item.unitPrice)}</div>
+            cartItems.map(item => {
+              const pct = lineDiscounts[item.product.id] || 0;
+              const gross = item.qty * item.unitPrice;
+              const net = gross * (1 - pct / 100);
+              return (
+                <div key={item.product.id} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8, padding: "7px 8px", background: C.bg, borderRadius: 10 }}>
+                  <div style={{ width: 26, height: 26, borderRadius: 8, background: `hsl(${item.product.id % 360}, 60%, 90%)`, color: `hsl(${item.product.id % 360}, 60%, 35%)`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10, fontWeight: 800, flexShrink: 0 }}>
+                    {item.product.name.slice(0, 2).toUpperCase()}
+                  </div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>{item.product.name}</div>
+                    <div style={{ fontSize: 10, color: C.muted }}>{item.qty} × {fmtPrice(item.unitPrice)}</div>
+                  </div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 4, flexShrink: 0 }}>
+                    <button onClick={() => onQtyChange(item.product, item.qty - 1)} style={{ width: 22, height: 22, borderRadius: 5, background: C.redSoft, border: "none", cursor: "pointer", color: C.red, fontSize: 14, fontWeight: 700, lineHeight: 1 }}>−</button>
+                    <span style={{ fontSize: 13, fontWeight: 800, color: C.text, minWidth: 18, textAlign: "center" as const }}>{item.qty}</span>
+                    <button onClick={() => onQtyChange(item.product, item.qty + 1)} style={{ width: 22, height: 22, borderRadius: 5, background: C.tealSoft, border: "none", cursor: "pointer", color: C.teal, fontSize: 14, fontWeight: 700, lineHeight: 1 }}>+</button>
+                  </div>
+                  <div style={{ minWidth: 52, textAlign: "right" as const, flexShrink: 0 }}>
+                    {pct > 0 ? (
+                      <>
+                        <div style={{ fontSize: 9, color: C.muted, textDecoration: "line-through" }}>{fmtPrice(gross)}</div>
+                        <div style={{ fontSize: 12, fontWeight: 800, color: C.orange }}>{fmtPrice(net)}</div>
+                      </>
+                    ) : (
+                      <div style={{ fontSize: 12, fontWeight: 800, color: C.text }}>{fmtPrice(gross)}</div>
+                    )}
+                  </div>
                 </div>
-                <div style={{ display: "flex", alignItems: "center", gap: 4, flexShrink: 0 }}>
-                  <button onClick={() => onQtyChange(item.product, item.qty - 1)} style={{ width: 22, height: 22, borderRadius: 5, background: C.redSoft, border: "none", cursor: "pointer", color: C.red, fontSize: 14, fontWeight: 700, lineHeight: 1 }}>−</button>
-                  <span style={{ fontSize: 13, fontWeight: 800, color: C.text, minWidth: 18, textAlign: "center" as const }}>{item.qty}</span>
-                  <button onClick={() => onQtyChange(item.product, item.qty + 1)} style={{ width: 22, height: 22, borderRadius: 5, background: C.tealSoft, border: "none", cursor: "pointer", color: C.teal, fontSize: 14, fontWeight: 700, lineHeight: 1 }}>+</button>
-                </div>
-              </div>
-            ))
+              );
+            })
           )}
 
           {/* Articles gratuits */}
@@ -1575,9 +1668,21 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
 
         {/* Footer total + valider */}
         <div style={{ padding: "12px 14px", borderTop: `1px solid ${C.border}` }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
-            <span style={{ fontSize: 12, color: C.muted }}>Total HT indicatif</span>
-            <span style={{ fontSize: 17, fontWeight: 800, color: C.tealDark }}>{fmtPrice(cartTotal)}</span>
+          <div style={{ display: "flex", flexDirection: "column" as const, gap: 4, marginBottom: 10 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <span style={{ fontSize: 12, color: C.muted }}>Sous-total</span>
+              <span style={{ fontSize: 13, fontWeight: 600, color: C.textSec }}>{fmtPrice(cartTotal)}</span>
+            </div>
+            {discountTotal > 0 && (
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <span style={{ fontSize: 12, color: C.orange }}>Remise appliquée</span>
+                <span style={{ fontSize: 13, fontWeight: 700, color: C.orange }}>−{fmtPrice(discountTotal)}</span>
+              </div>
+            )}
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", paddingTop: 4 }}>
+              <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>Total HT</span>
+              <span style={{ fontSize: 18, fontWeight: 800, color: C.tealDark }}>{fmtPrice(netTotal)}</span>
+            </div>
           </div>
           <button onClick={onValidate} disabled={submitting || cartCount === 0}
             style={{ width: "100%", padding: "13px 0", background: cartCount === 0 ? C.border : submitting ? C.muted : "linear-gradient(135deg, #0d9488, #0f766e)", color: "#fff", border: "none", borderRadius: 12, fontSize: 14, fontWeight: 700, cursor: cartCount === 0 ? "default" : "pointer", fontFamily: "inherit", boxShadow: cartCount > 0 && !submitting ? "0 4px 12px rgba(13,148,136,0.35)" : "none", transition: "all 0.2s" }}>
