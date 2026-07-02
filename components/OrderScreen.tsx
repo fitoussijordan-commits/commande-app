@@ -761,67 +761,63 @@ function HomeScreen({ session, onNewOrder, onOpenClient, onToast }: {
   ];
 
   return (
-    <div style={{ flex: 1, overflowY: "auto" as const, padding: "32px 28px 40px", display: "flex", flexDirection: "column" as const }}>
-      {/* En-tête minimaliste */}
+    <div style={{ flex: 1, overflowY: "auto" as const, padding: "32px 28px 40px", display: "flex", flexDirection: "column" as const, background: "#f8f9fc" }}>
+      {/* En-tête */}
       <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", flexWrap: "wrap" as const, gap: 16, marginBottom: 24 }}>
         <div>
-          <div style={{ display: "inline-block", fontSize: 11, fontWeight: 700, color: C.tealDark, background: C.tealSoft, borderRadius: 999, padding: "4px 12px", textTransform: "uppercase" as const, letterSpacing: "0.04em", marginBottom: 10 }}>
+          <div style={{ display: "inline-block", fontSize: 11, fontWeight: 700, color: "#7c3aed", background: "#f3e8ff", borderRadius: 999, padding: "5px 14px", textTransform: "uppercase" as const, letterSpacing: "0.04em", marginBottom: 12 }}>
             {today.toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long" })}
           </div>
           <div style={{ fontSize: 26, fontWeight: 800, color: C.text }}>
-            Salut {session.name?.split(" ")[0] || ""}, {loading ? "…" : <span style={{ color: C.teal }}>{totalCount} RDV</span>} cette semaine
+            Salut {session.name?.split(" ")[0] || ""}, {loading ? "…" : <span style={{ color: "#7c3aed" }}>{totalCount} RDV</span>} cette semaine
           </div>
         </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
           <button onClick={() => setWeekOffset(o => o - 1)} title="Semaine précédente"
-            style={{ width: 30, height: 30, borderRadius: "50%", background: "transparent", border: `1px solid ${C.border}`, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: C.textSec }}>
+            style={{ width: 32, height: 32, borderRadius: "50%", background: C.white, border: `1px solid ${C.border}`, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: C.textSec, boxShadow: C.shadow }}>
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M15 18l-6-6 6-6"/></svg>
           </button>
           <div onClick={() => weekOffset !== 0 && setWeekOffset(0)}
-            style={{ fontSize: 12, fontWeight: 700, color: C.tealDark, background: C.tealSoft, borderRadius: 999, padding: "6px 14px", cursor: weekOffset !== 0 ? "pointer" : "default", whiteSpace: "nowrap" as const }}>
+            style={{ fontSize: 13, fontWeight: 800, color: "#fff", background: "linear-gradient(135deg, #0d9488, #7c3aed)", borderRadius: 999, padding: "9px 18px", cursor: weekOffset !== 0 ? "pointer" : "default", whiteSpace: "nowrap" as const, boxShadow: "0 8px 18px rgba(124,58,237,0.25)" }}>
             {monday.toLocaleDateString("fr-FR", { day: "numeric", month: "short" })} — {days[6].toLocaleDateString("fr-FR", { day: "numeric", month: "short" })}
           </div>
           <button onClick={() => setWeekOffset(o => o + 1)} title="Semaine suivante"
-            style={{ width: 30, height: 30, borderRadius: "50%", background: "transparent", border: `1px solid ${C.border}`, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: C.textSec }}>
+            style={{ width: 32, height: 32, borderRadius: "50%", background: C.white, border: `1px solid ${C.border}`, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: C.textSec, boxShadow: C.shadow }}>
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M9 18l6-6-6-6"/></svg>
           </button>
         </div>
       </div>
 
-      {/* Vue semaine — 7 colonnes, style épuré */}
-      <div style={{ flex: 1, display: "grid", gridTemplateColumns: "repeat(7, minmax(120px, 1fr))", gap: 8, overflowX: "auto" as const }}>
+      {/* Vue semaine — 7 colonnes façon cartes */}
+      <div style={{ flex: 1, display: "grid", gridTemplateColumns: "repeat(7, minmax(120px, 1fr))", gap: 12, overflowX: "auto" as const, alignItems: "stretch" }}>
         {days.map((d, i) => {
           const dayEvents = eventsByDay[i];
           const isToday = sameDay(d, today);
           const isPast = d < today && !isToday;
           return (
             <div key={i} style={{
-              display: "flex", flexDirection: "column" as const, borderRadius: 14,
-              background: isToday ? C.tealSoft : "transparent",
-              opacity: isPast ? 0.5 : 1,
+              display: "flex", flexDirection: "column" as const, borderRadius: 18,
+              background: isToday ? "linear-gradient(160deg, #7c3aed 0%, #0d9488 130%)" : C.white,
+              boxShadow: isToday ? "0 16px 32px rgba(124,58,237,0.28)" : "0 2px 8px rgba(15,23,42,0.05)",
+              opacity: isPast ? 0.55 : 1, overflow: "hidden",
             }}>
               {/* En-tête jour */}
-              <div style={{ padding: "8px 4px", textAlign: "center" as const, flexShrink: 0 }}>
-                <div style={{ fontSize: 10, fontWeight: 700, color: C.muted, textTransform: "uppercase" as const, letterSpacing: "0.04em" }}>{WEEKDAY_LABELS[i].slice(0, 3)}</div>
-                <div style={{
-                  width: 26, height: 26, borderRadius: "50%", margin: "4px auto 0",
-                  display: "flex", alignItems: "center", justifyContent: "center",
-                  background: isToday ? C.teal : "transparent",
-                  color: isToday ? "#fff" : C.text, fontSize: 14, fontWeight: 800,
-                }}>
+              <div style={{ padding: "14px 8px 10px", textAlign: "center" as const, flexShrink: 0 }}>
+                <div style={{ fontSize: 10, fontWeight: 700, color: isToday ? "rgba(255,255,255,0.75)" : C.muted, textTransform: "uppercase" as const, letterSpacing: "0.04em" }}>{WEEKDAY_LABELS[i].slice(0, 3)}</div>
+                <div style={{ fontSize: 22, fontWeight: 800, marginTop: 2, color: isToday ? "#fff" : C.text }}>
                   {d.getDate()}
                 </div>
               </div>
 
               {/* Événements du jour */}
-              <div style={{ flex: 1, padding: "2px 4px 4px", display: "flex", flexDirection: "column" as const, gap: 5, minHeight: 70 }}>
+              <div style={{ flex: 1, padding: "0 8px 10px", display: "flex", flexDirection: "column" as const, gap: 6, minHeight: 80 }}>
                 {dayEvents.length === 0 ? (
-                  <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, color: C.border }}>—</div>
+                  <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, color: isToday ? "rgba(255,255,255,0.5)" : C.border }}>—</div>
                 ) : dayEvents.map((e, idx) => {
                   const col = EVENT_COLORS[idx % EVENT_COLORS.length];
                   return (
                     <button key={e.id} onClick={() => openEventClient(e)} title="Ouvrir la fiche client"
-                      style={{ background: col.bg, border: "none", borderRadius: 8, padding: "6px 8px", cursor: "pointer", fontFamily: "inherit", textAlign: "left" as const, width: "100%" }}>
+                      style={{ background: col.bg, border: "none", borderRadius: 10, padding: "8px 10px", cursor: "pointer", fontFamily: "inherit", textAlign: "left" as const, width: "100%", boxShadow: isToday ? "0 4px 10px rgba(15,23,42,0.12)" : "none" }}>
                       <div style={{ fontSize: 10, fontWeight: 800, color: col.text }}>
                         {odooToLocalDate(e.start).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}
                       </div>
