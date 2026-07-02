@@ -1073,9 +1073,13 @@ function ClientHub({ session, client, hasDraft, onOrder, onHistory, onAppointmen
         const ca = rows
           .filter((r: any) => r.date_order && r.date_order >= yearAgoStr)
           .reduce((s: number, r: any) => s + (r.amount_total || 0), 0);
-        setStats({ ca, count: rows.length, lastDate: rows[0]?.date_order || null });
+        const s = { ca, count: rows.length, lastDate: rows[0]?.date_order || null };
+        setStats(s);
+        sync.cacheClientData(client.id, { stats: s }).catch(() => {});
       } catch {
-        if (!cancelled) setStats({ ca: 0, count: 0, lastDate: null });
+        // Hors ligne → stats CA préchargées pour ce client (si dispo)
+        const cached = await sync.getCachedStats(client.id).catch(() => undefined);
+        if (!cancelled) setStats(cached || { ca: 0, count: 0, lastDate: null });
       }
     })();
     return () => { cancelled = true; };
@@ -1183,8 +1187,12 @@ function ClientHistory({ session, client }: { session: odoo.OdooSession; client:
           [["partner_id", "=", client.id]],
           ["id", "name", "date_order", "amount_total", "state"], 60, "date_order desc");
         setOrders(rows);
+        sync.cacheClientData(client.id, { history: rows }).catch(() => {});
       } catch (e: any) {
-        setError(e.message || "Erreur de chargement");
+        // Hors ligne → historique préchargé pour ce client (si dispo)
+        const cached = await sync.getCachedHistory(client.id).catch(() => undefined);
+        if (cached) setOrders(cached);
+        else setError("Historique indisponible hors ligne pour ce client");
       }
       setLoading(false);
     })();
@@ -1368,11 +1376,18 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
         const enriched = prods.map((p: any) => ({ ...p, ...agg.get(p.id) }));
         enriched.sort((a: any, b: any) => (b.totalQty || 0) - (a.totalQty || 0));
         setFavProducts(enriched);
+        sync.cacheClientData(client.id, { favorites: enriched }).catch(() => {});
       } else {
         setFavProducts([]);
+        sync.cacheClientData(client.id, { favorites: [] }).catch(() => {});
       }
       setFavLoaded(true);
-    } catch (e: any) { onToast("Erreur favoris: " + e.message, "error"); }
+    } catch (e: any) {
+      // Hors ligne → favoris préchargés pour ce client (si dispo)
+      const cached = await sync.getCachedFavorites(client.id).catch(() => undefined);
+      if (cached) { setFavProducts(cached); setFavLoaded(true); }
+      else onToast("Favoris indisponibles hors ligne pour ce client", "info");
+    }
     setFavLoading(false);
   };
 
@@ -1385,7 +1400,11 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
         ["id", "name", "sale_order_template_line_ids"],
         200, "name");
       setMeaTemplates(templates);
-    } catch {}
+      sync.cacheMea(templates).catch(() => {});
+    } catch {
+      // Hors ligne → modèles MEA préchargés
+      try { setMeaTemplates(await sync.getCachedMea()); } catch {}
+    }
     setMeaLoading(false);
   };
 

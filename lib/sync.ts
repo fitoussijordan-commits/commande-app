@@ -35,7 +35,7 @@ export async function preloadCatalog(
   session: odoo.OdooSession,
   onProgress?: (p: SyncProgress) => void
 ): Promise<{ products: number; clients: number; pricelistItems: number }> {
-  const steps = 3;
+  const steps = 4;
 
   // 1. Produits vendables
   onProgress?.({ step: "Catalogue produits", done: 0, total: steps });
@@ -73,6 +73,18 @@ export async function preloadCatalog(
   );
   await db.kvSet(db.STORES.pricelist, KEY, pricelistItems);
 
+  // 4. MEA (modèles d'offre) — partagés, légers, préchargés une fois pour tous.
+  onProgress?.({ step: "Offres (MEA)", done: 3, total: steps });
+  try {
+    const templates = await odoo.searchRead(
+      session, "sale.order.template",
+      [["active", "=", true]],
+      ["id", "name", "sale_order_template_line_ids"],
+      200, "name"
+    );
+    await db.kvSet(db.STORES.mea, KEY, templates);
+  } catch { /* MEA optionnel — ne bloque pas le préchargement */ }
+
   await db.kvSet(db.STORES.meta, "lastSync", Date.now());
   onProgress?.({ step: "Terminé", done: steps, total: steps });
 
@@ -81,6 +93,38 @@ export async function preloadCatalog(
     clients: clients.length,
     pricelistItems: pricelistItems.length,
   };
+}
+
+export async function getCachedMea(): Promise<any[]> {
+  return (await db.kvGet<any[]>(db.STORES.mea, KEY)) || [];
+}
+
+export async function cacheMea(templates: any[]): Promise<void> {
+  return db.kvSet(db.STORES.mea, KEY, templates);
+}
+
+// ---- Données par client (favoris, CA, historique) ----
+// Mises en cache paresseusement : quand le commercial ouvre une fiche client
+// en ligne, on stocke ses données pour qu'elles soient dispo hors ligne ensuite.
+
+export async function cacheClientData(clientId: number, data: {
+  favorites?: any[];
+  stats?: { ca: number; count: number; lastDate: string | null };
+  history?: any[];
+}): Promise<void> {
+  if (data.favorites !== undefined) await db.kvSet(db.STORES.favorites, `fav-${clientId}`, data.favorites);
+  if (data.stats !== undefined)     await db.kvSet(db.STORES.favorites, `ca-${clientId}`, data.stats);
+  if (data.history !== undefined)   await db.kvSet(db.STORES.favorites, `hist-${clientId}`, data.history);
+}
+
+export async function getCachedFavorites(clientId: number): Promise<any[] | undefined> {
+  return db.kvGet<any[]>(db.STORES.favorites, `fav-${clientId}`);
+}
+export async function getCachedStats(clientId: number): Promise<{ ca: number; count: number; lastDate: string | null } | undefined> {
+  return db.kvGet(db.STORES.favorites, `ca-${clientId}`);
+}
+export async function getCachedHistory(clientId: number): Promise<any[] | undefined> {
+  return db.kvGet<any[]>(db.STORES.favorites, `hist-${clientId}`);
 }
 
 export async function getLastSync(): Promise<number | undefined> {
@@ -205,8 +249,32 @@ export async function queueOrder(
   payloads: any[]
 ): Promise<{ localRef: string; id: number }> {
   const localRef = `LOCAL-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-  const id = await db.enqueueOrder({ localRef, clientName, total, payloads });
+  const id = await db.enqueueOrder({ localRef, label: `Commande — ${clientName}`, clientName, total, payloads });
   return { localRef, id };
+}
+
+// Enfile une note client (message_post sur res.partner).
+export async function queueNote(clientId: number, clientName: string, body: string): Promise<number> {
+  return db.enqueueAction({
+    kind: "note",
+    label: `Note — ${clientName}`,
+    actions: [{
+      op: "callMethod",
+      model: "res.partner",
+      method: "message_post",
+      args: [[clientId]],
+      kwargs: { body, message_type: "comment", subtype_xmlid: "mail.mt_note" },
+    }],
+  });
+}
+
+// Enfile un RDV (create calendar.event).
+export async function queueAppointment(clientName: string, values: any): Promise<number> {
+  return db.enqueueAction({
+    kind: "appointment",
+    label: `RDV — ${clientName}`,
+    actions: [{ op: "create", model: "calendar.event", values }],
+  });
 }
 
 let _flushing = false;
@@ -229,19 +297,33 @@ export async function flushQueue(
 
       await db.updateQueuedOrder(order.id, { status: "syncing" });
       try {
-        const odooIds: number[] = [];
-        for (const payload of order.payloads) {
-          const oid = await odoo.create(session, "sale.order", payload);
-          odooIds.push(oid);
+        const resultIds: number[] = [];
+        // Nouveau format générique : liste d'actions Odoo.
+        if (order.actions && order.actions.length) {
+          for (const a of order.actions) {
+            if (a.op === "create") {
+              const rid = await odoo.create(session, a.model, a.values);
+              resultIds.push(rid);
+            } else if (a.op === "callMethod") {
+              await odoo.callMethod(session, a.model, a.method!, a.args || [], a.kwargs || {});
+            }
+          }
+        }
+        // Ancien format commandes : liste de sale.order.
+        if (order.payloads && order.payloads.length) {
+          for (const payload of order.payloads) {
+            const oid = await odoo.create(session, "sale.order", payload);
+            resultIds.push(oid);
+          }
         }
         await db.updateQueuedOrder(order.id, {
           status: "synced",
-          odooId: odooIds[0],
+          odooId: resultIds[0],
           attempts: (order.attempts || 0) + 1,
           lastError: undefined,
         });
         synced++;
-        onOrderSynced?.({ ...order, status: "synced", odooId: odooIds[0] });
+        onOrderSynced?.({ ...order, status: "synced", odooId: resultIds[0] });
       } catch (e: any) {
         await db.updateQueuedOrder(order.id, {
           status: "error",

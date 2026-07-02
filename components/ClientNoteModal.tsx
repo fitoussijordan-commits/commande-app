@@ -1,6 +1,7 @@
 "use client";
 import { useState, useEffect, useRef } from "react";
 import * as odoo from "@/lib/odoo";
+import * as sync from "@/lib/sync";
 
 const C = {
   bg: "#f8fafc", white: "#fff", text: "#0f172a", textSec: "#334155",
@@ -103,12 +104,19 @@ export default function ClientNoteModal({ session, client, onClose, onToast }: P
     try {
       if (recording) { recognitionRef.current?.stop(); setRecording(false); }
       // Note interne (pas d'e-mail envoyé) sur le chatter de la fiche client.
-      await odoo.callMethod(session, "res.partner", "message_post", [[client.id]], {
-        body: text.trim().replace(/\n/g, "<br/>"),
-        message_type: "comment",
-        subtype_xmlid: "mail.mt_note",
-      });
-      onToast("Note enregistrée sur la fiche client", "success");
+      const body = text.trim().replace(/\n/g, "<br/>");
+      try {
+        await odoo.callMethod(session, "res.partner", "message_post", [[client.id]], {
+          body,
+          message_type: "comment",
+          subtype_xmlid: "mail.mt_note",
+        });
+        onToast("Note enregistrée sur la fiche client", "success");
+      } catch {
+        // Hors ligne → mise en file, envoyée à Odoo au retour du réseau.
+        await sync.queueNote(client.id, client.name || "client", body);
+        onToast("Note enregistrée hors ligne — sera envoyée au retour du réseau", "info");
+      }
       onClose();
     } catch (e: any) {
       setError(e.message || "Erreur lors de l'enregistrement");

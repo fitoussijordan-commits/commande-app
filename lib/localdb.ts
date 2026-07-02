@@ -17,12 +17,14 @@ export const STORES = {
   clients: "clients",
   pricelist: "pricelist",
   images: "images",
+  mea: "mea",
+  favorites: "favorites",
   syncQueue: "syncQueue",
   meta: "meta",
 } as const;
 
-// Bump de version pour créer le nouveau store "images".
-const DB_VERSION_WITH_IMAGES = 2;
+// Bump de version pour créer les nouveaux stores (images, mea, favorites).
+const DB_VERSION_WITH_IMAGES = 3;
 
 let _dbPromise: Promise<IDBDatabase> | null = null;
 
@@ -41,6 +43,10 @@ function openDB(): Promise<IDBDatabase> {
       if (!db.objectStoreNames.contains(STORES.pricelist)) db.createObjectStore(STORES.pricelist, { keyPath: "key" });
       // Store images : clé = product id, valeur = data URL base64.
       if (!db.objectStoreNames.contains(STORES.images)) db.createObjectStore(STORES.images, { keyPath: "key" });
+      // MEA (modèles d'offre) : clé "all", valeur = liste de templates enrichis.
+      if (!db.objectStoreNames.contains(STORES.mea)) db.createObjectStore(STORES.mea, { keyPath: "key" });
+      // Données par client : clé = "fav-<id>", "ca-<id>", "hist-<id>".
+      if (!db.objectStoreNames.contains(STORES.favorites)) db.createObjectStore(STORES.favorites, { keyPath: "key" });
       if (!db.objectStoreNames.contains(STORES.meta)) db.createObjectStore(STORES.meta, { keyPath: "key" });
       if (!db.objectStoreNames.contains(STORES.syncQueue)) {
         const q = db.createObjectStore(STORES.syncQueue, { keyPath: "id", autoIncrement: true });
@@ -87,6 +93,20 @@ export async function kvGetUpdatedAt(store: string, key: string): Promise<number
 
 export type QueuedOrderStatus = "pending" | "syncing" | "synced" | "error";
 
+// Type d'élément en file : commande, note client, ou RDV.
+export type QueuedKind = "order" | "note" | "appointment";
+
+// Une action Odoo à rejouer : soit un create, soit un appel de méthode.
+export interface QueuedAction {
+  op: "create" | "callMethod";
+  model: string;
+  // create : values ; callMethod : method + args + kwargs
+  values?: any;
+  method?: string;
+  args?: any[];
+  kwargs?: any;
+}
+
 export interface QueuedOrder {
   id?: number;                 // auto-incrémenté par IndexedDB
   localRef: string;            // référence locale unique (anti-doublon)
@@ -94,16 +114,31 @@ export interface QueuedOrder {
   status: QueuedOrderStatus;
   attempts: number;
   lastError?: string;
-  odooId?: number;             // id sale.order après synchro réussie
-  clientName: string;          // pour affichage dans l'UI
-  total: number;               // pour affichage
-  // Charges utiles telles qu'attendues par odoo.create("sale.order", ...)
-  payloads: any[];             // 1 à N sale.order (principal + offerts)
+  odooId?: number;             // id après synchro réussie
+  kind?: QueuedKind;           // défaut "order" (rétro-compat)
+  label: string;               // libellé affiché dans l'UI (ex: "Commande — Client X")
+  clientName?: string;         // conservé pour rétro-compat
+  total?: number;              // conservé pour rétro-compat
+  // Ancien format commandes : liste de sale.order à créer.
+  payloads?: any[];
+  // Nouveau format générique : liste d'actions Odoo à rejouer en séquence.
+  actions?: QueuedAction[];
 }
 
 export async function enqueueOrder(order: Omit<QueuedOrder, "id" | "status" | "attempts" | "createdAt">): Promise<number> {
   const db = await openDB();
-  const rec: QueuedOrder = { ...order, status: "pending", attempts: 0, createdAt: Date.now() };
+  const rec: QueuedOrder = { kind: "order", ...order, status: "pending", attempts: 0, createdAt: Date.now() };
+  const id = await reqToPromise(tx(db, STORES.syncQueue, "readwrite").add(rec));
+  return id as number;
+}
+
+// Enfile une action générique (note, RDV, ...).
+export async function enqueueAction(item: {
+  kind: QueuedKind; label: string; actions: QueuedAction[];
+}): Promise<number> {
+  const db = await openDB();
+  const localRef = `LOCAL-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const rec: QueuedOrder = { localRef, ...item, status: "pending", attempts: 0, createdAt: Date.now() };
   const id = await reqToPromise(tx(db, STORES.syncQueue, "readwrite").add(rec));
   return id as number;
 }

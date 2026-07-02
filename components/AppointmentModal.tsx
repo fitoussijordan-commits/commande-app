@@ -1,6 +1,7 @@
 "use client";
 import { useState } from "react";
 import * as odoo from "@/lib/odoo";
+import * as sync from "@/lib/sync";
 
 const C = {
   bg: "#f8fafc", white: "#fff", text: "#0f172a", textSec: "#334155",
@@ -92,26 +93,33 @@ export default function AppointmentModal({ session, client, onClose, onToast }: 
       if (isNaN(start.getTime())) throw new Error("Date invalide");
       const stop = new Date(start.getTime() + durationHours * 3600 * 1000);
 
-      const [organizerPartnerId, categId] = await Promise.all([
-        getCurrentUserPartnerId(session),
-        getOrCreateTagForTitle(session, title), // fait aussi office de titre affiché (voir commentaire au-dessus)
-      ]);
-
-      // Important : le CLIENT n'est volontairement PAS ajouté comme participant (partner_ids).
-      // Seul le commercial (organisateur) y figure — c'est ce qui évite l'envoi automatique
-      // d'une invitation Outlook au client lors de la synchro du calendrier Odoo.
-      await odoo.create(session, "calendar.event", {
+      // Valeurs de base du RDV (sans les enrichissements qui nécessitent Odoo).
+      const baseValues: any = {
         name: title.trim(),
         start: toOdooUTC(start),
         stop: toOdooUTC(stop),
         location: location.trim(),
         description: `Client : ${client?.name || ""}${client?.phone ? ` — ${client.phone}` : ""}${note ? `\n\n${note}` : ""}`,
         user_id: session.uid,
-        ...(organizerPartnerId ? { partner_ids: [[6, 0, [organizerPartnerId]]] } : {}),
-        ...(categId ? { categ_ids: [[6, 0, [categId]]] } : {}),
-      });
+      };
 
-      onToast("RDV créé dans le calendrier Odoo", "success");
+      try {
+        const [organizerPartnerId, categId] = await Promise.all([
+          getCurrentUserPartnerId(session),
+          getOrCreateTagForTitle(session, title),
+        ]);
+        // Important : le CLIENT n'est volontairement PAS ajouté comme participant.
+        await odoo.create(session, "calendar.event", {
+          ...baseValues,
+          ...(organizerPartnerId ? { partner_ids: [[6, 0, [organizerPartnerId]]] } : {}),
+          ...(categId ? { categ_ids: [[6, 0, [categId]]] } : {}),
+        });
+        onToast("RDV créé dans le calendrier Odoo", "success");
+      } catch {
+        // Hors ligne → mise en file (version simplifiée, sans tag/organisateur résolus).
+        await sync.queueAppointment(client?.name || "client", baseValues);
+        onToast("RDV enregistré hors ligne — sera créé au retour du réseau", "info");
+      }
       onClose();
     } catch (e: any) {
       setError(e.message || "Erreur lors de la création du RDV");
