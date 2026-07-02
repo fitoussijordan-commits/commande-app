@@ -1637,9 +1637,6 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
               const net = gross * (1 - pct / 100);
               return (
                 <div key={item.product.id} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8, padding: "7px 8px", background: C.bg, borderRadius: 10 }}>
-                  <div style={{ width: 26, height: 26, borderRadius: 8, background: `hsl(${item.product.id % 360}, 60%, 90%)`, color: `hsl(${item.product.id % 360}, 60%, 35%)`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10, fontWeight: 800, flexShrink: 0 }}>
-                    {item.product.name.slice(0, 2).toUpperCase()}
-                  </div>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ fontSize: 11, fontWeight: 700, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>{item.product.name}</div>
                     <div style={{ fontSize: 10, color: C.muted }}>{item.qty} × {fmtPrice(item.unitPrice)}</div>
@@ -1692,34 +1689,37 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
             </div>
           )}
 
-          {/* Note */}
-          <textarea value={note} onChange={e => setNote(e.target.value)} placeholder="Note interne..."
-            rows={2} style={{ width: "100%", boxSizing: "border-box" as const, marginTop: 6, padding: "7px 9px", border: `1px solid ${C.border}`, borderRadius: 9, fontSize: 11, fontFamily: "inherit", resize: "none" as const, background: C.bg }} />
         </div>
 
-        {/* Footer total + valider */}
-        <div style={{ padding: "12px 14px", borderTop: `1px solid ${C.border}` }}>
-          <div style={{ display: "flex", flexDirection: "column" as const, gap: 4, marginBottom: 10 }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-              <span style={{ fontSize: 12, color: C.muted }}>Sous-total</span>
-              <span style={{ fontSize: 13, fontWeight: 600, color: C.textSec }}>{fmtPrice(cartTotal)}</span>
-            </div>
-            {discountTotal > 0 && (
+        {/* Bloc récap sombre — note + total + validation */}
+        <div style={{ padding: "0 12px 12px" }}>
+          <div style={{ background: "#0f172a", borderRadius: 18, padding: "14px 14px 16px", boxShadow: "0 12px 28px rgba(15,23,42,0.35)" }}>
+            <textarea value={note} onChange={e => setNote(e.target.value)} placeholder="Note pour la commande..."
+              rows={2} style={{ width: "100%", boxSizing: "border-box" as const, marginBottom: 12, padding: "9px 11px", border: "1px solid rgba(255,255,255,0.12)", borderRadius: 10, fontSize: 12, fontFamily: "inherit", resize: "none" as const, background: "rgba(255,255,255,0.06)", color: "#fff", outline: "none" }} />
+
+            <div style={{ borderTop: "1px solid rgba(255,255,255,0.1)", paddingTop: 10, display: "flex", flexDirection: "column" as const, gap: 5, marginBottom: 12 }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <span style={{ fontSize: 12, color: C.orange }}>Remise appliquée</span>
-                <span style={{ fontSize: 13, fontWeight: 700, color: C.orange }}>−{fmtPrice(discountTotal)}</span>
+                <span style={{ fontSize: 12, color: "rgba(255,255,255,0.55)" }}>Sous-total</span>
+                <span style={{ fontSize: 13, fontWeight: 600, color: "rgba(255,255,255,0.85)" }}>{fmtPrice(cartTotal)}</span>
               </div>
-            )}
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", paddingTop: 4 }}>
-              <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>Total HT</span>
-              <span style={{ fontSize: 18, fontWeight: 800, color: C.tealDark }}>{fmtPrice(netTotal)}</span>
+              {discountTotal > 0 && (
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <span style={{ fontSize: 12, color: "#fb923c" }}>Remise appliquée</span>
+                  <span style={{ fontSize: 13, fontWeight: 700, color: "#fb923c" }}>−{fmtPrice(discountTotal)}</span>
+                </div>
+              )}
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", paddingTop: 4 }}>
+                <span style={{ fontSize: 13, fontWeight: 700, color: "#fff" }}>Total HT</span>
+                <span style={{ fontSize: 20, fontWeight: 800, color: "#5eead4" }}>{fmtPrice(netTotal)}</span>
+              </div>
             </div>
+
+            <button onClick={onValidate} disabled={submitting || cartCount === 0}
+              style={{ width: "100%", padding: "14px 0", background: cartCount === 0 ? "rgba(255,255,255,0.12)" : submitting ? "rgba(94,234,212,0.4)" : "linear-gradient(135deg, #2dd4bf, #a78bfa)", color: cartCount === 0 ? "rgba(255,255,255,0.4)" : "#0f172a", border: "none", borderRadius: 999, fontSize: 14, fontWeight: 800, cursor: cartCount === 0 ? "default" : "pointer", fontFamily: "inherit", transition: "all 0.2s" }}>
+              {submitting ? "Création…" : cartCount === 0 ? "Panier vide" : `Créer le devis${freeItems.length > 0 ? " + BC gratuit" : ""} →`}
+            </button>
+            <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", textAlign: "center" as const, marginTop: 8 }}>Prix Odoo appliqués à la création</div>
           </div>
-          <button onClick={onValidate} disabled={submitting || cartCount === 0}
-            style={{ width: "100%", padding: "13px 0", background: cartCount === 0 ? C.border : submitting ? C.muted : "linear-gradient(135deg, #0d9488, #0f766e)", color: "#fff", border: "none", borderRadius: 12, fontSize: 14, fontWeight: 700, cursor: cartCount === 0 ? "default" : "pointer", fontFamily: "inherit", boxShadow: cartCount > 0 && !submitting ? "0 4px 12px rgba(13,148,136,0.35)" : "none", transition: "all 0.2s" }}>
-            {submitting ? "Création…" : cartCount === 0 ? "Panier vide" : `Créer le devis${freeItems.length > 0 ? " + BC gratuit" : ""}`}
-          </button>
-          <div style={{ fontSize: 10, color: C.muted, textAlign: "center" as const, marginTop: 5 }}>Prix Odoo appliqués à la création</div>
         </div>
       </div>
 
