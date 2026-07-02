@@ -5,6 +5,7 @@
 
 "use client";
 import { useEffect, useRef, useState, useCallback } from "react";
+import { apiUrl } from "@/lib/apiBase";
 
 // Ping léger : on interroge le proxy avec un endpoint volontairement anodin.
 // Le proxy répond quel que soit le résultat Odoo ; ce qui nous intéresse est
@@ -14,7 +15,7 @@ export async function probeConnection(timeoutMs = 4000): Promise<boolean> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const res = await fetch("/api/odoo/proxy", {
+    const res = await fetch(apiUrl("/api/odoo/proxy"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ ping: true }),

@@ -2,11 +2,13 @@
 // Client Odoo minimal — uniquement ce dont l'outil Commande a besoin
 // (authentification + lecture + création). Pas de dépendance au reste du WMS.
 
+import { apiUrl } from "@/lib/apiBase";
+
 export interface OdooConfig { url: string; db: string; }
 export interface OdooSession { uid: number; name: string; login: string; sessionId: string; config: OdooConfig; }
 
 async function rpc(config: OdooConfig, endpoint: string, params: any, sessionId?: string) {
-  const res = await fetch("/api/odoo/proxy", {
+  const res = await fetch(apiUrl("/api/odoo/proxy"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ odooUrl: config.url, endpoint, params, sessionId }),

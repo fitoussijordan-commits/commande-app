@@ -4,3 +4,10 @@ node_modules
 tsconfig.tsbuildinfo
 .vercel
 .env*
+
+# Artefacts build natif / Capacitor
+out
+.api-stash
+ios/App/App/public
+ios/App/Pods
+ios/DerivedData

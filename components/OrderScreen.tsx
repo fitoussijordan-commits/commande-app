@@ -5,6 +5,7 @@ import AppointmentModal from "@/components/AppointmentModal";
 import ClientNoteModal from "@/components/ClientNoteModal";
 import OfflineBar from "@/components/OfflineBar";
 import * as sync from "@/lib/sync";
+import { apiUrl } from "@/lib/apiBase";
 import * as loyalty from "@/lib/loyalty";
 
 // ── Palette ───────────────────────────────────────────────────────────────────
@@ -1284,7 +1285,7 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
   const searchTimer = useRef<any>(null);
 
   // URL vignette via proxy (chargée en lazy + cache navigateur 1h) — évite de charger 500 base64 d'un coup
-  const imgUrl = (id: number) => `/api/odoo/image?odooUrl=${encodeURIComponent(session.config.url)}&id=${id}&s=${session.sessionId}`;
+  const imgUrl = (id: number) => apiUrl(`/api/odoo/image?odooUrl=${encodeURIComponent(session.config.url)}&id=${id}&s=${session.sessionId}`);
 
   // ── Zoom image produit ─────────────────────────────────────────────────────
   const [zoom, setZoom] = useState<any>(null);          // produit affiché en grand

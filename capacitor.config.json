@@ -1,0 +1,8 @@
+{
+  "appId": "com.tondomaine.commandeapp",
+  "appName": "Commande",
+  "webDir": "out",
+  "server": {
+    "iosScheme": "https"
+  }
+}
