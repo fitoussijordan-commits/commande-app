@@ -1,8 +1,16 @@
 {
-  "appId": "com.tondomaine.commandeapp",
+  "appId": "com.jordanfitoussi.commande",
   "appName": "Commande",
   "webDir": "out",
   "server": {
     "iosScheme": "https"
+  },
+  "ios": {
+    "contentInset": "always"
+  },
+  "plugins": {
+    "Keyboard": {
+      "resize": "none"
+    }
   }
 }

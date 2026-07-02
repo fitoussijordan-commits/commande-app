@@ -57,6 +57,10 @@ export async function preloadCatalog(
   );
   await db.kvSet(db.STORES.clients, KEY, clients);
 
+  // Marque la synchro dès que le cache essentiel (produits + clients) est en place,
+  // pour que « dernière synchro » reflète la réalité même si la suite échoue.
+  await db.kvSet(db.STORES.meta, "lastSync", Date.now());
+
   // 3. Règles de prix (toutes pricelists actives, pour appliquer les tarifs hors ligne)
   onProgress?.({ step: "Grilles tarifaires", done: 2, total: steps });
   const pricelistItems = await odoo.searchRead(

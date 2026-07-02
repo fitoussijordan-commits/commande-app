@@ -35,10 +35,9 @@ export default function OfflineBar({
   const [syncing, setSyncing] = useState(false);
 
   const refreshStatus = useCallback(async () => {
-    try {
-      setPending(await getPendingCount());
-      setLastSync(await sync.getLastSync());
-    } catch {}
+    // Séparés : une erreur sur l'un ne doit pas empêcher l'autre de s'afficher.
+    try { setPending(await getPendingCount()); } catch {}
+    try { setLastSync(await sync.getLastSync()); } catch {}
   }, []);
 
   useEffect(() => {

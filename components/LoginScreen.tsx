@@ -37,6 +37,9 @@ export default function LoginScreen({ onLogin }: Props) {
         setLogin(cfg.login || "");
       }
     } catch {}
+    // iOS/WKWebView peut ouvrir le clavier en mettant le focus sur un champ au
+    // lancement. On retire tout focus au montage pour éviter ça.
+    try { (document.activeElement as HTMLElement | null)?.blur?.(); } catch {}
   }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
