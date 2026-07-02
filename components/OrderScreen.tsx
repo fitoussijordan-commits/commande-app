@@ -227,7 +227,7 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
   const [freeItems, setFreeItems] = useState<FreeItem[]>([]);
   const [showRules, setShowRules] = useState(false);
   const [submitting, setSubmitting] = useState(false);
-  const [done, setDone] = useState<{ mainId: number; freeId: number | null } | null>(null);
+  const [done, setDone] = useState<{ mainId: number | null; freeId: number | null; offline?: boolean } | null>(null);
   const [note, setNote] = useState("");
   // Brouillon détecté pour le client qu'on vient de sélectionner (jamais un autre client — pas de fuite visuelle)
   const [resumePrompt, setResumePrompt] = useState<Draft | null>(null);
@@ -371,7 +371,7 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
 
       // Commande + toutes ses lignes créées en UN SEUL appel Odoo (commandes one2many [0,0,{...}])
       // au lieu d'un appel par ligne — c'est ça qui rendait les gros devis lents.
-      const mainId = await odoo.create(session, "sale.order", {
+      const mainPayload: any = {
         partner_id: client.id, state: "draft",
         ...(pricelistId ? { pricelist_id: pricelistId } : {}),
         note: note || "",
@@ -389,25 +389,42 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
             price_unit: 0,
           }]),
         ],
-      });
+      };
 
-      let freeId: number | null = null;
-      if (freeItems.length > 0) {
-        freeId = await odoo.create(session, "sale.order", {
-          partner_id: client.id, state: "draft",
-          note: `Articles offerts — lié au devis #${mainId}`,
-          ...tagVals,
-          order_line: freeItems.map(fi => [0, 0, {
-            product_id: fi.product.id,
-            product_uom_qty: fi.qty,
-            price_unit: 0,
-          }]),
-        });
+      const freePayload: any | null = freeItems.length > 0 ? {
+        partner_id: client.id, state: "draft",
+        note: `Articles offerts — lié au devis principal`,
+        ...tagVals,
+        order_line: freeItems.map(fi => [0, 0, {
+          product_id: fi.product.id,
+          product_uom_qty: fi.qty,
+          price_unit: 0,
+        }]),
+      } : null;
+
+      const cartTotal = Object.values(cart).reduce((s, it) => s + it.qty * it.unitPrice, 0);
+
+      try {
+        // Tentative en ligne
+        const mainId = await odoo.create(session, "sale.order", mainPayload);
+        let freeId: number | null = null;
+        if (freePayload) {
+          freePayload.note = `Articles offerts — lié au devis #${mainId}`;
+          freeId = await odoo.create(session, "sale.order", freePayload);
+        }
+        removeDraftForClient(client.id);
+        refreshPendingDrafts();
+        setAppliedPromos({});
+        setDone({ mainId, freeId });
+      } catch {
+        // Réseau indisponible → on met la commande en file de synchro locale.
+        const payloads = freePayload ? [mainPayload, freePayload] : [mainPayload];
+        await sync.queueOrder(client.name, cartTotal, payloads);
+        removeDraftForClient(client.id);
+        refreshPendingDrafts();
+        setAppliedPromos({});
+        setDone({ mainId: null, freeId: null, offline: true });
       }
-      removeDraftForClient(client.id); // effacer le brouillon de CE client après création réussie
-      refreshPendingDrafts();
-      setAppliedPromos({});
-      setDone({ mainId, freeId });
     } catch (e: any) { onToast("Erreur : " + e.message, "error"); }
     setSubmitting(false);
   };
@@ -416,11 +433,18 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
   if (done) return (
     <div style={{ position: "fixed", inset: 0, left: desktop ? 248 : 0, background: "linear-gradient(135deg, #0f766e 0%, #7c3aed 100%)", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'DM Sans', sans-serif" }}>
       <div style={{ background: "#fff", borderRadius: 24, padding: "48px 40px", maxWidth: 480, width: "90%", textAlign: "center", boxShadow: C.shadowXl }}>
-        <div style={{ fontSize: 64, marginBottom: 16 }}>🎉</div>
-        <div style={{ fontSize: 26, fontWeight: 800, color: C.text, marginBottom: 8 }}>Devis créé !</div>
+        <div style={{ fontSize: 64, marginBottom: 16 }}>{done.offline ? "📴" : "🎉"}</div>
+        <div style={{ fontSize: 26, fontWeight: 800, color: C.text, marginBottom: 8 }}>
+          {done.offline ? "Commande en attente" : "Devis créé !"}
+        </div>
         <div style={{ fontSize: 15, color: C.muted, lineHeight: 1.6, marginBottom: 32 }}>
-          Devis principal <span style={{ color: C.teal, fontWeight: 700 }}>#{done.mainId}</span> dans Odoo
-          {done.freeId && <><br/>BC gratuit <span style={{ color: C.purple, fontWeight: 700 }}>#{done.freeId}</span> créé automatiquement</>}
+          {done.offline ? (
+            <>Enregistrée hors ligne sur cet appareil.<br/>
+            Elle sera envoyée à Odoo automatiquement dès le retour du réseau — voir « en attente » en haut de l'écran.</>
+          ) : (
+            <>Devis principal <span style={{ color: C.teal, fontWeight: 700 }}>#{done.mainId}</span> dans Odoo
+            {done.freeId && <><br/>BC gratuit <span style={{ color: C.purple, fontWeight: 700 }}>#{done.freeId}</span> créé automatiquement</>}</>
+          )}
         </div>
         <div style={{ display: "flex", gap: 12, justifyContent: "center" }}>
           <button onClick={() => { setDone(null); setCart({}); setClient(null); setNote(""); setResumePrompt(null); setAppliedPromos({}); setStep("client"); }}
@@ -1396,8 +1420,18 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
       // Produits en stock en premier, puis les autres
       p.sort((a: any, b: any) => (b.virtual_available || 0) - (a.virtual_available || 0));
       if (!q) setAllProducts(p);
-      else return p; // pour la recherche, retourner sans stocker
-    } catch {}
+      else { setProdLoading(false); return p; } // pour la recherche, retourner sans stocker
+    } catch {
+      // Réseau indisponible → on lit le catalogue préchargé en local.
+      try {
+        const cached = q.trim().length >= 2
+          ? await sync.searchCachedProducts(q.trim(), 500)
+          : await sync.getCachedProducts();
+        const sorted = [...cached].sort((a: any, b: any) => (b.virtual_available || 0) - (a.virtual_available || 0));
+        if (!q) setAllProducts(sorted);
+        else { setProdLoading(false); return sorted; }
+      } catch {}
+    }
     setProdLoading(false);
   }, [session]);
 

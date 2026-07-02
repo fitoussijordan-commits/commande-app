@@ -41,7 +41,13 @@ export default function OfflineBar({
     } catch {}
   }, []);
 
-  useEffect(() => { refreshStatus(); }, [refreshStatus]);
+  useEffect(() => {
+    refreshStatus();
+    // Rafraîchit le compteur régulièrement pour refléter une commande
+    // mise en file depuis l'écran de commande, sans câblage inter-composant.
+    const t = setInterval(refreshStatus, 5000);
+    return () => clearInterval(t);
+  }, [refreshStatus]);
 
   // Synchro automatique dès qu'on repasse en ligne s'il y a des commandes en attente.
   useEffect(() => {
