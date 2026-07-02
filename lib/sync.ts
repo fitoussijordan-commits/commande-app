@@ -63,13 +63,15 @@ export async function preloadCatalog(
 
   // 3. Règles de prix (toutes pricelists actives, pour appliquer les tarifs hors ligne)
   onProgress?.({ step: "Grilles tarifaires", done: 2, total: steps });
+  // Pas de tri par "sequence" : ce champ n'existe pas sur product.pricelist.item
+  // dans toutes les versions d'Odoo (il faisait planter le préchargement).
   const pricelistItems = await odoo.searchRead(
     session, "product.pricelist.item",
     [["active", "=", true]],
     ["pricelist_id", "applied_on", "compute_price", "product_id", "product_tmpl_id",
      "categ_id", "fixed_price", "percent_price", "price_discount", "price_surcharge",
      "min_quantity"],
-    0, "sequence asc"
+    0
   );
   await db.kvSet(db.STORES.pricelist, KEY, pricelistItems);
 

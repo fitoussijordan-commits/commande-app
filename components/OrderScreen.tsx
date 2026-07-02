@@ -168,11 +168,13 @@ function applyPricelist(lstPrice: number, productId: number, productTmplId: numb
 }
 
 async function fetchPricelistItems(session: odoo.OdooSession, pricelistId: number): Promise<PriceItem[]> {
+  // Pas de tri "sequence asc" : ce champ n'existe pas sur product.pricelist.item
+  // dans cette instance Odoo et faisait échouer la requête (prix → catalogue).
   return odoo.searchRead(session, "product.pricelist.item",
     [["pricelist_id", "=", pricelistId], ["active", "=", true]],
     ["applied_on", "compute_price", "product_id", "product_tmpl_id", "categ_id",
      "fixed_price", "percent_price", "price_discount", "price_surcharge", "min_quantity"],
-    500, "sequence asc"  // Odoo trie par séquence pour appliquer la bonne priorité
+    500
   );
 }
 
