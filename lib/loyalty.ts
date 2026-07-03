@@ -79,7 +79,10 @@ export async function fetchActiveLoyaltyPrograms(session: odoo.OdooSession): Pro
           reward_product_qty: rw.reward_product_qty || 1,
         })),
     })).filter((p: LoyaltyProgram) => p.rules.length > 0 && p.rewards.length > 0);
-  } catch {
+  } catch (e) {
+    // Hors ligne : on laisse remonter pour que l'appelant lise le cache local
+    // (préchargé par « Télécharger les données »).
+    if (odoo.isNetworkError(e)) throw e;
     return []; // module non installé ou inaccessible → aucune remise détectée, pas de crash
   }
 }

@@ -7,6 +7,7 @@
 
 import * as odoo from "@/lib/odoo";
 import * as db from "@/lib/localdb";
+import * as loyalty from "@/lib/loyalty";
 
 // Champs produits — identiques à ceux consommés dans OrderScreen (favoris, MEA, recherche).
 export const PRODUCT_FIELDS = [
@@ -15,10 +16,11 @@ export const PRODUCT_FIELDS = [
 ];
 
 // Champs clients — alignés sur CLIENT_FIELDS d'OrderScreen (+ géoloc pour la carte).
+// is_company sert au départage quand plusieurs fiches partagent le même code (ref).
 export const CLIENT_FIELDS = [
   "id", "name", "ref", "city", "country_id",
   "property_product_pricelist", "email", "phone",
-  "partner_latitude", "partner_longitude",
+  "partner_latitude", "partner_longitude", "is_company",
 ];
 
 const KEY = "all";
@@ -34,8 +36,8 @@ export interface SyncProgress {
 export async function preloadCatalog(
   session: odoo.OdooSession,
   onProgress?: (p: SyncProgress) => void
-): Promise<{ products: number; clients: number; pricelistItems: number; mea: number; meaError?: string }> {
-  const steps = 4;
+): Promise<{ products: number; clients: number; pricelistItems: number; mea: number; loyalty: number; meaError?: string }> {
+  const steps = 5;
 
   // 1. Produits vendables
   onProgress?.({ step: "Catalogue produits", done: 0, total: steps });
@@ -65,14 +67,30 @@ export async function preloadCatalog(
   onProgress?.({ step: "Grilles tarifaires", done: 2, total: steps });
   // Pas de tri par "sequence" : ce champ n'existe pas sur product.pricelist.item
   // dans toutes les versions d'Odoo (il faisait planter le préchargement).
-  const pricelistItems = await odoo.searchRead(
-    session, "product.pricelist.item",
-    [["active", "=", true]],
-    ["pricelist_id", "applied_on", "compute_price", "product_id", "product_tmpl_id",
-     "categ_id", "fixed_price", "percent_price", "price_discount", "price_surcharge",
-     "min_quantity"],
-    0
-  );
+  const PRICELIST_FIELDS = [
+    "pricelist_id", "applied_on", "compute_price", "product_id", "product_tmpl_id",
+    "categ_id", "fixed_price", "percent_price", "price_discount", "price_surcharge",
+    "min_quantity",
+  ];
+  let pricelistItems: any[];
+  try {
+    // Avec les dates de validité (une règle expirée ne doit plus s'appliquer).
+    pricelistItems = await odoo.searchRead(
+      session, "product.pricelist.item",
+      [["active", "=", true]],
+      [...PRICELIST_FIELDS, "date_start", "date_end"],
+      0
+    );
+  } catch (e) {
+    if (odoo.isNetworkError(e)) throw e;
+    // Repli si date_start/date_end n'existent pas sur cette instance (comme "sequence").
+    pricelistItems = await odoo.searchRead(
+      session, "product.pricelist.item",
+      [["active", "=", true]],
+      PRICELIST_FIELDS,
+      0
+    );
+  }
   await db.kvSet(db.STORES.pricelist, KEY, pricelistItems);
 
   // 4. MEA (modèles d'offre) — partagés, préchargés une fois pour tous.
@@ -104,6 +122,16 @@ export async function preloadCatalog(
     meaError = e?.message || String(e);
   }
 
+  // 5. Programmes de remise Odoo (Réductions & fidélité) — pour que le bouton 🏷️
+  // fonctionne aussi hors ligne. Best effort : un échec ne bloque pas le reste.
+  onProgress?.({ step: "Remises & fidélité", done: 4, total: steps });
+  let loyaltyCount = 0;
+  try {
+    const programs = await loyalty.fetchActiveLoyaltyPrograms(session);
+    await db.kvSet(db.STORES.meta, "loyaltyPrograms", programs);
+    loyaltyCount = programs.length;
+  } catch {}
+
   await db.kvSet(db.STORES.meta, "lastSync", Date.now());
   onProgress?.({ step: "Terminé", done: steps, total: steps });
 
@@ -112,8 +140,19 @@ export async function preloadCatalog(
     clients: clients.length,
     pricelistItems: pricelistItems.length,
     mea: meaCount,
+    loyalty: loyaltyCount,
     meaError,
   };
+}
+
+// ---- Programmes de remise (Réductions & fidélité) ----
+
+export async function cacheLoyaltyPrograms(programs: any[]): Promise<void> {
+  return db.kvSet(db.STORES.meta, "loyaltyPrograms", programs);
+}
+
+export async function getCachedLoyaltyPrograms(): Promise<any[] | undefined> {
+  return db.kvGet<any[]>(db.STORES.meta, "loyaltyPrograms");
 }
 
 // Le cache MEA stocke { templates, lines }. On tolère l'ancien format (tableau).
@@ -280,13 +319,15 @@ export async function searchCachedClients(query: string, limit = 30): Promise<an
 // ---- File de synchro des commandes hors ligne ----
 
 // Enfile une commande (un ou plusieurs payloads sale.order) pour synchro ultérieure.
+// `label` optionnel : ex. « BC gratuit — X » quand seul le BC part en file.
 export async function queueOrder(
   clientName: string,
   total: number,
-  payloads: any[]
+  payloads: any[],
+  label?: string
 ): Promise<{ localRef: string; id: number }> {
   const localRef = `LOCAL-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-  const id = await db.enqueueOrder({ localRef, label: `Commande — ${clientName}`, clientName, total, payloads });
+  const id = await db.enqueueOrder({ localRef, label: label || `Commande — ${clientName}`, clientName, total, payloads });
   return { localRef, id };
 }
 

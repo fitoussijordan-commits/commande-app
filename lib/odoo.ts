@@ -7,14 +7,56 @@ import { apiUrl } from "@/lib/apiBase";
 export interface OdooConfig { url: string; db: string; }
 export interface OdooSession { uid: number; name: string; login: string; sessionId: string; config: OdooConfig; }
 
+// ── Classification des erreurs ────────────────────────────────────────────────
+// Une erreur RÉSEAU (fetch échoué, proxy/Odoo injoignable, rate limit) est
+// TRANSITOIRE : l'action peut être mise en file et rejouée plus tard.
+// Une erreur MÉTIER renvoyée par Odoo (payload refusé, champ invalide…) est
+// DÉFINITIVE : la rejouer telle quelle échouera toujours — il ne faut PAS la
+// confondre avec du hors-ligne (avant, tout le catch partait en file de synchro).
+export interface RpcError extends Error {
+  network?: boolean;        // true = injoignable → rejouable plus tard
+  sessionExpired?: boolean; // true = session Odoo expirée → se reconnecter
+}
+
+export function isNetworkError(e: any): boolean { return e?.network === true; }
+export function isSessionExpired(e: any): boolean { return e?.sessionExpired === true; }
+
+function rpcError(message: string, opts: { network?: boolean; sessionExpired?: boolean } = {}): RpcError {
+  const err = new Error(message) as RpcError;
+  if (opts.network) err.network = true;
+  if (opts.sessionExpired) {
+    err.sessionExpired = true;
+    // Signale la session expirée à l'app (toast global dans page.tsx) sans
+    // couplage direct — et surtout SANS déconnecter (règle absolue hors ligne).
+    if (typeof window !== "undefined") {
+      try { window.dispatchEvent(new Event("odoo:session-expired")); } catch {}
+    }
+  }
+  return err;
+}
+
 async function rpc(config: OdooConfig, endpoint: string, params: any, sessionId?: string) {
-  const res = await fetch(apiUrl("/api/odoo/proxy"), {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ odooUrl: config.url, endpoint, params, sessionId }),
-  });
-  const data = await res.json();
-  if (!res.ok || data.error) throw new Error(data.error || `Erreur ${res.status}`);
+  let res: Response;
+  try {
+    res = await fetch(apiUrl("/api/odoo/proxy"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ odooUrl: config.url, endpoint, params, sessionId }),
+    });
+  } catch {
+    throw rpcError("Réseau indisponible", { network: true });
+  }
+  let data: any;
+  try { data = await res.json(); }
+  catch { throw rpcError(`Réponse serveur invalide (${res.status})`, { network: true }); }
+  if (!res.ok || data.error) {
+    const msg = typeof data?.error === "string" ? data.error : `Erreur ${res.status}`;
+    throw rpcError(msg, {
+      // 5xx = proxy/Odoo injoignable, 429 = rate limit : transitoire.
+      network: res.status >= 500 || res.status === 429,
+      sessionExpired: /session\s*(expired|expirée)|expired\s*session/i.test(msg),
+    });
+  }
   return { result: data.result, sessionId: data.sessionId };
 }
 

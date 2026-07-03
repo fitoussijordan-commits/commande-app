@@ -79,12 +79,12 @@ export default function OfflineBar({
     if (!online) { onToast?.("Connexion requise pour préparer le hors-ligne", "error"); return; }
     setPreloadError("");
     setPreloading(true);
-    setProgress({ step: "Démarrage", done: 0, total: 4 });
+    setProgress({ step: "Démarrage", done: 0, total: 5 });
     try {
       const res = await sync.preloadCatalog(session, setProgress);
       // Rend visible un éventuel échec du chargement MEA (au lieu de l'ignorer).
       if (res.meaError) onToast?.("MEA non chargées : " + res.meaError, "error");
-      onToast?.(`Catalogue prêt : ${res.products} produits, ${res.clients} clients, ${res.mea} offres. Téléchargement des images…`, "success");
+      onToast?.(`Catalogue prêt : ${res.products} produits, ${res.clients} clients, ${res.mea} offres, ${res.loyalty} remises. Téléchargement des images…`, "success");
       // Puis les images produit (le plus lourd) — reprend là où c'était si interrompu.
       const img = await sync.preloadImages(session, setProgress);
       onToast?.(`Hors-ligne prêt : ${res.products} produits, ${res.clients} clients, ${res.mea} offres, ${img.downloaded} images`, "success");

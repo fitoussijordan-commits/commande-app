@@ -137,7 +137,41 @@ Refonte graphique (juillet 2026) :
   l'étiquette calendar.event.type au REJEU (l'automatisation Studio du client
   plante sinon en IndexError sur categ_ids[0]).
 
+Passe fiabilité (juillet 2026) :
+- **Erreur réseau ≠ erreur métier** : `lib/odoo.ts` classe désormais les erreurs
+  (`isNetworkError`, `isSessionExpired`). Réseau/5xx/429 → rejouable (file) ;
+  erreur Odoo (400) → définitive. `handleValidate` n'enfile plus une commande
+  REFUSÉE par Odoo comme si c'était du hors-ligne (elle rééchouait en boucle) :
+  toast avec la cause exacte, panier/brouillon conservés.
+- **Fix doublon devis** : si le devis principal était créé mais le BC gratuit
+  échouait, les DEUX payloads partaient en file → devis principal en double au
+  rejeu. Désormais seul le BC gratuit est enfilé (label « BC gratuit — client »).
+- **Prix hors ligne réparés** : `getCachedPricelistItems` n'était JAMAIS lu →
+  prix catalogue hors ligne. `fetchPricelistItems` lit maintenant le cache en repli.
+- **Tri des règles pricelist** : plus de « première règle du tableau gagne » ;
+  tri par spécificité (variante > produit > catégorie > global) puis min_quantity
+  décroissante. Dates de validité (`date_start`/`date_end`) respectées, avec repli
+  si les champs n'existent pas sur l'instance. Limite 500 → 0 (grille complète).
+- **Cache étiquette « Validé » non poisonné** : un échec (offline) ne fige plus
+  `null` pour toute la session.
+- **Session expirée visible** : événement `odoo:session-expired` → toast global
+  dans `page.tsx` (1/min max), sans déconnecter (règle absolue).
+- **ErrorBoundary** dans `page.tsx` : plus de page blanche définitive en cas de
+  crash JS — écran de secours + bouton recharger (brouillons/file préservés).
+- **Remises fidélité hors ligne** : préchargées à l'étape 5 de `preloadCatalog`
+  (cache meta `loyaltyPrograms`), lues en repli par `getLoyaltyPrograms`.
+- **Planning : fix « plusieurs clients ont ce code »** : `openEventClient` filtre
+  d'abord `customer_rank > 0`, puis départage par nom exact du RDV, puis par
+  l'unique fiche société (`is_company`, ajouté à CLIENT_FIELDS ici et dans sync).
+  Toujours en correspondance stricte — jamais d'ouverture au hasard.
+- Recherche client en ligne : la VILLE est cherchée (comme hors ligne et comme
+  promis par le sous-titre). Stats client sans plafond 300. Suppression du double
+  fetch pricelist dans `enterOrderMode`.
+
 Restes possibles / idées non faites :
 - Bouton « forcer rechargement complet des images » si les photos changent souvent.
 - Distribution TestFlight (nécessite compte Apple Developer 99 €/an) pour équiper les
   commerciaux sans câble et sans expiration 7 jours.
+- Découper `OrderScreen.tsx` (~2 500 lignes) en fichiers par écran.
+- Ajouter l'étiquette « Validé » au REJEU des commandes enfilées hors ligne
+  (aujourd'hui : payload figé sans tag si créé offline).

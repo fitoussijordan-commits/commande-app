@@ -1,10 +1,42 @@
 "use client";
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef, Component, type ReactNode } from "react";
 import * as odoo from "@/lib/odoo";
 import LoginScreen from "@/components/LoginScreen";
 import OrderScreen from "@/components/OrderScreen";
 
 const LS_SESSION = "commande_session";
+
+// ── Filet de sécurité : écran de secours en cas de crash JS ──────────────────
+// Sans lui, une erreur de rendu = page blanche définitive sur l'iPad en tournée.
+// Les brouillons, le cache et la file d'envoi sont persistés (localStorage /
+// IndexedDB) : recharger ne perd RIEN.
+class ErrorBoundary extends Component<{ children: ReactNode }, { error: Error | null }> {
+  state = { error: null as Error | null };
+  static getDerivedStateFromError(error: Error) { return { error }; }
+  render() {
+    if (this.state.error) {
+      return (
+        <div style={{ minHeight: "100vh", background: "#f8fafc", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'DM Sans', sans-serif", padding: 24 }}>
+          <div style={{ maxWidth: 420, width: "100%", background: "#fff", borderRadius: 20, padding: "36px 32px", textAlign: "center", boxShadow: "0 20px 25px rgba(0,0,0,0.10), 0 8px 10px rgba(0,0,0,0.04)" }}>
+            <div style={{ fontSize: 40, marginBottom: 12 }}>⚠️</div>
+            <div style={{ fontSize: 19, fontWeight: 800, color: "#0f172a", marginBottom: 8 }}>L'application a rencontré un problème</div>
+            <div style={{ fontSize: 13, color: "#64748b", lineHeight: 1.5, marginBottom: 8 }}>
+              Tes brouillons et commandes en attente sont conservés sur l'appareil — recharger ne perd rien.
+            </div>
+            <div style={{ fontSize: 11, color: "#94a3b8", fontFamily: "monospace", marginBottom: 20, wordBreak: "break-word", maxHeight: 60, overflow: "hidden" }}>
+              {String(this.state.error?.message || this.state.error)}
+            </div>
+            <button onClick={() => window.location.reload()}
+              style={{ padding: "13px 28px", background: "#0d9488", color: "#fff", border: "none", borderRadius: 12, fontSize: 15, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+              Recharger l'application
+            </button>
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 // ── Toasts globaux ────────────────────────────────────────────────────────────
 // Avant : onToast={(msg) => console.log(msg)} → AUCUN message n'était visible
@@ -75,6 +107,21 @@ export default function HomePage() {
     if (session) localStorage.setItem(LS_SESSION, JSON.stringify(session));
   }, [session]);
 
+  // Session Odoo expirée (détectée par lib/odoo.ts) : avant, c'était silencieusement
+  // traité comme du hors-ligne — le commercial voyait des données en cache sans savoir
+  // que sa session était morte. On prévient clairement, SANS déconnecter (règle absolue).
+  const lastSessionToastRef = useRef(0);
+  useEffect(() => {
+    const onExpired = () => {
+      const now = Date.now();
+      if (now - lastSessionToastRef.current < 60_000) return; // anti-spam : 1 toast/min max
+      lastSessionToastRef.current = now;
+      toast("Session Odoo expirée — déconnecte-toi puis reconnecte-toi (avec du réseau)", "error");
+    };
+    window.addEventListener("odoo:session-expired", onExpired);
+    return () => window.removeEventListener("odoo:session-expired", onExpired);
+  }, [toast]);
+
   const handleLogout = () => {
     localStorage.removeItem(LS_SESSION);
     setSession(null);
@@ -83,13 +130,13 @@ export default function HomePage() {
   if (!ready) return null;
 
   return (
-    <>
+    <ErrorBoundary>
       {session ? (
         <OrderScreen session={session} onBack={handleLogout} onToast={toast} />
       ) : (
         <LoginScreen onLogin={setSession} />
       )}
       <ToastStack toasts={toasts} onDismiss={dismissToast} />
-    </>
+    </ErrorBoundary>
   );
 }

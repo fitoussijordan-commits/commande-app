@@ -177,15 +177,33 @@ interface PriceItem {
   price_discount: number;      // % de remise pour compute_price='formula'
   price_surcharge: number;
   min_quantity: number;
+  date_start?: string | false; // dates de validité de la règle (absentes sur certaines instances)
+  date_end?: string | false;
+}
+
+// Tri par spécificité : variante > produit > catégorie > global, puis palier de
+// quantité décroissant (la meilleure règle applicable gagne). Sans ce tri, l'ordre
+// arbitraire renvoyé par Odoo (non triable par "sequence" ici) pouvait faire gagner
+// une règle globale sur une règle propre au produit → prix client faux.
+const APPLIED_ON_RANK: Record<string, number> = {
+  "0_product_variant": 0, "1_product": 1, "2_product_category": 2, "3_global": 3,
+};
+function sortPriceItems(items: PriceItem[]): PriceItem[] {
+  return [...items].sort((a, b) =>
+    (APPLIED_ON_RANK[a.applied_on] ?? 9) - (APPLIED_ON_RANK[b.applied_on] ?? 9)
+    || (b.min_quantity || 0) - (a.min_quantity || 0)
+  );
 }
 
 function applyPricelist(lstPrice: number, productId: number, productTmplId: number, items: PriceItem[], qty = 1): number {
-  // Priorité : product_variant > product_template > global
-  // On prend la première règle qui s'applique (Odoo respecte la séquence)
+  // Priorité : product_variant > product_template > global (items pré-triés par sortPriceItems).
   const today = new Date().toISOString().slice(0, 10);
 
   for (const item of items) {
     if (item.min_quantity > qty) continue;
+    // Règle datée : ignorée hors de sa période de validité (promo expirée / à venir).
+    if (item.date_start && String(item.date_start).slice(0, 10) > today) continue;
+    if (item.date_end && String(item.date_end).slice(0, 10) < today) continue;
 
     const appliesToProduct =
       (item.applied_on === "0_product_variant" && item.product_id && item.product_id[0] === productId) ||
@@ -201,15 +219,33 @@ function applyPricelist(lstPrice: number, productId: number, productTmplId: numb
   return lstPrice; // aucune règle → prix catalogue
 }
 
+const PRICELIST_ITEM_FIELDS = [
+  "applied_on", "compute_price", "product_id", "product_tmpl_id", "categ_id",
+  "fixed_price", "percent_price", "price_discount", "price_surcharge", "min_quantity",
+];
+
 async function fetchPricelistItems(session: odoo.OdooSession, pricelistId: number): Promise<PriceItem[]> {
   // Pas de tri "sequence asc" : ce champ n'existe pas sur product.pricelist.item
   // dans cette instance Odoo et faisait échouer la requête (prix → catalogue).
-  return odoo.searchRead(session, "product.pricelist.item",
-    [["pricelist_id", "=", pricelistId], ["active", "=", true]],
-    ["applied_on", "compute_price", "product_id", "product_tmpl_id", "categ_id",
-     "fixed_price", "percent_price", "price_discount", "price_surcharge", "min_quantity"],
-    500
-  );
+  // Limite 0 = TOUTES les règles (avant : 500 → grille tronquée = prix faux).
+  const domain = [["pricelist_id", "=", pricelistId], ["active", "=", true]];
+  try {
+    let items: PriceItem[];
+    try {
+      items = await odoo.searchRead(session, "product.pricelist.item", domain,
+        [...PRICELIST_ITEM_FIELDS, "date_start", "date_end"], 0);
+    } catch (e) {
+      if (odoo.isNetworkError(e)) throw e;
+      // Repli si date_start/date_end n'existent pas sur cette instance.
+      items = await odoo.searchRead(session, "product.pricelist.item", domain, PRICELIST_ITEM_FIELDS, 0);
+    }
+    return sortPriceItems(items);
+  } catch {
+    // Hors ligne → règles préchargées par « Télécharger les données ».
+    // (Avant : ce cache existait mais n'était JAMAIS lu → prix catalogue hors ligne.)
+    const cached = await sync.getCachedPricelistItems(pricelistId);
+    return sortPriceItems(cached as PriceItem[]);
+  }
 }
 
 function computeFreeItems(cart: Record<number, CartItem>, rules: FreeRule[]): FreeItem[] {
@@ -240,7 +276,9 @@ async function getValidatedTagId(session: odoo.OdooSession): Promise<number | nu
     const exact = tags.find((t: any) => (t.name || "").trim().toLowerCase() === "validé");
     _validatedTagIdCache = exact ? exact.id : (tags[0]?.id ?? null);
   } catch {
-    _validatedTagIdCache = null;
+    // Ne fige PAS le cache (ex. échec réseau hors ligne) : sinon plus aucune
+    // commande ne serait étiquetée de toute la session, même en ligne.
+    return null;
   }
   return _validatedTagIdCache ?? null;
 }
@@ -250,8 +288,17 @@ async function getValidatedTagId(session: odoo.OdooSession): Promise<number | nu
 let _loyaltyProgramsCache: loyalty.LoyaltyProgram[] | null = null;
 async function getLoyaltyPrograms(session: odoo.OdooSession): Promise<loyalty.LoyaltyProgram[]> {
   if (_loyaltyProgramsCache !== null) return _loyaltyProgramsCache;
-  _loyaltyProgramsCache = await loyalty.fetchActiveLoyaltyPrograms(session);
-  return _loyaltyProgramsCache;
+  try {
+    const programs = await loyalty.fetchActiveLoyaltyPrograms(session);
+    _loyaltyProgramsCache = programs;
+    sync.cacheLoyaltyPrograms(programs).catch(() => {});
+    return programs;
+  } catch {
+    // Hors ligne → programmes préchargés. On ne fige PAS le cache mémoire :
+    // au prochain passage en ligne, la vraie liste sera rechargée.
+    const cached = await sync.getCachedLoyaltyPrograms().catch(() => undefined);
+    return (cached as loyalty.LoyaltyProgram[]) || [];
+  }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -320,7 +367,7 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
     setRules(loadRules());
     migrateLegacyDraft();
     refreshPendingDrafts();
-    getLoyaltyPrograms(session).then(setLoyaltyPrograms);
+    getLoyaltyPrograms(session).then(setLoyaltyPrograms).catch(() => {});
   }, [session, refreshPendingDrafts]);
 
   // Programmes dont les conditions sont actuellement remplies par le panier
@@ -346,16 +393,14 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
   };
 
   // Depuis le hub client → "Prise de commande" : repart d'un panier vide, détecte un brouillon
-  // existant pour CE client précisément, charge sa pricelist, puis entre dans le catalogue.
+  // existant pour CE client précisément, puis entre dans le catalogue.
+  // (La pricelist est déjà chargée par selectClient — pas de 2ᵉ appel redondant.)
   const enterOrderMode = () => {
     if (!client) return;
     setCart({});
     setNote("");
     setAppliedPromos({});
     setResumePrompt(loadDraftForClient(client.id));
-    const plId = client.property_product_pricelist?.[0];
-    if (plId) fetchPricelistItems(session, plId).then(setPriceItems).catch(() => setPriceItems([]));
-    else setPriceItems([]);
     setStep("catalog");
   };
 
@@ -467,27 +512,51 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
 
       const cartTotal = Object.values(cart).reduce((s, it) => s + it.qty * it.unitPrice, 0);
 
+      // 1) Devis principal
+      let mainId: number;
       try {
-        // Tentative en ligne
-        const mainId = await odoo.create(session, "sale.order", mainPayload);
-        let freeId: number | null = null;
-        if (freePayload) {
-          freePayload.note = `Articles offerts — lié au devis #${mainId}`;
-          freeId = await odoo.create(session, "sale.order", freePayload);
+        mainId = await odoo.create(session, "sale.order", mainPayload);
+      } catch (e: any) {
+        if (odoo.isNetworkError(e)) {
+          // Réseau indisponible → on met la commande en file de synchro locale.
+          const payloads = freePayload ? [mainPayload, freePayload] : [mainPayload];
+          await sync.queueOrder(client.name, cartTotal, payloads);
+          removeDraftForClient(client.id);
+          refreshPendingDrafts();
+          setAppliedPromos({});
+          setDone({ mainId: null, freeId: null, offline: true });
+          setSubmitting(false);
+          return;
         }
-        removeDraftForClient(client.id);
-        refreshPendingDrafts();
-        setAppliedPromos({});
-        setDone({ mainId, freeId });
-      } catch {
-        // Réseau indisponible → on met la commande en file de synchro locale.
-        const payloads = freePayload ? [mainPayload, freePayload] : [mainPayload];
-        await sync.queueOrder(client.name, cartTotal, payloads);
-        removeDraftForClient(client.id);
-        refreshPendingDrafts();
-        setAppliedPromos({});
-        setDone({ mainId: null, freeId: null, offline: true });
+        // Erreur MÉTIER Odoo (payload refusé) : la mettre en file rééchouerait en
+        // boucle. On affiche la cause exacte et on GARDE panier + brouillon pour
+        // corriger et revalider. (Avant : traitée à tort comme du hors-ligne.)
+        onToast("Odoo a refusé le devis : " + (e?.message || e), "error");
+        setSubmitting(false);
+        return;
       }
+
+      // 2) BC gratuit — le devis principal EXISTE déjà dans Odoo : quoi qu'il
+      // arrive ici, on ne remet JAMAIS mainPayload en file (sinon doublon au rejeu).
+      let freeId: number | null = null;
+      if (freePayload) {
+        freePayload.note = `Articles offerts — lié au devis #${mainId}`;
+        try {
+          freeId = await odoo.create(session, "sale.order", freePayload);
+        } catch (e: any) {
+          if (odoo.isNetworkError(e)) {
+            await sync.queueOrder(client.name, 0, [freePayload], `BC gratuit — ${client.name}`);
+            onToast("Devis créé ; le BC gratuit part en file (réseau coupé), envoi auto", "info");
+          } else {
+            onToast(`Devis #${mainId} créé, mais Odoo a refusé le BC gratuit : ${e?.message || e}`, "error");
+          }
+        }
+      }
+
+      removeDraftForClient(client.id);
+      refreshPendingDrafts();
+      setAppliedPromos({});
+      setDone({ mainId, freeId });
     } catch (e: any) { onToast("Erreur : " + e.message, "error"); }
     setSubmitting(false);
   };
@@ -778,7 +847,8 @@ function fmtDistance(km: number): string {
 // Rayon de recherche du mode localisation — facile à ajuster si besoin.
 const LOC_RADIUS_KM = 1;
 
-const CLIENT_FIELDS = ["id", "name", "ref", "city", "country_id", "property_product_pricelist", "email", "phone"];
+// is_company sert au départage quand plusieurs fiches partagent le même code (ref).
+const CLIENT_FIELDS = ["id", "name", "ref", "city", "country_id", "property_product_pricelist", "email", "phone", "is_company"];
 
 // ═══════════════════════════════════════════════════════════════════════════
 // ACCUEIL — planning de la semaine du commercial connecté
@@ -903,25 +973,57 @@ function HomeScreen({ session, onNewOrder, onOpenClient, onToast }: {
     // Compare deux codes de façon stricte (insensible casse/espaces).
     const norm = (s: string) => s.replace(/\s+/g, "").toLowerCase();
 
+    // Départage quand PLUSIEURS fiches partagent le même code (cas réel : société
+    // + contact de livraison/facturation au même ref, ou doublon de fiche) :
+    //  1. une seule fiche → elle ;
+    //  2. sinon, celle dont le nom correspond EXACTEMENT au nom du RDV ;
+    //  3. sinon, l'unique fiche « société » du lot (les contacts rattachés sont écartés).
+    // Toujours en correspondance stricte — on n'ouvre jamais une fiche au hasard.
+    const pickClient = (rows: any[]): any | null => {
+      if (rows.length === 1) return rows[0];
+      if (rows.length > 1) {
+        if (name) {
+          const exact = rows.filter((r: any) => (r.name || "").trim().toLowerCase() === name.toLowerCase());
+          if (exact.length === 1) return exact[0];
+          if (exact.length > 1) rows = exact;
+        }
+        const companies = rows.filter((r: any) => r.is_company);
+        if (companies.length === 1) return companies[0];
+      }
+      return null;
+    };
+
     setOpeningClient(true);
     try {
       // Cache local d'abord (offline + instantané). Le CODE prime ; le nom n'est
       // utilisé que s'il n'y a AUCUN code, et seulement en correspondance exacte.
       try {
         const cached = await sync.getCachedClients();
-        let hit: any = null;
-        if (code) hit = cached.find((c: any) => c.ref && norm(c.ref) === norm(code));
-        else if (name) hit = cached.find((c: any) => (c.name || "").trim().toLowerCase() === name.toLowerCase());
+        let matches: any[] = [];
+        if (code) matches = cached.filter((c: any) => c.ref && norm(c.ref) === norm(code));
+        else if (name) matches = cached.filter((c: any) => (c.name || "").trim().toLowerCase() === name.toLowerCase());
+        const hit = pickClient(matches);
         if (hit) { onOpenClient(hit); return; }
       } catch {}
 
-      // Sinon Odoo : par CODE exact d'abord, puis nom exact. Jamais de "ilike"
-      // approximatif qui pourrait ouvrir un client sans rapport.
+      // Sinon Odoo : par CODE exact d'abord — les CLIENTS (customer_rank > 0) en
+      // priorité, ce qui écarte fournisseurs/contacts au même ref ; repli sans ce
+      // filtre si aucun résultat. Jamais de "ilike" approximatif.
       let rows: any[] = [];
-      if (code) rows = await odoo.searchRead(session, "res.partner", [["ref", "=", code], ["active", "=", true]], CLIENT_FIELDS, 2);
-      if (rows.length !== 1 && !code && name) rows = await odoo.searchRead(session, "res.partner", [["name", "=", name], ["active", "=", true]], CLIENT_FIELDS, 2);
-      if (rows.length === 1) onOpenClient(rows[0]);
-      else if (rows.length > 1) onToast("Plusieurs clients ont ce code — ouvre-le via la recherche", "info");
+      if (code) {
+        rows = await odoo.searchRead(session, "res.partner",
+          [["ref", "=", code], ["active", "=", true], ["customer_rank", ">", 0]], CLIENT_FIELDS, 5);
+        if (!rows.length) {
+          rows = await odoo.searchRead(session, "res.partner",
+            [["ref", "=", code], ["active", "=", true]], CLIENT_FIELDS, 5);
+        }
+      } else if (name) {
+        rows = await odoo.searchRead(session, "res.partner",
+          [["name", "=", name], ["active", "=", true]], CLIENT_FIELDS, 5);
+      }
+      const hit = pickClient(rows);
+      if (hit) onOpenClient(hit);
+      else if (rows.length > 1) onToast(`${rows.length} fiches ont le code ${code || name} dans Odoo (mêmes noms) — ouvre-le via la recherche`, "info");
       else onToast("Client introuvable pour ce RDV", "info");
     } catch {
       onToast("Erreur lors de l'ouverture du client", "error");
@@ -1104,8 +1206,10 @@ function ClientStep({ session, onSelect }: { session: odoo.OdooSession; onSelect
     timer.current = setTimeout(async () => {
       setLoading(true);
       try {
+        // Nom, référence OU ville — aligné sur la recherche hors ligne (et sur le
+        // sous-titre de l'écran, qui promettait déjà la ville).
         const r = await odoo.searchRead(session, "res.partner",
-          ["|", ["name", "ilike", q], ["ref", "ilike", q], ["customer_rank", ">", 0], ["active", "=", true]],
+          ["|", "|", ["name", "ilike", q], ["ref", "ilike", q], ["city", "ilike", q], ["customer_rank", ">", 0], ["active", "=", true]],
           CLIENT_FIELDS, 30);
         setResults(r);
       } catch {
@@ -1260,9 +1364,11 @@ function ClientHub({ session, client, hasDraft, onOrder, onHistory, onAppointmen
         const yearAgo = new Date();
         yearAgo.setFullYear(yearAgo.getFullYear() - 1);
         const yearAgoStr = toOdooDateStr(yearAgo);
+        // Limite 0 = toutes les commandes (2 champs légers) — avant, le plafond de
+        // 300 faussait le compteur et le CA des gros clients.
         const rows = await odoo.searchRead(session, "sale.order",
           [["partner_id", "=", client.id], ["state", "in", ["sale", "done"]]],
-          ["amount_total", "date_order"], 300, "date_order desc");
+          ["amount_total", "date_order"], 0, "date_order desc");
         if (cancelled) return;
         const ca = rows
           .filter((r: any) => r.date_order && r.date_order >= yearAgoStr)
