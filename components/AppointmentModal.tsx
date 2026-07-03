@@ -104,6 +104,8 @@ export default function AppointmentModal({ session, client, onClose, onToast }: 
         location: location.trim(),
         description: `Client : ${client?.name || ""}${codeSuffix}${client?.phone ? ` — ${client.phone}` : ""}${note ? `\n\n${note}` : ""}`,
         user_id: session.uid,
+        // Champ Studio Odoo (calendar.event) : code client, rempli automatiquement.
+        ...(client?.ref ? { x_studio_code_client_cli_calendar: client.ref } : {}),
       };
 
       try {
