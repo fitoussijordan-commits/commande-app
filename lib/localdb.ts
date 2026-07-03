@@ -185,7 +185,9 @@ export async function getQueuedOrders(): Promise<QueuedOrder[]> {
 
 export async function getPendingCount(): Promise<number> {
   const orders = await getQueuedOrders();
-  return orders.filter(o => o.status === "pending" || o.status === "error").length;
+  // "syncing" compte aussi : un envoi interrompu (app tuée) ne doit pas faire
+  // disparaître la commande du compteur — flushQueue la rejouera.
+  return orders.filter(o => o.status === "pending" || o.status === "error" || o.status === "syncing").length;
 }
 
 export async function updateQueuedOrder(id: number, patch: Partial<QueuedOrder>): Promise<void> {

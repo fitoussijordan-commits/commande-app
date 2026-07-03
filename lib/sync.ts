@@ -321,16 +321,20 @@ let _flushing = false;
 export async function flushQueue(
   session: odoo.OdooSession,
   onOrderSynced?: (order: db.QueuedOrder) => void
-): Promise<{ synced: number; failed: number }> {
-  if (_flushing) return { synced: 0, failed: 0 };
+): Promise<{ synced: number; failed: number; errors: string[] }> {
+  if (_flushing) return { synced: 0, failed: 0, errors: [] };
   _flushing = true;
   let synced = 0, failed = 0;
+  const errors: string[] = [];
 
   try {
     const orders = await db.getQueuedOrders();
     for (const order of orders) {
-      if (order.status === "synced" || order.status === "syncing") continue;
+      if (order.status === "synced") continue;
       if (order.id == null) continue;
+      // "syncing" à l'entrée du flush = envoi interrompu (app tuée en plein vol) :
+      // le verrou _flushing garantit qu'aucun autre flush ne tourne. Sans ça, la
+      // commande resterait bloquée invisible pour toujours. On la rejoue.
 
       await db.updateQueuedOrder(order.id, { status: "syncing" });
       try {
@@ -362,17 +366,19 @@ export async function flushQueue(
         synced++;
         onOrderSynced?.({ ...order, status: "synced", odooId: resultIds[0] });
       } catch (e: any) {
+        const msg = e?.message || String(e);
         await db.updateQueuedOrder(order.id, {
           status: "error",
           attempts: (order.attempts || 0) + 1,
-          lastError: e?.message || String(e),
+          lastError: msg,
         });
         failed++;
+        errors.push(`${order.label} : ${msg}`);
       }
     }
   } finally {
     _flushing = false;
   }
 
-  return { synced, failed };
+  return { synced, failed, errors };
 }

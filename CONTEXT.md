@@ -115,6 +115,11 @@ Quick wins UX (juillet 2026) :
 - Écran de confirmation : « Accueil » mène au planning (avant : doublon exact de
   « Nouvelle commande »).
 - `ConfirmStep` supprimé (code mort, jamais rendu).
+- **File de synchro visible** : badge « en attente/échec » cliquable dans OfflineBar →
+  panneau détaillé (statut, `lastError` Odoo exact, tout réessayer, supprimer).
+  Toast d'échec inclut désormais la vraie cause (`flushQueue` retourne `errors[]`).
+- Fix : une commande bloquée en `syncing` (app tuée en plein envoi) est rejouée au
+  flush suivant et compte dans le compteur (avant : invisible pour toujours).
 
 Restes possibles / idées non faites :
 - Remplacer le violet (`#7c3aed`) restant par du teal dans toute l'app (~20 endroits).
