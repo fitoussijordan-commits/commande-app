@@ -475,9 +475,10 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
             style={{ padding: "14px 28px", background: C.teal, color: "#fff", border: "none", borderRadius: 12, fontSize: 15, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
             Nouvelle commande
           </button>
-          <button onClick={() => { setDone(null); setCart({}); setClient(null); setNote(""); setResumePrompt(null); setAppliedPromos({}); setStep("client"); }}
+          {/* Mène au planning (avant : doublon exact de « Nouvelle commande ») */}
+          <button onClick={() => { setDone(null); setCart({}); setClient(null); setNote(""); setResumePrompt(null); setAppliedPromos({}); setStep("home"); }}
             style={{ padding: "14px 24px", background: C.bg, color: C.muted, border: `1px solid ${C.border}`, borderRadius: 12, fontSize: 15, cursor: "pointer", fontFamily: "inherit" }}>
-            Accueil
+            📅 Mon planning
           </button>
         </div>
       </div>
@@ -489,16 +490,18 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
 
       {/* ── Top bar ── */}
       <div style={{ height: 56, background: "#fff", borderBottom: `1px solid ${C.border}`, display: "flex", alignItems: "center", padding: "0 20px", gap: 16, flexShrink: 0, boxShadow: C.shadow }}>
-        <button onClick={() => {
-            if (step === "catalog" || step === "history") setStep("hub");
-            else if (step === "hub") setStep("client");
-            else if (step === "home") setStep("client");
-            else onBack();
-          }}
-          title="Retour"
-          style={{ width: 36, height: 36, borderRadius: 10, background: C.bg, border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={C.text} strokeWidth="2.5"><path d="M19 12H5M12 5l-7 7 7 7"/></svg>
-        </button>
+        {/* Flèche retour — jamais sur l'écran racine (avant, elle déconnectait : un tap
+             accidentel en tournée = impossible de se reconnecter hors ligne). */}
+        {step !== "client" && (
+          <button onClick={() => {
+              if (step === "catalog" || step === "history") setStep("hub");
+              else setStep("client"); // hub et home reviennent à la recherche client
+            }}
+            title="Retour"
+            style={{ width: 36, height: 36, borderRadius: 10, background: C.bg, border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={C.text} strokeWidth="2.5"><path d="M19 12H5M12 5l-7 7 7 7"/></svg>
+          </button>
+        )}
 
         {/* Fil d'ariane simple : où on en est pour ce client */}
         <div style={{ fontSize: 13, fontWeight: 700, color: C.muted }}>
@@ -516,6 +519,19 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
           <button onClick={() => setStep("home")}
             style={{ display: "flex", alignItems: "center", gap: 6, height: 36, padding: "0 14px", borderRadius: 10, background: C.bg, border: `1px solid ${C.border}`, cursor: "pointer", fontFamily: "inherit", fontSize: 13, fontWeight: 600, color: C.textSec }}>
             📅 Voir planning
+          </button>
+        )}
+
+        {/* Déconnexion — uniquement sur l'écran racine, avec confirmation explicite
+             (hors ligne, impossible de se reconnecter : Odoo doit vérifier le mot de passe). */}
+        {step === "client" && (
+          <button
+            onClick={() => {
+              if (window.confirm("Se déconnecter d'Odoo ?\n\nAttention : hors ligne, impossible de se reconnecter. En tournée, reste connecté.")) onBack();
+            }}
+            title="Se déconnecter"
+            style={{ width: 36, height: 36, borderRadius: 10, background: C.bg, border: `1px solid ${C.border}`, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={C.red} strokeWidth="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="M16 17l5-5-5-5M21 12H9"/></svg>
           </button>
         )}
 
@@ -1881,112 +1897,6 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
           </div>
         </div>
       )}
-    </div>
-  );
-}
-
-// ═══════════════════════════════════════════════════════════════════════════
-// ÉTAPE 3 — Confirmation
-// ═══════════════════════════════════════════════════════════════════════════
-function ConfirmStep({ cart, freeItems, total, client, note, setNote, onQtyChange, onBack, onSubmit, submitting }: {
-  cart: Record<number, CartItem>; freeItems: FreeItem[]; total: number;
-  client: any; note: string; setNote: (n: string) => void;
-  onQtyChange: (p: any, q: number) => void;
-  onBack: () => void; onSubmit: () => void; submitting: boolean;
-}) {
-  return (
-    <div style={{ flex: 1, display: "flex", overflow: "hidden", minHeight: 0 }}>
-      {/* Liste articles */}
-      <div style={{ flex: 1, overflowY: "auto" as const, padding: 24 }}>
-        <div style={{ fontSize: 18, fontWeight: 800, color: C.text, marginBottom: 16 }}>Récapitulatif de la commande</div>
-
-        {/* Articles commandés */}
-        <div style={{ background: C.white, borderRadius: 16, overflow: "hidden", border: `1px solid ${C.border}`, marginBottom: 16, boxShadow: C.shadow }}>
-          <div style={{ padding: "12px 16px", background: C.teal, color: "#fff", fontSize: 12, fontWeight: 700, textTransform: "uppercase" as const, letterSpacing: "0.06em" }}>
-            📦 Articles ({Object.values(cart).reduce((s, i) => s + i.qty, 0)} unités)
-          </div>
-          {Object.values(cart).map((item, i) => (
-            <div key={item.product.id} style={{ padding: "12px 16px", borderBottom: i < Object.values(cart).length - 1 ? `1px solid ${C.border}` : undefined, display: "flex", alignItems: "center", gap: 12 }}>
-              {item.product.image_128 && <img src={`data:image/png;base64,${item.product.image_128}`} alt="" style={{ width: 44, height: 44, objectFit: "contain", borderRadius: 8, background: C.bg, flexShrink: 0 }} />}
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: 13, fontWeight: 700, color: C.text }}>{item.product.name}</div>
-                <div style={{ fontSize: 11, color: C.muted }}>{item.product.default_code} · {fmtPrice(item.unitPrice)} / unité</div>
-              </div>
-              <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
-                <div style={{ display: "flex", background: C.bg, borderRadius: 8, overflow: "hidden", border: `1px solid ${C.border}` }}>
-                  <button onClick={() => onQtyChange(item.product, item.qty - 1)} style={{ padding: "5px 10px", background: "none", border: "none", cursor: "pointer", fontSize: 15, color: C.red, fontWeight: 700 }}>−</button>
-                  <span style={{ padding: "5px 8px", fontSize: 14, fontWeight: 800, color: C.text }}>{item.qty}</span>
-                  <button onClick={() => onQtyChange(item.product, item.qty + 1)} style={{ padding: "5px 10px", background: "none", border: "none", cursor: "pointer", fontSize: 15, color: C.teal, fontWeight: 700 }}>+</button>
-                </div>
-                <span style={{ fontSize: 14, fontWeight: 800, color: C.tealDark, minWidth: 70, textAlign: "right" as const }}>{fmtPrice(item.qty * item.unitPrice)}</span>
-              </div>
-            </div>
-          ))}
-        </div>
-
-        {/* BC gratuit */}
-        {freeItems.length > 0 && (
-          <div style={{ background: C.greenSoft, borderRadius: 16, overflow: "hidden", border: `1px solid ${C.green}33`, marginBottom: 16 }}>
-            <div style={{ padding: "12px 16px", background: C.green, color: "#fff", fontSize: 12, fontWeight: 700, textTransform: "uppercase" as const, letterSpacing: "0.06em" }}>
-              🎁 BC Gratuit séparé (créé automatiquement)
-            </div>
-            {freeItems.map((fi, i) => (
-              <div key={i} style={{ padding: "12px 16px", borderBottom: i < freeItems.length - 1 ? `1px solid ${C.green}22` : undefined, display: "flex", alignItems: "center", gap: 12 }}>
-                <div style={{ flex: 1 }}>
-                  <div style={{ fontSize: 13, fontWeight: 700, color: C.green }}>{fi.product.name}</div>
-                  <div style={{ fontSize: 11, color: C.green, opacity: 0.8 }}>{fi.ruleName}</div>
-                </div>
-                <div style={{ fontSize: 14, fontWeight: 800, color: C.green }}>{fi.qty} × 0,00 €</div>
-              </div>
-            ))}
-          </div>
-        )}
-
-        {/* Note */}
-        <div>
-          <div style={{ fontSize: 12, fontWeight: 600, color: C.muted, marginBottom: 6 }}>Note interne</div>
-          <textarea value={note} onChange={e => setNote(e.target.value)} placeholder="Informations complémentaires..."
-            rows={3} style={{ width: "100%", boxSizing: "border-box" as const, padding: "10px 12px", border: `1px solid ${C.border}`, borderRadius: 12, fontSize: 13, fontFamily: "inherit", resize: "none" as const, background: C.white }} />
-        </div>
-      </div>
-
-      {/* Panneau latéral total */}
-      <div style={{ width: 300, background: C.white, borderLeft: `1px solid ${C.border}`, display: "flex", flexDirection: "column" as const, padding: 24, gap: 16 }}>
-        <div>
-          <div style={{ fontSize: 11, color: C.muted, fontWeight: 600, textTransform: "uppercase" as const, letterSpacing: "0.06em", marginBottom: 4 }}>Client</div>
-          <div style={{ fontSize: 15, fontWeight: 700, color: C.text }}>{client.name}</div>
-          {client.property_product_pricelist && <div style={{ fontSize: 12, color: C.teal, marginTop: 2 }}>📋 {client.property_product_pricelist[1]}</div>}
-        </div>
-
-        <div style={{ border: `1px solid ${C.border}`, borderRadius: 14, padding: 16 }}>
-          <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
-            <span style={{ fontSize: 13, color: C.muted }}>Sous-total</span>
-            <span style={{ fontSize: 13, fontWeight: 600, color: C.text }}>{fmtPrice(total)}</span>
-          </div>
-          {freeItems.length > 0 && (
-            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
-              <span style={{ fontSize: 13, color: C.green }}>🎁 Articles offerts</span>
-              <span style={{ fontSize: 13, fontWeight: 600, color: C.green }}>BC séparé</span>
-            </div>
-          )}
-          <div style={{ borderTop: `1px solid ${C.border}`, paddingTop: 8, display: "flex", justifyContent: "space-between" }}>
-            <span style={{ fontSize: 15, fontWeight: 700, color: C.text }}>Total HT</span>
-            <span style={{ fontSize: 18, fontWeight: 800, color: C.tealDark }}>{fmtPrice(total)}</span>
-          </div>
-          <div style={{ fontSize: 10, color: C.muted, marginTop: 4, textAlign: "center" as const }}>Prix Odoo appliqués à la création</div>
-        </div>
-
-        <div style={{ marginTop: "auto", display: "flex", flexDirection: "column" as const, gap: 10 }}>
-          <button onClick={onSubmit} disabled={submitting}
-            style={{ padding: "16px 0", background: submitting ? C.muted : "linear-gradient(135deg, #0d9488, #0f766e)", color: "#fff", border: "none", borderRadius: 14, fontSize: 16, fontWeight: 800, cursor: submitting ? "default" : "pointer", fontFamily: "inherit", boxShadow: submitting ? "none" : "0 4px 14px rgba(13,148,136,0.4)" }}>
-            {submitting ? "Création en cours…" : `Créer le devis${freeItems.length > 0 ? " + BC gratuit" : ""}`}
-          </button>
-          <button onClick={onBack}
-            style={{ padding: "12px 0", background: "transparent", color: C.muted, border: `1px solid ${C.border}`, borderRadius: 12, fontSize: 14, cursor: "pointer", fontFamily: "inherit" }}>
-            ← Modifier le panier
-          </button>
-        </div>
-      </div>
     </div>
   );
 }

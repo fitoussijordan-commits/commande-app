@@ -108,6 +108,14 @@ commandes/notes/RDV en file, synchro auto au retour réseau.
 
 Icône app = logo Dr. Hauschka (`logo.png` → `ios/App/App/Assets.xcassets/AppIcon.appiconset/`).
 
+Quick wins UX (juillet 2026) :
+- **Toasts réellement affichés** (`app/page.tsx` — avant : `console.log`, aucun message visible).
+- **Flèche retour ≠ déconnexion** : masquée sur l'écran racine ; bouton logout dédié
+  avec `window.confirm` (rappel : impossible de se reconnecter hors ligne).
+- Écran de confirmation : « Accueil » mène au planning (avant : doublon exact de
+  « Nouvelle commande »).
+- `ConfirmStep` supprimé (code mort, jamais rendu).
+
 Restes possibles / idées non faites :
 - Remplacer le violet (`#7c3aed`) restant par du teal dans toute l'app (~20 endroits).
 - Bouton « forcer rechargement complet des images » si les photos changent souvent.
