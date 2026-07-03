@@ -806,6 +806,41 @@ function HomeScreen({ session, onNewOrder, onOpenClient, onToast }: {
   const [loading, setLoading] = useState(true);
   const [weekOffset, setWeekOffset] = useState(0); // 0 = semaine en cours, ±1 = semaine précédente/suivante
 
+  // ── Swipe tactile gauche/droite pour changer de semaine ──────────────────
+  const [dragX, setDragX] = useState(0);
+  const [dragging, setDragging] = useState(false);
+  const touchRef = useRef<{ x: number; y: number; locked: null | "h" | "v" }>({ x: 0, y: 0, locked: null });
+
+  const onTouchStart = (e: React.TouchEvent) => {
+    const t = e.touches[0];
+    touchRef.current = { x: t.clientX, y: t.clientY, locked: null };
+    setDragging(true);
+  };
+  const onTouchMove = (e: React.TouchEvent) => {
+    const t = e.touches[0];
+    const dx = t.clientX - touchRef.current.x;
+    const dy = t.clientY - touchRef.current.y;
+    // Détermine l'intention (horizontale vs verticale) une seule fois.
+    if (touchRef.current.locked === null && (Math.abs(dx) > 8 || Math.abs(dy) > 8)) {
+      touchRef.current.locked = Math.abs(dx) > Math.abs(dy) ? "h" : "v";
+    }
+    if (touchRef.current.locked === "h") {
+      // Résistance élastique douce.
+      setDragX(dx);
+    }
+  };
+  const onTouchEnd = () => {
+    const dx = dragX;
+    setDragging(false);
+    const threshold = 60;
+    if (touchRef.current.locked === "h" && Math.abs(dx) > threshold) {
+      // Glisser vers la droite = semaine précédente ; vers la gauche = suivante.
+      setWeekOffset(o => o + (dx > 0 ? -1 : 1));
+    }
+    setDragX(0);
+    touchRef.current.locked = null;
+  };
+
   const monday = useMemo(() => {
     const m = startOfWeek(new Date());
     m.setDate(m.getDate() + weekOffset * 7);
@@ -844,12 +879,28 @@ function HomeScreen({ session, onNewOrder, onOpenClient, onToast }: {
   // On retrouve donc le client en relisant cette description plutôt que via un lien structuré.
   const openEventClient = async (e: any) => {
     const desc: string = e.description || "";
-    const match = desc.match(/Client\s*:\s*([^\n—]+)/i);
-    const name = match ? match[1].trim() : "";
-    if (!name) { onToast("Aucun client associé à ce RDV", "info"); return; }
+    // Ligne "Client : NOM (CODE) — téléphone"
+    const line = (desc.match(/Client\s*:\s*(.+)/i)?.[1]) || "";
+    const ref = line.match(/\(([^)]+)\)/)?.[1]?.trim() || "";
+    const name = line.replace(/\(.*$/, "").replace(/—.*$/, "").trim();
+    if (!ref && !name) { onToast("Aucun client associé à ce RDV", "info"); return; }
+
+    // Cherche d'abord dans le cache local (marche hors ligne + instantané).
     try {
-      let rows = await odoo.searchRead(session, "res.partner", [["name", "=", name], ["active", "=", true]], CLIENT_FIELDS, 2);
-      if (rows.length !== 1) rows = await odoo.searchRead(session, "res.partner", [["name", "ilike", name], ["active", "=", true]], CLIENT_FIELDS, 2);
+      const cached = await sync.getCachedClients();
+      const hit = cached.find((c: any) =>
+        (ref && (c.ref || "").toLowerCase() === ref.toLowerCase()) ||
+        (name && (c.name || "").toLowerCase() === name.toLowerCase())
+      );
+      if (hit) { onOpenClient(hit); return; }
+    } catch {}
+
+    // Sinon interroge Odoo : par CODE (ref) d'abord — fiable —, puis par nom.
+    try {
+      let rows: any[] = [];
+      if (ref) rows = await odoo.searchRead(session, "res.partner", [["ref", "=", ref], ["active", "=", true]], CLIENT_FIELDS, 2);
+      if (rows.length !== 1 && name) rows = await odoo.searchRead(session, "res.partner", [["name", "=", name], ["active", "=", true]], CLIENT_FIELDS, 2);
+      if (rows.length !== 1 && name) rows = await odoo.searchRead(session, "res.partner", [["name", "ilike", name], ["active", "=", true]], CLIENT_FIELDS, 2);
       if (rows.length === 1) onOpenClient(rows[0]);
       else onToast("Client introuvable pour ce RDV", "info");
     } catch {
@@ -892,8 +943,20 @@ function HomeScreen({ session, onNewOrder, onOpenClient, onToast }: {
         </div>
       </div>
 
-      {/* Vue semaine — 7 colonnes façon cartes */}
-      <div style={{ flex: 1, display: "grid", gridTemplateColumns: "repeat(7, minmax(120px, 1fr))", gap: 12, overflowX: "auto" as const, alignItems: "stretch" }}>
+      {/* Vue semaine — 7 colonnes façon cartes, glissables gauche/droite */}
+      <div
+        onTouchStart={onTouchStart}
+        onTouchMove={onTouchMove}
+        onTouchEnd={onTouchEnd}
+        style={{
+          flex: 1,
+          display: "grid", gridTemplateColumns: "repeat(7, minmax(120px, 1fr))", gap: 12,
+          alignItems: "stretch",
+          transform: `translateX(${dragX}px)`,
+          transition: dragging ? "none" : "transform 0.28s cubic-bezier(0.22,1,0.36,1)",
+          touchAction: "pan-y" as const,
+        }}
+      >
         {days.map((d, i) => {
           const dayEvents = eventsByDay[i];
           const isToday = sameDay(d, today);

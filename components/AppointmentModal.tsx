@@ -94,12 +94,15 @@ export default function AppointmentModal({ session, client, onClose, onToast }: 
       const stop = new Date(start.getTime() + durationHours * 3600 * 1000);
 
       // Valeurs de base du RDV (sans les enrichissements qui nécessitent Odoo).
+      // On inclut le CODE client (ref) entre parenthèses : ça permet d'ouvrir la
+      // fiche client de façon fiable depuis le planning (recherche par ref).
+      const codeSuffix = client?.ref ? ` (${client.ref})` : "";
       const baseValues: any = {
         name: title.trim(),
         start: toOdooUTC(start),
         stop: toOdooUTC(stop),
         location: location.trim(),
-        description: `Client : ${client?.name || ""}${client?.phone ? ` — ${client.phone}` : ""}${note ? `\n\n${note}` : ""}`,
+        description: `Client : ${client?.name || ""}${codeSuffix}${client?.phone ? ` — ${client.phone}` : ""}${note ? `\n\n${note}` : ""}`,
         user_id: session.uid,
       };
 
