@@ -132,7 +132,11 @@ export default function AppointmentModal({ session, client, onClose, onToast }: 
       <form onSubmit={handleSubmit} onClick={e => e.stopPropagation()}
         style={{ width: "100%", maxWidth: 420, background: C.white, borderRadius: 20, padding: "28px 26px", boxShadow: C.shadowXl, fontFamily: "'DM Sans', sans-serif" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 20 }}>
-          <div style={{ width: 40, height: 40, borderRadius: 12, background: "linear-gradient(135deg, #0d9488, #7c3aed)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18 }}>📅</div>
+          <div style={{ width: 40, height: 40, borderRadius: 12, background: "#f0fdfa", border: "1.5px solid #ccfbf1", display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke={C.teal} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <rect x="3" y="5" width="18" height="16" rx="2"/><path d="M16 3v4M8 3v4M3 11h18"/>
+            </svg>
+          </div>
           <div>
             <div style={{ fontSize: 16, fontWeight: 800, color: C.text }}>Prendre un RDV</div>
             <div style={{ fontSize: 12, color: C.muted }}>{client?.name}</div>

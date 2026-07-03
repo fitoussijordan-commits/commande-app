@@ -314,6 +314,32 @@ export async function queueAppointment(clientName: string, values: any): Promise
   });
 }
 
+// RDV créés hors ligne : une automatisation Odoo Studio (calendar.event) lit
+// record.categ_ids[0] et plante en IndexError si le RDV n'a pas d'étiquette.
+// En ligne, AppointmentModal crée une étiquette portant le titre AVANT le create ;
+// hors ligne c'est impossible. On fait donc cet enrichissement ICI, au rejeu,
+// quand le réseau est disponible. Best effort : si l'enrichissement échoue, on
+// tente le create brut (l'erreur remontera dans lastError, visible dans la file).
+async function enrichCalendarEventValues(session: odoo.OdooSession, values: any): Promise<any> {
+  const out = { ...values };
+  try {
+    if (!out.categ_ids && out.name) {
+      const title = String(out.name).trim();
+      const existing = await odoo.searchRead(session, "calendar.event.type", [["name", "=ilike", title]], ["id"], 1);
+      const categId = existing.length ? existing[0].id : await odoo.create(session, "calendar.event.type", { name: title });
+      if (typeof categId === "number") out.categ_ids = [[6, 0, [categId]]];
+    }
+    if (!out.partner_ids) {
+      // Organisateur comme seul participant (même comportement que le mode en ligne :
+      // le client n'est PAS invité — anti-invitation Outlook).
+      const users = await odoo.searchRead(session, "res.users", [["id", "=", session.uid]], ["partner_id"], 1);
+      const pid = users[0]?.partner_id?.[0];
+      if (typeof pid === "number") out.partner_ids = [[6, 0, [pid]]];
+    }
+  } catch {}
+  return out;
+}
+
 let _flushing = false;
 
 // Rejoue toutes les commandes en attente vers Odoo. Idempotent : ne tourne
@@ -343,7 +369,10 @@ export async function flushQueue(
         if (order.actions && order.actions.length) {
           for (const a of order.actions) {
             if (a.op === "create") {
-              const rid = await odoo.create(session, a.model, a.values);
+              const values = a.model === "calendar.event"
+                ? await enrichCalendarEventValues(session, a.values)
+                : a.values;
+              const rid = await odoo.create(session, a.model, values);
               resultIds.push(rid);
             } else if (a.op === "callMethod") {
               await odoo.callMethod(session, a.model, a.method!, a.args || [], a.kwargs || {});

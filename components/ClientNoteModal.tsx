@@ -131,7 +131,11 @@ export default function ClientNoteModal({ session, client, onClose, onToast }: P
 
         <div style={{ padding: "22px 24px 16px", flexShrink: 0 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
-            <div style={{ width: 40, height: 40, borderRadius: 12, background: "linear-gradient(135deg, #0d9488, #7c3aed)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18 }}>🗒️</div>
+            <div style={{ width: 40, height: 40, borderRadius: 12, background: "#f0fdfa", border: "1.5px solid #ccfbf1", display: "flex", alignItems: "center", justifyContent: "center" }}>
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#0d9488" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/>
+              </svg>
+            </div>
             <div>
               <div style={{ fontSize: 16, fontWeight: 800, color: C.text }}>Note client</div>
               <div style={{ fontSize: 12, color: C.muted }}>{client?.name}</div>

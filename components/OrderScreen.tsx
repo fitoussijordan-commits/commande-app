@@ -13,7 +13,9 @@ const C = {
   bg: "#f8fafc", white: "#fff", text: "#0f172a", textSec: "#334155",
   muted: "#94a3b8", border: "#e2e8f0",
   teal: "#0d9488", tealDark: "#0f766e", tealSoft: "#f0fdfa", tealMid: "#ccfbf1",
-  purple: "#7c3aed", purpleSoft: "#f5f3ff",
+  // Refonte : accent unique teal. "purple" est conservé comme alias (le panneau
+  // règles masqué et d'anciens usages y font référence) mais pointe sur du teal.
+  purple: "#0d9488", purpleSoft: "#f0fdfa",
   orange: "#ea580c", orangeSoft: "#fff7ed",
   green: "#16a34a", greenSoft: "#f0fdf4",
   red: "#dc2626", redSoft: "#fef2f2",
@@ -22,6 +24,37 @@ const C = {
   shadowMd: "0 4px 6px rgba(0,0,0,0.07), 0 2px 4px rgba(0,0,0,0.05)",
   shadowXl: "0 20px 25px rgba(0,0,0,0.10), 0 8px 10px rgba(0,0,0,0.04)",
 };
+
+// ── Icônes SVG (remplacent les emojis du chrome — trait unique, currentColor) ──
+const ICON_PATHS: Record<string, React.ReactNode> = {
+  calendar: <><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M16 3v4M8 3v4M3 11h18"/></>,
+  clock: <><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></>,
+  note: <><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></>,
+  cart: <><circle cx="9" cy="20" r="1.4"/><circle cx="17" cy="20" r="1.4"/><path d="M3 4h2l2.4 12h10.2L20 8H6"/></>,
+  user: <><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 3.6-6 8-6s8 2 8 6"/></>,
+  pin: <><path d="M12 21s-7-5.6-7-11a7 7 0 0 1 14 0c0 5.4-7 11-7 11Z"/><circle cx="12" cy="10" r="2.5"/></>,
+  phone: <path d="M5 4h4l1.5 4L8 10a13 13 0 0 0 6 6l2-2.5 4 1.5v4a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2Z"/>,
+  package: <><path d="M21 8v8l-9 5-9-5V8l9-5 9 5Z"/><path d="M3.5 8.5 12 13l8.5-4.5M12 13v8"/></>,
+  search: <><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></>,
+  star: <path d="m12 3 2.7 5.6 6.1.8-4.5 4.2 1.1 6L12 16.7 6.6 19.6l1.1-6L3.2 9.4l6.1-.8Z"/>,
+  gift: <><rect x="3" y="8" width="18" height="4"/><path d="M5 12v8h14v-8M12 8v12"/><path d="M12 8c-4 0-5.2-4.5-2.3-4.5C11.5 3.5 12 8 12 8Zm0 0c4 0 5.2-4.5 2.3-4.5C12.5 3.5 12 8 12 8Z"/></>,
+  home: <><path d="M3 11 12 3l9 8"/><path d="M5 10v10h14V10"/></>,
+  tag: <><path d="M20.6 13.4 13.4 20.6a2 2 0 0 1-2.8 0l-7-7V4h9.6l7.4 7.4a2 2 0 0 1 0 2Z"/><circle cx="8" cy="8" r="1.5"/></>,
+  file: <><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><path d="M14 2v6h6M9 13h6M9 17h4"/></>,
+  inbox: <><path d="M22 13h-6l-2 3h-4l-2-3H2"/><path d="M5 4h14l3 9v7H2v-7Z"/></>,
+  check: <path d="M20 6 9 17l-5-5"/>,
+  wifiOff: <><path d="M2 2l20 20"/><path d="M5 10a13 13 0 0 1 4.2-2.6M12 4c3.8 0 7.3 1.5 10 4M8.5 13.5a8 8 0 0 1 2.3-1.3M12 8c2.7 0 5.2 1 7 2.8"/><circle cx="12" cy="18" r="1.3"/></>,
+};
+function Icon({ name, size = 18, color = "currentColor", strokeWidth = 2, style }: {
+  name: string; size?: number; color?: string; strokeWidth?: number; style?: React.CSSProperties;
+}) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={strokeWidth}
+      strokeLinecap="round" strokeLinejoin="round" style={style} aria-hidden="true">
+      {ICON_PATHS[name]}
+    </svg>
+  );
+}
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 interface Props {
@@ -455,9 +488,11 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
 
   // Écran confirmation finale
   if (done) return (
-    <div style={{ position: "fixed", inset: 0, left: desktop ? 248 : 0, background: "linear-gradient(135deg, #0f766e 0%, #7c3aed 100%)", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'DM Sans', sans-serif", paddingTop: "env(safe-area-inset-top)", paddingBottom: "env(safe-area-inset-bottom)" }}>
+    <div style={{ position: "fixed", inset: 0, left: desktop ? 248 : 0, background: "#0f766e", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'DM Sans', sans-serif", paddingTop: "env(safe-area-inset-top)", paddingBottom: "env(safe-area-inset-bottom)" }}>
       <div style={{ background: "#fff", borderRadius: 24, padding: "48px 40px", maxWidth: 480, width: "90%", textAlign: "center", boxShadow: C.shadowXl }}>
-        <div style={{ fontSize: 64, marginBottom: 16 }}>{done.offline ? "📴" : "🎉"}</div>
+        <div style={{ width: 84, height: 84, borderRadius: "50%", background: done.offline ? C.orangeSoft : C.tealSoft, display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 18px" }}>
+          <Icon name={done.offline ? "wifiOff" : "check"} size={40} color={done.offline ? C.orange : C.teal} strokeWidth={2.5} />
+        </div>
         <div style={{ fontSize: 26, fontWeight: 800, color: C.text, marginBottom: 8 }}>
           {done.offline ? "Commande en attente" : "Devis créé !"}
         </div>
@@ -477,8 +512,8 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
           </button>
           {/* Mène au planning (avant : doublon exact de « Nouvelle commande ») */}
           <button onClick={() => { setDone(null); setCart({}); setClient(null); setNote(""); setResumePrompt(null); setAppliedPromos({}); setStep("home"); }}
-            style={{ padding: "14px 24px", background: C.bg, color: C.muted, border: `1px solid ${C.border}`, borderRadius: 12, fontSize: 15, cursor: "pointer", fontFamily: "inherit" }}>
-            📅 Mon planning
+            style={{ display: "flex", alignItems: "center", gap: 8, padding: "14px 24px", background: C.bg, color: C.muted, border: `1px solid ${C.border}`, borderRadius: 12, fontSize: 15, cursor: "pointer", fontFamily: "inherit" }}>
+            <Icon name="calendar" size={16} /> Mon planning
           </button>
         </div>
       </div>
@@ -514,11 +549,14 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
 
         <div style={{ flex: 1 }} />
 
+        {/* Pastille réseau + données + file d'envoi (remplace l'ancien bandeau permanent) */}
+        <OfflineBar session={session} onToast={onToast} />
+
         {/* Voir planning — visible sur l'écran de recherche client (pas de client sélectionné) */}
         {step === "client" && (
           <button onClick={() => setStep("home")}
             style={{ display: "flex", alignItems: "center", gap: 6, height: 36, padding: "0 14px", borderRadius: 10, background: C.bg, border: `1px solid ${C.border}`, cursor: "pointer", fontFamily: "inherit", fontSize: 13, fontWeight: 600, color: C.textSec }}>
-            📅 Voir planning
+            <Icon name="calendar" size={15} /> Planning
           </button>
         )}
 
@@ -555,17 +593,17 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
         {/* RDV — uniquement sur l'écran de commande (catalogue & panier), pas sur la sélection client */}
         {client && step === "catalog" && (
           <button onClick={() => setShowAppointment(true)} title="Prendre un RDV avec ce client"
-            style={{ width: 36, height: 36, borderRadius: 10, background: C.bg, border: `1px solid ${C.border}`, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16, flexShrink: 0 }}>
-            📅
+            style={{ width: 36, height: 36, borderRadius: 10, background: C.bg, border: `1px solid ${C.border}`, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: C.textSec, flexShrink: 0 }}>
+            <Icon name="calendar" size={16} />
           </button>
         )}
 
         {/* Remises additionnelles Odoo disponibles pour ce panier */}
         {step === "catalog" && availablePromoCount > 0 && (
           <button onClick={() => setShowPromoPanel(v => !v)} title="Remises disponibles pour ce panier"
-            style={{ display: "flex", alignItems: "center", gap: 5, height: 36, padding: "0 10px", borderRadius: 10, background: showPromoPanel ? C.orangeSoft : C.orange, border: `1px solid ${C.orange}`, cursor: "pointer", fontFamily: "inherit" }}>
-            <span style={{ fontSize: 14 }}>🏷️</span>
-            <span style={{ fontSize: 12, fontWeight: 800, color: showPromoPanel ? C.orange : "#fff" }}>{availablePromoCount}</span>
+            style={{ display: "flex", alignItems: "center", gap: 5, height: 36, padding: "0 10px", borderRadius: 10, background: showPromoPanel ? C.orangeSoft : C.orange, border: `1px solid ${C.orange}`, cursor: "pointer", fontFamily: "inherit", color: showPromoPanel ? C.orange : "#fff" }}>
+            <Icon name="tag" size={14} />
+            <span style={{ fontSize: 12, fontWeight: 800 }}>{availablePromoCount}</span>
           </button>
         )}
 
@@ -573,9 +611,9 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
         {/* Accès discret aux brouillons en attente — jamais affiché sans action volontaire */}
         {pendingDrafts.length > 0 && (
           <button onClick={() => setShowDraftsPanel(v => !v)} title="Commandes en attente de finalisation"
-            style={{ display: "flex", alignItems: "center", gap: 5, height: 36, padding: "0 10px", borderRadius: 10, background: showDraftsPanel ? "#fef9c3" : C.bg, border: `1px solid ${showDraftsPanel ? "#fde047" : C.border}`, cursor: "pointer", fontFamily: "inherit" }}>
-            <span style={{ fontSize: 14 }}>📝</span>
-            <span style={{ fontSize: 12, fontWeight: 700, color: "#92400e" }}>{pendingDrafts.length}</span>
+            style={{ display: "flex", alignItems: "center", gap: 5, height: 36, padding: "0 10px", borderRadius: 10, background: showDraftsPanel ? "#fef9c3" : C.bg, border: `1px solid ${showDraftsPanel ? "#fde047" : C.border}`, cursor: "pointer", fontFamily: "inherit", color: "#92400e" }}>
+            <Icon name="file" size={14} />
+            <span style={{ fontSize: 12, fontWeight: 700 }}>{pendingDrafts.length}</span>
           </button>
         )}
 
@@ -586,16 +624,11 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
         )}
       </div>
 
-      {/* ── Barre d'état hors-ligne : réseau, préchargement cache, file de synchro ── */}
-      <div style={{ padding: "8px 20px 0", flexShrink: 0 }}>
-        <OfflineBar session={session} onToast={onToast} />
-      </div>
-
       {/* ── Bandeau reprise — scopé UNIQUEMENT au client qu'on vient de sélectionner,
            jamais un autre client : pas de fuite d'info si on est en face d'un client. ── */}
       {resumePrompt && step === "catalog" && client?.id === resumePrompt.client?.id && (
         <div style={{ background: "#fefce8", borderBottom: `1px solid #fde047`, padding: "10px 20px", display: "flex", alignItems: "center", gap: 12, flexShrink: 0 }}>
-          <span style={{ fontSize: 18 }}>📝</span>
+          <Icon name="file" size={18} color="#a16207" />
           <div style={{ flex: 1 }}>
             <div style={{ fontSize: 13, fontWeight: 700, color: "#713f12" }}>
               Brouillon en attente pour ce client
@@ -828,7 +861,7 @@ function HomeScreen({ session, onNewOrder, onOpenClient, onToast }: {
     { bg: "#f0fdfa", text: C.tealDark },
     { bg: "#eff6ff", text: "#1d4ed8" },
     { bg: "#fff7ed", text: "#c2410c" },
-    { bg: "#faf5ff", text: "#7c3aed" },
+    { bg: "#f1f5f9", text: "#334155" },
   ];
 
   return (
@@ -836,11 +869,11 @@ function HomeScreen({ session, onNewOrder, onOpenClient, onToast }: {
       {/* En-tête */}
       <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", flexWrap: "wrap" as const, gap: 16, marginBottom: 24 }}>
         <div>
-          <div style={{ display: "inline-block", fontSize: 11, fontWeight: 700, color: "#7c3aed", background: "#f3e8ff", borderRadius: 999, padding: "5px 14px", textTransform: "uppercase" as const, letterSpacing: "0.04em", marginBottom: 12 }}>
+          <div style={{ display: "inline-block", fontSize: 11, fontWeight: 700, color: C.tealDark, background: C.tealMid, borderRadius: 999, padding: "5px 14px", textTransform: "uppercase" as const, letterSpacing: "0.04em", marginBottom: 12 }}>
             {today.toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long" })}
           </div>
           <div style={{ fontSize: 26, fontWeight: 800, color: C.text }}>
-            Salut {session.name?.split(" ")[0] || ""}, {loading ? "…" : <span style={{ color: "#7c3aed" }}>{totalCount} RDV</span>} cette semaine
+            Salut {session.name?.split(" ")[0] || ""}, {loading ? "…" : <span style={{ color: C.teal }}>{totalCount} RDV</span>} cette semaine
           </div>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -849,7 +882,7 @@ function HomeScreen({ session, onNewOrder, onOpenClient, onToast }: {
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M15 18l-6-6 6-6"/></svg>
           </button>
           <div onClick={() => weekOffset !== 0 && setWeekOffset(0)}
-            style={{ fontSize: 13, fontWeight: 800, color: "#fff", background: "linear-gradient(135deg, #0d9488, #7c3aed)", borderRadius: 999, padding: "9px 18px", cursor: weekOffset !== 0 ? "pointer" : "default", whiteSpace: "nowrap" as const, boxShadow: "0 8px 18px rgba(124,58,237,0.25)" }}>
+            style={{ fontSize: 13, fontWeight: 800, color: "#fff", background: C.teal, borderRadius: 999, padding: "9px 18px", cursor: weekOffset !== 0 ? "pointer" : "default", whiteSpace: "nowrap" as const, boxShadow: "0 8px 18px rgba(13,148,136,0.25)" }}>
             {monday.toLocaleDateString("fr-FR", { day: "numeric", month: "short" })} — {days[6].toLocaleDateString("fr-FR", { day: "numeric", month: "short" })}
           </div>
           <button onClick={() => setWeekOffset(o => o + 1)} title="Semaine suivante"
@@ -868,8 +901,8 @@ function HomeScreen({ session, onNewOrder, onOpenClient, onToast }: {
           return (
             <div key={i} style={{
               display: "flex", flexDirection: "column" as const, borderRadius: 18,
-              background: isToday ? "linear-gradient(160deg, #7c3aed 0%, #0d9488 130%)" : C.white,
-              boxShadow: isToday ? "0 16px 32px rgba(124,58,237,0.28)" : "0 2px 8px rgba(15,23,42,0.05)",
+              background: isToday ? "#0f766e" : C.white,
+              boxShadow: isToday ? "0 16px 32px rgba(13,148,136,0.28)" : "0 2px 8px rgba(15,23,42,0.05)",
               opacity: isPast ? 0.55 : 1, overflow: "hidden",
             }}>
               {/* En-tête jour */}
@@ -986,7 +1019,9 @@ function ClientStep({ session, onSelect }: { session: odoo.OdooSession; onSelect
     <div style={{ flex: 1, display: "flex", flexDirection: "column" as const, alignItems: "center", justifyContent: "center", padding: 40 }}>
       <div style={{ width: "100%", maxWidth: 560 }}>
         <div style={{ textAlign: "center", marginBottom: 32 }}>
-          <div style={{ width: 72, height: 72, borderRadius: 20, background: "linear-gradient(135deg, #0d9488, #7c3aed)", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 16px", fontSize: 32 }}>👤</div>
+          <div style={{ width: 72, height: 72, borderRadius: 20, background: C.tealSoft, border: `1.5px solid ${C.tealMid}`, display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 16px" }}>
+            <Icon name="user" size={34} color={C.teal} />
+          </div>
           <div style={{ fontSize: 26, fontWeight: 800, color: C.text }}>Choisir un client</div>
           <div style={{ fontSize: 14, color: C.muted, marginTop: 6 }}>Recherche par nom, référence ou ville</div>
         </div>
@@ -1004,8 +1039,8 @@ function ClientStep({ session, onSelect }: { session: odoo.OdooSession; onSelect
             onClick={() => locMode ? setLocMode(false) : enableLocation()}
             title="Proposer les clients les plus proches de ma position"
             disabled={locLoading}
-            style={{ flexShrink: 0, width: 50, display: "flex", alignItems: "center", justifyContent: "center", background: locMode ? C.teal : C.white, border: `1.5px solid ${locMode ? C.teal : C.border}`, borderRadius: 14, cursor: locLoading ? "default" : "pointer", boxShadow: C.shadowMd, fontSize: 20 }}>
-            {locLoading ? "…" : "📍"}
+            style={{ flexShrink: 0, width: 50, display: "flex", alignItems: "center", justifyContent: "center", background: locMode ? C.teal : C.white, border: `1.5px solid ${locMode ? C.teal : C.border}`, borderRadius: 14, cursor: locLoading ? "default" : "pointer", boxShadow: C.shadowMd, color: locMode ? "#fff" : C.textSec }}>
+            {locLoading ? "…" : <Icon name="pin" size={20} />}
           </button>
         </div>
 
@@ -1033,8 +1068,8 @@ function ClientStep({ session, onSelect }: { session: odoo.OdooSession; onSelect
                 <div style={{ fontSize: 15, fontWeight: 700, color: C.text }}>{c.name}</div>
                 <div style={{ fontSize: 12, color: C.muted, marginTop: 2, display: "flex", gap: 10, flexWrap: "wrap" as const }}>
                   {c.ref && <span>Réf: {c.ref}</span>}
-                  {c.city && <span>📍 {c.city}</span>}
-                  {c.phone && <span>📞 {c.phone}</span>}
+                  {c.city && <span style={{ display: "inline-flex", alignItems: "center", gap: 3 }}><Icon name="pin" size={11} /> {c.city}</span>}
+                  {c.phone && <span style={{ display: "inline-flex", alignItems: "center", gap: 3 }}><Icon name="phone" size={11} /> {c.phone}</span>}
                 </div>
               </div>
               {typeof c._distKm === "number" && (
@@ -1107,11 +1142,12 @@ function ClientHub({ session, client, hasDraft, onOrder, onHistory, onAppointmen
     ? odooToLocalDate(stats.lastDate).toLocaleDateString("fr-FR", { day: "numeric", month: "short" })
     : "—";
 
+  // Refonte : une seule carte accentuée (l'action principale), les autres en blanc.
   const cards = [
-    { key: "order", icon: "🛒", title: "Prise de commande", subtitle: hasDraft ? "Brouillon en attente" : "Nouveau devis", gradient: "linear-gradient(135deg, #0d9488, #0f766e)", badge: hasDraft, onClick: onOrder },
-    { key: "history", icon: "🕓", title: "Historique", subtitle: "Commandes passées", gradient: "linear-gradient(135deg, #2563eb, #1d4ed8)", badge: false, onClick: onHistory },
-    { key: "rdv", icon: "📅", title: "Prendre un RDV", subtitle: "Agenda Odoo", gradient: "linear-gradient(135deg, #7c3aed, #6d28d9)", badge: false, onClick: onAppointment },
-    { key: "note", icon: "🗒️", title: "Note client", subtitle: "Compte rendu, vocal ou écrit", gradient: "linear-gradient(135deg, #ea580c, #c2410c)", badge: false, onClick: onNote },
+    { key: "order", icon: "cart", title: "Prise de commande", subtitle: hasDraft ? "Brouillon en attente" : "Nouveau devis", primary: true, badge: hasDraft, onClick: onOrder },
+    { key: "history", icon: "clock", title: "Historique", subtitle: "Commandes passées", primary: false, badge: false, onClick: onHistory },
+    { key: "rdv", icon: "calendar", title: "Prendre un RDV", subtitle: "Agenda Odoo", primary: false, badge: false, onClick: onAppointment },
+    { key: "note", icon: "note", title: "Note client", subtitle: "Compte rendu, vocal ou écrit", primary: false, badge: false, onClick: onNote },
   ];
 
   return (
@@ -1119,15 +1155,15 @@ function ClientHub({ session, client, hasDraft, onOrder, onHistory, onAppointmen
       <div style={{ width: "100%", maxWidth: 640 }}>
         {/* Carte identité client */}
         <div style={{ display: "flex", alignItems: "center", gap: 18, marginBottom: 36 }}>
-          <div style={{ width: 72, height: 72, borderRadius: 20, background: "linear-gradient(135deg, #0d9488, #7c3aed)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 28, fontWeight: 800, color: "#fff", flexShrink: 0, boxShadow: "0 8px 20px rgba(13,148,136,0.3)" }}>
+          <div style={{ width: 72, height: 72, borderRadius: 20, background: C.teal, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 28, fontWeight: 800, color: "#fff", flexShrink: 0, boxShadow: "0 8px 20px rgba(13,148,136,0.3)" }}>
             {client.name.charAt(0).toUpperCase()}
           </div>
           <div style={{ minWidth: 0 }}>
             <div style={{ fontSize: 24, fontWeight: 800, color: C.text, lineHeight: 1.2 }}>{client.name}</div>
             <div style={{ display: "flex", flexWrap: "wrap" as const, gap: 10, marginTop: 6 }}>
               {client.ref && <span style={{ fontSize: 12, color: C.muted }}>Réf: {client.ref}</span>}
-              {client.city && <span style={{ fontSize: 12, color: C.muted }}>📍 {client.city}</span>}
-              {client.phone && <span style={{ fontSize: 12, color: C.muted }}>📞 {client.phone}</span>}
+              {client.city && <span style={{ fontSize: 12, color: C.muted, display: "inline-flex", alignItems: "center", gap: 3 }}><Icon name="pin" size={11} /> {client.city}</span>}
+              {client.phone && <span style={{ fontSize: 12, color: C.muted, display: "inline-flex", alignItems: "center", gap: 3 }}><Icon name="phone" size={11} /> {client.phone}</span>}
             </div>
             {client.property_product_pricelist && (
               <div style={{ display: "inline-block", marginTop: 8, fontSize: 11, fontWeight: 700, color: C.teal, background: C.tealSoft, borderRadius: 8, padding: "3px 9px" }}>
@@ -1139,7 +1175,7 @@ function ClientHub({ session, client, hasDraft, onOrder, onHistory, onAppointmen
 
         {/* Statistiques client */}
         <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12, marginBottom: 28 }}>
-          <div style={{ background: "linear-gradient(135deg, #0d9488, #7c3aed)", borderRadius: 16, padding: "14px 16px", color: "#fff", boxShadow: "0 8px 20px rgba(13,148,136,0.25)" }}>
+          <div style={{ background: "#0f766e", borderRadius: 16, padding: "14px 16px", color: "#fff", boxShadow: "0 8px 20px rgba(13,148,136,0.25)" }}>
             <div style={{ fontSize: 19, fontWeight: 800 }}>{stats ? fmtPrice(stats.ca) : "…"}</div>
             <div style={{ fontSize: 10.5, opacity: 0.85, fontWeight: 600, marginTop: 2, textTransform: "uppercase" as const, letterSpacing: "0.03em" }}>CA 12 mois</div>
           </div>
@@ -1157,13 +1193,27 @@ function ClientHub({ session, client, hasDraft, onOrder, onHistory, onAppointmen
         <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 16 }}>
           {cards.map(c => (
             <button key={c.key} onClick={c.onClick}
-              style={{ position: "relative" as const, textAlign: "left" as const, padding: "22px 20px", borderRadius: 20, border: "none", background: c.gradient, color: "#fff", cursor: "pointer", fontFamily: "inherit", boxShadow: "0 10px 24px rgba(15,23,42,0.14)", transition: "transform 0.15s" }}>
+              style={{
+                position: "relative" as const, textAlign: "left" as const, padding: "20px 20px", borderRadius: 20,
+                border: c.primary ? "none" : `1.5px solid ${C.border}`,
+                background: c.primary ? C.teal : C.white,
+                color: c.primary ? "#fff" : C.text,
+                cursor: "pointer", fontFamily: "inherit",
+                boxShadow: c.primary ? "0 10px 24px rgba(13,148,136,0.25)" : C.shadow,
+                transition: "transform 0.15s",
+              }}>
               {c.badge && (
                 <div style={{ position: "absolute" as const, top: 14, right: 14, width: 10, height: 10, borderRadius: "50%", background: "#fde047", boxShadow: "0 0 0 3px rgba(255,255,255,0.35)" }} />
               )}
-              <div style={{ fontSize: 30, marginBottom: 14 }}>{c.icon}</div>
+              <div style={{
+                width: 46, height: 46, borderRadius: 14, marginBottom: 14,
+                background: c.primary ? "rgba(255,255,255,0.18)" : C.tealSoft,
+                display: "flex", alignItems: "center", justifyContent: "center",
+              }}>
+                <Icon name={c.icon} size={24} color={c.primary ? "#fff" : C.teal} />
+              </div>
               <div style={{ fontSize: 15, fontWeight: 800 }}>{c.title}</div>
-              <div style={{ fontSize: 12, opacity: 0.85, marginTop: 3 }}>{c.subtitle}</div>
+              <div style={{ fontSize: 12, opacity: c.primary ? 0.85 : 1, color: c.primary ? undefined : C.muted, marginTop: 3 }}>{c.subtitle}</div>
             </button>
           ))}
         </div>
@@ -1235,7 +1285,7 @@ function ClientHistory({ session, client }: { session: odoo.OdooSession; client:
           <div style={{ background: C.redSoft, color: C.red, borderRadius: 12, padding: "12px 16px", fontSize: 13 }}>{error}</div>
         ) : orders.length === 0 ? (
           <div style={{ textAlign: "center" as const, color: C.muted, padding: 60 }}>
-            <div style={{ fontSize: 40, marginBottom: 12 }}>📭</div>
+            <div style={{ marginBottom: 12 }}><Icon name="inbox" size={40} color={C.border} /></div>
             <div style={{ fontSize: 14, fontWeight: 600 }}>Aucune commande pour ce client</div>
           </div>
         ) : (
@@ -1330,6 +1380,22 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
   const [stockOnly, setStockOnly] = useState(true); // n'afficher que les articles avec du stock prévisionnel
   const searchInput = useRef<HTMLInputElement>(null);
   const searchTimer = useRef<any>(null);
+
+  // Pavé numérique quantité : tap sur le chiffre d'un produit (grille ou panier).
+  // price fourni depuis la grille (prix client calculé) ; absent depuis le panier
+  // (on garde alors le prix déjà enregistré sur la ligne).
+  const [pad, setPad] = useState<{ product: any; price?: number } | null>(null);
+
+  // État réseau léger (événements navigateur, sans ping) : sert uniquement à
+  // annoncer AVANT validation que la commande partira en file hors ligne.
+  const [navOnline, setNavOnline] = useState(true);
+  useEffect(() => {
+    const upd = () => setNavOnline(typeof navigator === "undefined" ? true : navigator.onLine);
+    upd();
+    window.addEventListener("online", upd);
+    window.addEventListener("offline", upd);
+    return () => { window.removeEventListener("online", upd); window.removeEventListener("offline", upd); };
+  }, []);
 
   // URL vignette via proxy (chargée en lazy + cache navigateur 1h) — évite de charger 500 base64 d'un coup
   const imgUrl = (id: number) => apiUrl(`/api/odoo/image?odooUrl=${encodeURIComponent(session.config.url)}&id=${id}&s=${session.sessionId}`);
@@ -1562,14 +1628,14 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
         {/* Tous */}
         <button onClick={() => setActiveCatId(null)}
           style={{ width: "100%", padding: "10px 10px", background: !activeCatId ? C.tealSoft : "transparent", border: "none", borderLeft: `3px solid ${!activeCatId ? C.teal : "transparent"}`, cursor: "pointer", textAlign: "left" as const, fontSize: 12, fontWeight: !activeCatId ? 700 : 400, color: !activeCatId ? C.tealDark : C.textSec, fontFamily: "inherit", display: "flex", alignItems: "center", gap: 7 }}>
-          <span>🏠</span> Tous
+          <Icon name="home" size={13} /> Tous
         </button>
 
         {/* Favoris du client */}
         <button onClick={() => { setActiveCatId(FAV_CAT_ID); loadFavorites(); }}
           style={{ width: "100%", padding: "10px 10px", background: activeCatId === FAV_CAT_ID ? C.orangeSoft : "transparent", border: "none", borderLeft: `3px solid ${activeCatId === FAV_CAT_ID ? C.orange : "transparent"}`, cursor: "pointer", textAlign: "left" as const, fontFamily: "inherit", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6, transition: "all 0.1s" }}>
           <span style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: activeCatId === FAV_CAT_ID ? 700 : 400, color: activeCatId === FAV_CAT_ID ? C.orange : C.textSec }}>
-            <span>⭐</span> Favoris
+            <Icon name="star" size={13} /> Favoris
           </span>
           {favLoaded && favProducts.length > 0 && <span style={{ fontSize: 10, fontWeight: 700, color: activeCatId === FAV_CAT_ID ? C.orange : C.muted, background: activeCatId === FAV_CAT_ID ? C.orangeSoft : C.bg, borderRadius: 5, padding: "1px 5px", flexShrink: 0 }}>{favProducts.length}</span>}
         </button>
@@ -1596,7 +1662,7 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
             onClick={() => { setActiveCatId(MEA_CAT_ID); loadMeaTemplates(); }}
             style={{ width: "100%", padding: "10px 10px", background: activeCatId === MEA_CAT_ID ? C.orangeSoft : "transparent", border: "none", borderLeft: `3px solid ${activeCatId === MEA_CAT_ID ? C.orange : "transparent"}`, cursor: "pointer", textAlign: "left" as const, fontFamily: "inherit", display: "flex", alignItems: "center", gap: 7, transition: "all 0.1s" }}>
             <span style={{ fontSize: 12, fontWeight: activeCatId === MEA_CAT_ID ? 700 : 400, color: activeCatId === MEA_CAT_ID ? C.orange : C.textSec, display: "flex", alignItems: "center", gap: 6 }}>
-              <span>🎁</span> MEA
+              <Icon name="gift" size={13} /> MEA
             </span>
           </button>
         </div>
@@ -1649,7 +1715,7 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
               <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: 200, color: C.muted }}>Chargement…</div>
             ) : meaTemplates.length === 0 ? (
               <div style={{ textAlign: "center", padding: 60, color: C.muted }}>
-                <div style={{ fontSize: 32, marginBottom: 10 }}>📋</div>
+                <div style={{ marginBottom: 10 }}><Icon name="file" size={32} color={C.border} /></div>
                 <div>Aucun modèle de devis trouvé</div>
               </div>
             ) : (
@@ -1680,23 +1746,23 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
             <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: 200, color: C.muted }}>Chargement des favoris…</div>
           ) : activeCatId === FAV_CAT_ID && favLoaded && displayedProducts.length === 0 ? (
             <div style={{ textAlign: "center", padding: 60, color: C.muted }}>
-              <div style={{ fontSize: 32, marginBottom: 10 }}>⭐</div>
+              <div style={{ marginBottom: 10 }}><Icon name="star" size={32} color={C.border} /></div>
               <div>{favProducts.length === 0 ? "Ce client n'a passé aucune commande sur les 12 derniers mois" : "Aucun favori en stock — désactive « Stock dispo » pour tout voir"}</div>
             </div>
           ) : loading && allProducts.length === 0 ? (
             <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: 200, color: C.muted }}>Chargement…</div>
           ) : !activeCatId && !isSearching && allProducts.length === 0 ? (
             <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "60%", flexDirection: "column" as const, gap: 12, color: C.muted }}>
-              <div style={{ fontSize: 48 }}>📦</div>
+              <Icon name="package" size={48} color={C.border} />
               <div style={{ fontSize: 15, fontWeight: 600 }}>Aucun produit en stock</div>
             </div>
           ) : displayedProducts.length === 0 ? (
             <div style={{ textAlign: "center", padding: 60, color: C.muted }}>
-              <div style={{ fontSize: 32, marginBottom: 10 }}>🔍</div>
+              <div style={{ marginBottom: 10 }}><Icon name="search" size={32} color={C.border} /></div>
               <div>Aucun résultat</div>
             </div>
           ) : (
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))", gap: 10 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(172px, 1fr))", gap: 10 }}>
               {displayedProducts.map(p => {
                 const qty = cart[p.id]?.qty || 0;
                 const isFree = freeProductIds.has(p.id);
@@ -1707,33 +1773,37 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
                 return (
                   <div key={p.id} style={{ background: C.white, borderRadius: 14, overflow: "hidden", border: `2px solid ${qty > 0 ? C.teal : isFree ? C.green : C.border}`, boxShadow: qty > 0 ? `0 0 0 3px ${C.tealSoft}` : C.shadow, transition: "all 0.15s" }}>
                     <div onClick={() => openZoom(p)} title="Agrandir l'image" style={{ height: 80, background: C.bg, display: "flex", alignItems: "center", justifyContent: "center", position: "relative" as const, cursor: "zoom-in" }}>
-                      <div style={{ position: "absolute", fontSize: 32 }}>📦</div>
+                      <div style={{ position: "absolute" }}><Icon name="package" size={30} color={C.border} /></div>
                       <ProductImage id={p.id} networkUrl={imgUrl(p.id)} style={{ height: 72, objectFit: "contain", position: "relative" as const, zIndex: 1 }} />
                       <div style={{ position: "absolute", bottom: 4, right: 4, background: "rgba(255,255,255,0.85)", borderRadius: 6, width: 20, height: 20, display: "flex", alignItems: "center", justifyContent: "center" }}>
                         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke={C.muted} strokeWidth="2.5"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3M11 8v6M8 11h6"/></svg>
                       </div>
                       {isFree && <div style={{ position: "absolute", top: 5, right: 5, background: C.green, color: "#fff", fontSize: 9, fontWeight: 700, borderRadius: 5, padding: "2px 5px" }}>OFFERT</div>}
-                      {qty > 0 && <div style={{ position: "absolute", top: 5, left: 5, background: C.teal, color: "#fff", fontSize: 11, fontWeight: 800, borderRadius: 7, padding: "2px 7px" }}>{qty}</div>}
+                      {qty > 0 && <div style={{ position: "absolute", top: 5, left: 5, background: C.teal, color: "#fff", fontSize: 12, fontWeight: 800, borderRadius: 7, padding: "2px 8px" }}>{qty}</div>}
                     </div>
                     <div style={{ padding: "8px 10px 10px" }}>
-                      <div style={{ fontSize: 9, color: C.muted, fontFamily: "monospace", marginBottom: 1 }}>{p.default_code}{p.barcode ? ` · ${p.barcode}` : ""}</div>
-                      <div style={{ fontSize: 11, fontWeight: 600, color: C.text, lineHeight: 1.3, height: 28, overflow: "hidden" }}>{p.name}</div>
+                      <div style={{ fontSize: 10.5, color: C.muted, fontFamily: "monospace", marginBottom: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>{p.default_code}{p.barcode ? ` · ${p.barcode}` : ""}</div>
+                      <div style={{ fontSize: 12.5, fontWeight: 600, color: C.text, lineHeight: 1.3, height: 33, overflow: "hidden" }}>{p.name}</div>
                       {activeCatId === FAV_CAT_ID && p.totalQty != null && (
-                        <div style={{ fontSize: 9, fontWeight: 700, color: C.orange, background: C.orangeSoft, borderRadius: 5, padding: "2px 5px", marginTop: 3, display: "inline-block" }}>
-                          ⭐ {Math.round(p.totalQty)} commandé{Math.round(p.totalQty) > 1 ? "s" : ""} · {p.times} fois
+                        <div style={{ fontSize: 10, fontWeight: 700, color: C.orange, background: C.orangeSoft, borderRadius: 5, padding: "2px 6px", marginTop: 3, display: "inline-block" }}>
+                          {Math.round(p.totalQty)} commandé{Math.round(p.totalQty) > 1 ? "s" : ""} · {p.times} fois
                         </div>
                       )}
                       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 5, marginBottom: 6 }}>
                         <div style={{ display: "flex", flexDirection: "column" as const, gap: 1 }}>
-                          <span style={{ fontSize: 13, fontWeight: 800, color: hasDiscount ? C.green : C.tealDark }}>{clientPrice > 0 ? fmtPrice(clientPrice) : "—"}</span>
-                          {hasDiscount && <span style={{ fontSize: 9, color: C.muted, textDecoration: "line-through" }}>{fmtPrice(p.lst_price)}</span>}
+                          <span style={{ fontSize: 15, fontWeight: 800, color: hasDiscount ? C.green : C.tealDark }}>{clientPrice > 0 ? fmtPrice(clientPrice) : "—"}</span>
+                          {hasDiscount && <span style={{ fontSize: 10, color: C.muted, textDecoration: "line-through" }}>{fmtPrice(p.lst_price)}</span>}
                         </div>
-                        <span style={{ fontSize: 9, fontWeight: 600, color: stock > 0 ? C.green : C.red, background: stock > 0 ? C.greenSoft : C.redSoft, borderRadius: 5, padding: "2px 5px" }}>{stock > 0 ? stock : "Rupture"}</span>
+                        <span style={{ fontSize: 10.5, fontWeight: 600, color: stock > 0 ? C.green : C.red, background: stock > 0 ? C.greenSoft : C.redSoft, borderRadius: 5, padding: "2px 6px" }}>{stock > 0 ? stock : "Rupture"}</span>
                       </div>
-                      <div style={{ display: "flex", background: qty > 0 ? C.tealSoft : C.bg, borderRadius: 8, overflow: "hidden", border: `1px solid ${qty > 0 ? C.tealMid : C.border}` }}>
-                        <button onClick={() => onQtyChange(p, qty - 1, clientPrice)} style={{ flex: 1, padding: "7px 0", background: "transparent", border: "none", cursor: "pointer", fontSize: 17, fontWeight: 700, color: qty > 0 ? C.red : C.muted, lineHeight: 1 }}>−</button>
-                        <span style={{ flex: 1, textAlign: "center" as const, fontSize: 14, fontWeight: 800, color: qty > 0 ? C.tealDark : C.muted, lineHeight: "30px" }}>{qty}</span>
-                        <button onClick={() => onQtyChange(p, qty + 1, clientPrice)} style={{ flex: 1, padding: "7px 0", background: "transparent", border: "none", cursor: "pointer", fontSize: 17, fontWeight: 700, color: C.teal, lineHeight: 1 }}>+</button>
+                      {/* Stepper tactile : boutons 44px (norme Apple), chiffre TAPABLE → pavé numérique */}
+                      <div style={{ display: "flex", background: qty > 0 ? C.tealSoft : C.bg, borderRadius: 10, overflow: "hidden", border: `1px solid ${qty > 0 ? C.tealMid : C.border}` }}>
+                        <button onClick={() => onQtyChange(p, qty - 1, clientPrice)} style={{ flex: 1, height: 44, background: "transparent", border: "none", cursor: "pointer", fontSize: 20, fontWeight: 700, color: qty > 0 ? C.red : C.muted, lineHeight: 1 }}>−</button>
+                        <button onClick={() => setPad({ product: p, price: clientPrice })} title="Saisir une quantité"
+                          style={{ flex: 1.2, height: 44, background: "transparent", border: "none", borderLeft: `1px solid ${qty > 0 ? C.tealMid : C.border}`, borderRight: `1px solid ${qty > 0 ? C.tealMid : C.border}`, cursor: "pointer", fontSize: 16, fontWeight: 800, color: qty > 0 ? C.tealDark : C.muted, fontFamily: "inherit" }}>
+                          {qty}
+                        </button>
+                        <button onClick={() => onQtyChange(p, qty + 1, clientPrice)} style={{ flex: 1, height: 44, background: "transparent", border: "none", cursor: "pointer", fontSize: 20, fontWeight: 700, color: C.teal, lineHeight: 1 }}>+</button>
                       </div>
                     </div>
                   </div>
@@ -1747,8 +1817,8 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
       {/* ── Panier persistant (droite) ── */}
       <div style={{ width: 310, background: C.white, borderLeft: `1px solid ${C.border}`, display: "flex", flexDirection: "column" as const, flexShrink: 0 }}>
         {/* Header panier */}
-        <div style={{ padding: "12px 14px", background: "linear-gradient(135deg, #0d9488, #0f766e)", color: "#fff" }}>
-          <div style={{ fontSize: 13, fontWeight: 700 }}>🛒 Panier — {client.name}</div>
+        <div style={{ padding: "12px 14px", background: "#0f766e", color: "#fff" }}>
+          <div style={{ fontSize: 13, fontWeight: 700, display: "flex", alignItems: "center", gap: 7 }}><Icon name="cart" size={14} /> Panier — {client.name}</div>
           <div style={{ fontSize: 11, opacity: 0.85, marginTop: 2 }}>
             {cartCount} article{cartCount > 1 ? "s" : ""} · {fmtPrice(cartTotal)}
             {freeCount > 0 && <span style={{ marginLeft: 6, background: "rgba(255,255,255,0.2)", borderRadius: 5, padding: "1px 6px" }}>+{freeCount} offerts</span>}
@@ -1759,7 +1829,7 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
         <div style={{ flex: 1, overflowY: "auto" as const, padding: "10px 12px" }}>
           {cartItems.length === 0 ? (
             <div style={{ textAlign: "center", padding: "32px 12px", color: C.muted }}>
-              <div style={{ fontSize: 28, marginBottom: 8 }}>🛒</div>
+              <div style={{ marginBottom: 8 }}><Icon name="cart" size={28} color={C.border} /></div>
               <div style={{ fontSize: 12 }}>Ajoute des produits</div>
             </div>
           ) : (
@@ -1768,24 +1838,27 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
               const gross = item.qty * item.unitPrice;
               const net = gross * (1 - pct / 100);
               return (
-                <div key={item.product.id} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8, padding: "7px 8px", background: C.bg, borderRadius: 10 }}>
+                <div key={item.product.id} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8, padding: "8px 8px", background: C.bg, borderRadius: 10 }}>
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: 11, fontWeight: 700, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>{item.product.name}</div>
-                    <div style={{ fontSize: 10, color: C.muted }}>{item.qty} × {fmtPrice(item.unitPrice)}</div>
+                    <div style={{ fontSize: 12, fontWeight: 700, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>{item.product.name}</div>
+                    <div style={{ fontSize: 11, color: C.muted }}>{item.qty} × {fmtPrice(item.unitPrice)}</div>
                   </div>
                   <div style={{ display: "flex", alignItems: "center", gap: 4, flexShrink: 0 }}>
-                    <button onClick={() => onQtyChange(item.product, item.qty - 1)} style={{ width: 22, height: 22, borderRadius: 5, background: C.redSoft, border: "none", cursor: "pointer", color: C.red, fontSize: 14, fontWeight: 700, lineHeight: 1 }}>−</button>
-                    <span style={{ fontSize: 13, fontWeight: 800, color: C.text, minWidth: 18, textAlign: "center" as const }}>{item.qty}</span>
-                    <button onClick={() => onQtyChange(item.product, item.qty + 1)} style={{ width: 22, height: 22, borderRadius: 5, background: C.tealSoft, border: "none", cursor: "pointer", color: C.teal, fontSize: 14, fontWeight: 700, lineHeight: 1 }}>+</button>
+                    <button onClick={() => onQtyChange(item.product, item.qty - 1)} style={{ width: 36, height: 36, borderRadius: 8, background: C.redSoft, border: "none", cursor: "pointer", color: C.red, fontSize: 17, fontWeight: 700, lineHeight: 1 }}>−</button>
+                    <button onClick={() => setPad({ product: item.product })} title="Saisir une quantité"
+                      style={{ minWidth: 32, height: 36, borderRadius: 8, background: "transparent", border: `1px solid ${C.border}`, cursor: "pointer", fontSize: 13.5, fontWeight: 800, color: C.text, fontFamily: "inherit", padding: "0 4px" }}>
+                      {item.qty}
+                    </button>
+                    <button onClick={() => onQtyChange(item.product, item.qty + 1)} style={{ width: 36, height: 36, borderRadius: 8, background: C.tealSoft, border: "none", cursor: "pointer", color: C.teal, fontSize: 17, fontWeight: 700, lineHeight: 1 }}>+</button>
                   </div>
                   <div style={{ minWidth: 52, textAlign: "right" as const, flexShrink: 0 }}>
                     {pct > 0 ? (
                       <>
-                        <div style={{ fontSize: 9, color: C.muted, textDecoration: "line-through" }}>{fmtPrice(gross)}</div>
-                        <div style={{ fontSize: 12, fontWeight: 800, color: C.orange }}>{fmtPrice(net)}</div>
+                        <div style={{ fontSize: 10, color: C.muted, textDecoration: "line-through" }}>{fmtPrice(gross)}</div>
+                        <div style={{ fontSize: 12.5, fontWeight: 800, color: C.orange }}>{fmtPrice(net)}</div>
                       </>
                     ) : (
-                      <div style={{ fontSize: 12, fontWeight: 800, color: C.text }}>{fmtPrice(gross)}</div>
+                      <div style={{ fontSize: 12.5, fontWeight: 800, color: C.text }}>{fmtPrice(gross)}</div>
                     )}
                   </div>
                 </div>
@@ -1796,7 +1869,7 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
           {/* Articles gratuits */}
           {freeItems.length > 0 && (
             <div style={{ margin: "8px 0", padding: "8px 10px", background: C.greenSoft, border: `1px solid ${C.green}33`, borderRadius: 10 }}>
-              <div style={{ fontSize: 10, fontWeight: 700, color: C.green, textTransform: "uppercase" as const, letterSpacing: "0.05em", marginBottom: 5 }}>🎁 BC Gratuit (séparé)</div>
+              <div style={{ fontSize: 10, fontWeight: 700, color: C.green, textTransform: "uppercase" as const, letterSpacing: "0.05em", marginBottom: 5, display: "flex", alignItems: "center", gap: 5 }}><Icon name="gift" size={11} /> BC Gratuit (séparé)</div>
               {freeItems.map((fi, i) => (
                 <div key={i} style={{ fontSize: 11, color: C.green, marginBottom: 2 }}>
                   <strong>{fi.qty}×</strong> {fi.product.name}
@@ -1809,7 +1882,7 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
           {/* Remises additionnelles appliquées */}
           {Object.keys(appliedPromos).length > 0 && (
             <div style={{ margin: "8px 0", padding: "8px 10px", background: C.orangeSoft, border: `1px solid ${C.orange}33`, borderRadius: 10 }}>
-              <div style={{ fontSize: 10, fontWeight: 700, color: C.orange, textTransform: "uppercase" as const, letterSpacing: "0.05em", marginBottom: 5 }}>🏷️ Remises appliquées</div>
+              <div style={{ fontSize: 10, fontWeight: 700, color: C.orange, textTransform: "uppercase" as const, letterSpacing: "0.05em", marginBottom: 5, display: "flex", alignItems: "center", gap: 5 }}><Icon name="tag" size={11} /> Remises appliquées</div>
               {Object.values(appliedPromos).map(p => (
                 <div key={p.program.id} style={{ fontSize: 11, color: C.orange, marginBottom: 2 }}>
                   <strong>{p.program.name}</strong>
@@ -1846,14 +1919,31 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
               </div>
             </div>
 
+            {/* Le bouton annonce la mise en file AVANT la validation quand on est hors
+                 ligne — pas de surprise après coup. */}
             <button onClick={onValidate} disabled={submitting || cartCount === 0}
-              style={{ width: "100%", padding: "14px 0", background: cartCount === 0 ? "rgba(255,255,255,0.12)" : submitting ? "rgba(94,234,212,0.4)" : "linear-gradient(135deg, #2dd4bf, #a78bfa)", color: cartCount === 0 ? "rgba(255,255,255,0.4)" : "#0f172a", border: "none", borderRadius: 999, fontSize: 14, fontWeight: 800, cursor: cartCount === 0 ? "default" : "pointer", fontFamily: "inherit", transition: "all 0.2s" }}>
-              {submitting ? "Création…" : cartCount === 0 ? "Panier vide" : `Créer le devis${freeItems.length > 0 ? " + BC gratuit" : ""} →`}
+              style={{ width: "100%", padding: "14px 0", background: cartCount === 0 ? "rgba(255,255,255,0.12)" : submitting ? "rgba(94,234,212,0.4)" : "#2dd4bf", color: cartCount === 0 ? "rgba(255,255,255,0.4)" : "#0f172a", border: "none", borderRadius: 999, fontSize: 14, fontWeight: 800, cursor: cartCount === 0 ? "default" : "pointer", fontFamily: "inherit", transition: "all 0.2s" }}>
+              {submitting ? "Création…"
+                : cartCount === 0 ? "Panier vide"
+                : !navOnline ? "Enregistrer hors ligne · envoi auto"
+                : `Créer le devis${freeItems.length > 0 ? " + BC gratuit" : ""} →`}
             </button>
-            <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", textAlign: "center" as const, marginTop: 8 }}>Prix Odoo appliqués à la création</div>
+            <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", textAlign: "center" as const, marginTop: 8 }}>
+              {navOnline ? "Prix Odoo appliqués à la création" : "Hors ligne — la commande partira au retour du réseau"}
+            </div>
           </div>
         </div>
       </div>
+
+      {/* ── Pavé numérique quantité (tap sur le chiffre d'un stepper) ── */}
+      {pad && (
+        <QtyPad
+          name={pad.product.name}
+          initial={cart[pad.product.id]?.qty || 0}
+          onSet={n => onQtyChange(pad.product, n, pad.price)}
+          onClose={() => setPad(null)}
+        />
+      )}
 
       {/* ── Modale zoom image ── */}
       {zoom && (
@@ -1897,6 +1987,67 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// PAVÉ NUMÉRIQUE — saisie directe d'une quantité (fini les 24 taps sur « + »)
+// ═══════════════════════════════════════════════════════════════════════════
+function QtyPad({ name, initial, onSet, onClose }: {
+  name: string; initial: number; onSet: (n: number) => void; onClose: () => void;
+}) {
+  const [val, setVal] = useState("");                      // saisie en cours ("" = quantité actuelle)
+  const shown = val === "" ? String(initial) : val;
+  const commit = (n?: number) => {
+    const q = n ?? (parseInt(shown, 10) || 0);
+    onSet(Math.max(0, Math.min(9999, q)));
+    onClose();
+  };
+  const keys = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "C", "0", "⌫"];
+  return (
+    <div onClick={onClose}
+      style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)", zIndex: 250, display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}>
+      <div onClick={e => e.stopPropagation()}
+        style={{ width: 304, background: "#fff", borderRadius: 20, boxShadow: C.shadowXl, padding: 18, fontFamily: "'DM Sans', sans-serif" }}>
+        <div style={{ fontSize: 12, color: C.muted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>{name}</div>
+        <div style={{ fontSize: 36, fontWeight: 800, color: val === "" ? C.muted : C.text, textAlign: "center" as const, padding: "6px 0 10px" }}>{shown}</div>
+
+        {/* Presets colis : AJOUTE à la quantité actuelle (réassort rapide) */}
+        <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
+          {[6, 12, 24].map(n => (
+            <button key={n} onClick={() => commit((parseInt(shown, 10) || 0) + n)}
+              style={{ flex: 1, height: 40, background: C.tealSoft, border: `1px solid ${C.tealMid}`, borderRadius: 10, fontSize: 13.5, fontWeight: 700, color: C.tealDark, cursor: "pointer", fontFamily: "inherit" }}>
+              +{n}
+            </button>
+          ))}
+        </div>
+
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8 }}>
+          {keys.map(k => (
+            <button key={k}
+              onClick={() => {
+                if (k === "C") setVal("0");
+                else if (k === "⌫") setVal(v => (v === "" ? "" : v.slice(0, -1)));
+                else setVal(v => ((v === "" || v === "0" ? k : v + k)).slice(0, 4));
+              }}
+              style={{ height: 52, background: C.bg, border: `1px solid ${C.border}`, borderRadius: 12, fontSize: 20, fontWeight: 700, color: k === "C" || k === "⌫" ? C.muted : C.text, cursor: "pointer", fontFamily: "inherit" }}>
+              {k}
+            </button>
+          ))}
+        </div>
+
+        <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+          <button onClick={onClose}
+            style={{ flex: 1, height: 48, background: "transparent", border: `1px solid ${C.border}`, borderRadius: 12, fontSize: 14, color: C.muted, cursor: "pointer", fontFamily: "inherit" }}>
+            Annuler
+          </button>
+          <button onClick={() => commit()}
+            style={{ flex: 2, height: 48, background: C.teal, border: "none", borderRadius: 12, fontSize: 15, fontWeight: 800, color: "#fff", cursor: "pointer", fontFamily: "inherit" }}>
+            Valider
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

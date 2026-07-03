@@ -1,9 +1,11 @@
 // components/OfflineBar.tsx
-// Barre d'état hors ligne autonome, à monter dans OrderScreen.
-//  - Affiche l'état réseau (en ligne / hors ligne, vérification en cours)
-//  - Bouton « Télécharger les données » : télécharge catalogue + clients en local
-//  - Compteur de commandes en attente CLIQUABLE → panneau détaillé de la file
-//    (statut, erreur Odoo exacte, réessayer, supprimer)
+// État réseau + hors-ligne, version « pastille » : un petit bouton d'état qui
+// vit DANS la top bar (plus de bandeau permanent qui mange l'écran).
+//  - Pastille : point de couleur + libellé court + compteur file si besoin.
+//  - Tap → panneau consolidé : réseau, données locales (téléchargement catalogue,
+//    progression, dernière synchro), file d'envoi détaillée (statut + erreur Odoo
+//    exacte + tout réessayer + suppression).
+//  - La synchro auto au retour réseau est inchangée.
 //
 // Volontairement non-invasif : ce composant ne touche pas la logique existante
 // d'OrderScreen, il s'appuie sur lib/network.ts, lib/sync.ts et lib/localdb.ts.
@@ -46,11 +48,10 @@ export default function OfflineBar({
   const [progress, setProgress] = useState<sync.SyncProgress | null>(null);
   const [syncing, setSyncing] = useState(false);
   const [preloadError, setPreloadError] = useState<string>("");
-  const [showQueue, setShowQueue] = useState(false);
+  const [showPanel, setShowPanel] = useState(false);
 
   // File non-envoyée = pending + error + syncing (envoi interrompu, sera rejoué).
-  const notSynced = queue.filter(o => o.status !== "synced");
-  const pending = notSynced.length;
+  const pending = queue.filter(o => o.status !== "synced").length;
   const errCount = queue.filter(o => o.status === "error").length;
 
   const refreshStatus = useCallback(async () => {
@@ -91,7 +92,7 @@ export default function OfflineBar({
     } catch (e: any) {
       const msg = e?.message || String(e);
       onToast?.("Échec du préchargement : " + msg, "error");
-      setPreloadError(msg);   // affiché de façon persistante dans la barre
+      setPreloadError(msg);   // affiché de façon persistante dans le panneau
     } finally {
       setPreloading(false);
       setProgress(null);
@@ -124,111 +125,112 @@ export default function OfflineBar({
     await refreshStatus();
   };
 
-  const dot = online ? "#16a34a" : "#dc2626";
-  const label = checking ? "Vérification…" : online ? "En ligne" : "Hors ligne";
+  // ── Pastille : couleur + libellé selon l'état ────────────────────────────
+  const pct = progress && progress.total > 0 ? Math.round((progress.done / progress.total) * 100) : 0;
+  const pill = preloading
+    ? { bg: "#f0fdfa", border: "#99f6e4", color: "#0f766e", dot: "#0d9488", label: progress && progress.total > 10 ? `Images ${pct}%` : (progress?.step || "Préparation…") }
+    : !online
+      ? { bg: "#fef2f2", border: "#fecaca", color: "#991b1b", dot: "#dc2626", label: "Hors ligne" }
+      : syncing
+        ? { bg: "#eff6ff", border: "#bfdbfe", color: "#1d4ed8", dot: "#2563eb", label: "Synchro…" }
+        : checking
+          ? { bg: "#f8fafc", border: "#e2e8f0", color: "#64748b", dot: "#94a3b8", label: "Vérification…" }
+          : { bg: "#f0fdf4", border: "#bbf7d0", color: "#166534", dot: "#16a34a", label: "En ligne" };
 
   return (
-    <div
-      style={{
-        display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap",
-        padding: "8px 14px", background: online ? "#f0fdf4" : "#fef2f2",
-        border: `1px solid ${online ? "#bbf7d0" : "#fecaca"}`, borderRadius: 12,
-        fontFamily: "'DM Sans', sans-serif", fontSize: 13,
-      }}
-    >
-      <span style={{ display: "inline-flex", alignItems: "center", gap: 6, fontWeight: 700, color: online ? "#166534" : "#991b1b" }}>
-        <span style={{ width: 9, height: 9, borderRadius: "50%", background: dot, display: "inline-block" }} />
-        {label}
-      </span>
-
-      <span style={{ color: "#6b7280" }}>
-        Dernière synchro cache : {fmtDate(lastSync)}
-      </span>
-
-      {preloadError && (
-        <span style={{ flexBasis: "100%", color: "#991b1b", fontWeight: 600, fontSize: 12 }}>
-          ⚠️ Préchargement : {preloadError}
-        </span>
-      )}
-
-      {/* Badge file — cliquable, ouvre le détail (statuts + erreurs Odoo exactes) */}
-      {pending > 0 && (
-        <button
-          onClick={() => setShowQueue(true)}
-          title="Voir le détail de la file de synchro"
-          style={{
+    <>
+      <button
+        onClick={() => setShowPanel(true)}
+        title="Réseau, données locales et file d'envoi"
+        style={{
+          display: "inline-flex", alignItems: "center", gap: 7, height: 36,
+          padding: "0 12px", borderRadius: 10, cursor: "pointer",
+          background: pill.bg, border: `1px solid ${pill.border}`,
+          fontFamily: "'DM Sans', sans-serif", fontSize: 12.5, fontWeight: 700,
+          color: pill.color, flexShrink: 0,
+        }}>
+        <span style={{ width: 8, height: 8, borderRadius: "50%", background: pill.dot, flexShrink: 0 }} />
+        {pill.label}
+        {pending > 0 && (
+          <span style={{
             background: errCount > 0 ? "#fee2e2" : "#fef3c7",
             color: errCount > 0 ? "#991b1b" : "#92400e",
             border: `1px solid ${errCount > 0 ? "#fecaca" : "#fde68a"}`,
-            padding: "3px 10px", borderRadius: 999, fontWeight: 700,
-            cursor: "pointer", fontFamily: "inherit", fontSize: 12,
-            display: "inline-flex", alignItems: "center", gap: 6,
+            borderRadius: 999, padding: "1px 8px", fontSize: 11.5, fontWeight: 800,
           }}>
-          {errCount > 0
-            ? `${errCount} en échec${pending - errCount > 0 ? ` · ${pending - errCount} en attente` : ""}`
-            : `${pending} commande${pending > 1 ? "s" : ""} en attente`}
-          <span style={{ fontSize: 10 }}>▸ détails</span>
-        </button>
-      )}
-
-      <div style={{ marginLeft: "auto", display: "flex", gap: 8, alignItems: "center" }}>
-        {progress && (
-          <span style={{ color: "#6b7280" }}>{progress.step} ({progress.done}/{progress.total})</span>
+            {pending}
+          </span>
         )}
+      </button>
 
-        <button
-          onClick={doPreload}
-          disabled={preloading || !online}
-          style={btnStyle(preloading || !online)}
-        >
-          {preloading ? "Téléchargement…" : "Télécharger les données"}
-        </button>
-
-        {pending > 0 && (
-          <button
-            onClick={doSync}
-            disabled={syncing || !online}
-            style={btnStyle(syncing || !online, "#0f766e")}
-          >
-            {syncing ? "Synchro…" : "Synchroniser"}
-          </button>
-        )}
-
-        {!online && (
-          <button onClick={recheck} style={btnStyle(false, "#4b5563")}>
-            Revérifier
-          </button>
-        )}
-      </div>
-
-      {/* ── Panneau détaillé de la file de synchro ── */}
-      {showQueue && (
+      {/* ── Panneau consolidé : réseau + données locales + file d'envoi ── */}
+      {showPanel && (
         <div
-          onClick={() => setShowQueue(false)}
-          style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 300, display: "flex", alignItems: "flex-start", justifyContent: "flex-end" }}>
+          onClick={() => setShowPanel(false)}
+          style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 300, display: "flex", alignItems: "flex-start", justifyContent: "flex-end", fontFamily: "'DM Sans', sans-serif" }}>
           <div
             onClick={e => e.stopPropagation()}
-            style={{ width: 420, maxWidth: "94vw", maxHeight: "80vh", marginTop: 60, marginRight: 16, background: "#fff", borderRadius: 16, boxShadow: "0 20px 25px rgba(0,0,0,0.10), 0 8px 10px rgba(0,0,0,0.04)", display: "flex", flexDirection: "column", overflow: "hidden" }}>
+            style={{ width: 440, maxWidth: "94vw", maxHeight: "84vh", marginTop: "calc(env(safe-area-inset-top) + 52px)", marginRight: 14, background: "#fff", borderRadius: 16, boxShadow: "0 20px 25px rgba(0,0,0,0.10), 0 8px 10px rgba(0,0,0,0.04)", display: "flex", flexDirection: "column", overflow: "hidden" }}>
+
+            {/* En-tête : état réseau */}
             <div style={{ padding: "14px 18px", borderBottom: "1px solid #e2e8f0", display: "flex", alignItems: "center", gap: 10 }}>
+              <span style={{ width: 9, height: 9, borderRadius: "50%", background: pill.dot, flexShrink: 0 }} />
               <div style={{ fontSize: 14, fontWeight: 800, color: "#0f172a", flex: 1 }}>
-                File de synchro ({queue.length})
+                {checking ? "Vérification…" : online ? "En ligne" : "Hors ligne"}
+              </div>
+              {!online && (
+                <button onClick={recheck} style={btnStyle(false, "#4b5563")}>Revérifier</button>
+              )}
+              <button onClick={() => setShowPanel(false)}
+                style={{ background: "none", border: "none", cursor: "pointer", color: "#94a3b8", fontSize: 18, lineHeight: 1, padding: 4 }}>✕</button>
+            </div>
+
+            {/* Données locales : préchargement du catalogue pour le hors-ligne */}
+            <div style={{ padding: "12px 18px", borderBottom: "1px solid #e2e8f0", background: "#f8fafc" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 12.5, fontWeight: 700, color: "#334155" }}>Données locales (mode hors ligne)</div>
+                  <div style={{ fontSize: 11.5, color: "#94a3b8", marginTop: 2 }}>
+                    {progress ? `${progress.step} — ${progress.done}/${progress.total}` : `Dernière mise à jour : ${fmtDate(lastSync)}`}
+                  </div>
+                </div>
+                <button onClick={doPreload} disabled={preloading || !online} style={btnStyle(preloading || !online)}>
+                  {preloading ? "Téléchargement…" : "Télécharger"}
+                </button>
+              </div>
+              {preloading && progress && progress.total > 0 && (
+                <div style={{ marginTop: 8, height: 6, background: "#e2e8f0", borderRadius: 999, overflow: "hidden" }}>
+                  <div style={{ width: `${pct}%`, height: "100%", background: "#0d9488", borderRadius: 999, transition: "width 0.3s" }} />
+                </div>
+              )}
+              {preloadError && (
+                <div style={{ marginTop: 8, padding: "8px 10px", background: "#fef2f2", border: "1px solid #fecaca", borderRadius: 8, fontSize: 11.5, color: "#991b1b", lineHeight: 1.45, wordBreak: "break-word" }}>
+                  Échec du préchargement : {preloadError}
+                </div>
+              )}
+            </div>
+
+            {/* File d'envoi */}
+            <div style={{ padding: "12px 18px 8px", display: "flex", alignItems: "center", gap: 10 }}>
+              <div style={{ fontSize: 12.5, fontWeight: 700, color: "#334155", flex: 1 }}>
+                File d'envoi ({queue.length})
               </div>
               {pending > 0 && (
                 <button onClick={doSync} disabled={syncing || !online} style={btnStyle(syncing || !online, "#0f766e")}>
                   {syncing ? "Synchro…" : "Tout réessayer"}
                 </button>
               )}
-              <button onClick={() => setShowQueue(false)}
-                style={{ background: "none", border: "none", cursor: "pointer", color: "#94a3b8", fontSize: 18, lineHeight: 1, padding: 4 }}>✕</button>
             </div>
 
             <div style={{ flex: 1, overflowY: "auto" }}>
               {queue.length === 0 ? (
-                <div style={{ padding: 32, textAlign: "center", color: "#94a3b8", fontSize: 13 }}>File vide</div>
+                <div style={{ padding: "8px 18px 24px", color: "#94a3b8", fontSize: 12.5 }}>
+                  Rien en attente — tout est dans Odoo.
+                </div>
               ) : [...queue].reverse().map(o => {
                 const st = STATUS_UI[o.status] || STATUS_UI.pending;
                 return (
-                  <div key={o.id} style={{ padding: "12px 18px", borderBottom: "1px solid #e2e8f0" }}>
+                  <div key={o.id} style={{ padding: "10px 18px", borderTop: "1px solid #f1f5f9" }}>
                     <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <div style={{ fontSize: 13, fontWeight: 700, color: "#0f172a", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{o.label}</div>
@@ -258,7 +260,7 @@ export default function OfflineBar({
           </div>
         </div>
       )}
-    </div>
+    </>
   );
 }
 
@@ -268,6 +270,6 @@ function btnStyle(disabled: boolean, bg = "#0f766e"): React.CSSProperties {
     color: "#fff", border: "none", borderRadius: 8,
     padding: "6px 12px", fontWeight: 700, fontSize: 12,
     cursor: disabled ? "default" : "pointer",
-    fontFamily: "'DM Sans', sans-serif",
+    fontFamily: "'DM Sans', sans-serif", flexShrink: 0,
   };
 }

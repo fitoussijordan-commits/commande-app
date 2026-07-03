@@ -121,8 +121,23 @@ Quick wins UX (juillet 2026) :
 - Fix : une commande bloquée en `syncing` (app tuée en plein envoi) est rejouée au
   flush suivant et compte dans le compteur (avant : invisible pour toujours).
 
+Refonte graphique (juillet 2026) :
+- **Pastille réseau dans la top bar** (remplace le bandeau OfflineBar permanent).
+  Tap → panneau consolidé : réseau, données locales (téléchargement + progression),
+  file d'envoi détaillée. `OfflineBar` est monté DANS la top bar d'OrderScreen.
+- **Teal unique** : plus aucun violet ni dégradé (C.purple est un alias teal pour
+  le panneau règles masqué). Cartes hub à plat (1 seule carte accentuée).
+- **Icônes SVG** (`Icon` + `ICON_PATHS` dans OrderScreen) à la place des emojis du
+  chrome. Les emojis des catégories (données utilisateur) sont conservés.
+- **Tactile** : steppers produits 44 px, panier 36 px ; le CHIFFRE de quantité est
+  tapable → pavé numérique `QtyPad` (presets +6/+12/+24, saisie directe).
+- Bouton valider : affiche « Enregistrer hors ligne · envoi auto » quand offline
+  (état via événements navigateur `navOnline`, léger, sans ping).
+- Fix RDV hors ligne : `enrichCalendarEventValues` dans `lib/sync.ts` crée
+  l'étiquette calendar.event.type au REJEU (l'automatisation Studio du client
+  plante sinon en IndexError sur categ_ids[0]).
+
 Restes possibles / idées non faites :
-- Remplacer le violet (`#7c3aed`) restant par du teal dans toute l'app (~20 endroits).
 - Bouton « forcer rechargement complet des images » si les photos changent souvent.
 - Distribution TestFlight (nécessite compte Apple Developer 99 €/an) pour équiper les
   commerciaux sans câble et sans expiration 7 jours.
