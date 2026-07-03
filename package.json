@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@capacitor/core": "^6.2.1",
+    "@capacitor/geolocation": "^6.1.0",
     "@capacitor/ios": "^6.2.1",
     "next": "^14.2.0",
     "react": "^18.3.0",

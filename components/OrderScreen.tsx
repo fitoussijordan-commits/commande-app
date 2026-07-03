@@ -5,6 +5,7 @@ import AppointmentModal from "@/components/AppointmentModal";
 import ClientNoteModal from "@/components/ClientNoteModal";
 import OfflineBar from "@/components/OfflineBar";
 import * as sync from "@/lib/sync";
+import * as geo from "@/lib/geo";
 import { apiUrl } from "@/lib/apiBase";
 import * as loyalty from "@/lib/loyalty";
 
@@ -299,9 +300,14 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
   const [showPromoPanel, setShowPromoPanel] = useState(false);
   const refreshPendingDrafts = useCallback(() => setPendingDrafts(listDrafts()), []);
 
+  // D'où vient-on quand on ouvre une fiche client : recherche ou planning.
+  // Sert au bouton retour pour revenir au bon écran.
+  const [clientOrigin, setClientOrigin] = useState<"search" | "planning">("search");
+
   // Sélectionne un client (depuis la recherche ou depuis un RDV du planning) et ouvre sa fiche.
-  const selectClient = useCallback((c: any) => {
+  const selectClient = useCallback((c: any, origin: "search" | "planning" = "search") => {
     setClient(c);
+    setClientOrigin(origin);
     setStep("hub");
     // 1 seul appel pricelist, réutilisé plus tard par la prise de commande
     const plId = c.property_product_pricelist?.[0];
@@ -530,7 +536,8 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
         {step !== "client" && (
           <button onClick={() => {
               if (step === "catalog" || step === "history") setStep("hub");
-              else setStep("client"); // hub et home reviennent à la recherche client
+              else if (step === "hub") setStep(clientOrigin === "planning" ? "home" : "client");
+              else setStep("client");
             }}
             title="Retour"
             style={{ width: 36, height: 36, borderRadius: 10, background: C.bg, border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
@@ -719,7 +726,7 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
 
       {/* ── Étapes ── */}
       {step === "home" && (
-        <HomeScreen session={session} onNewOrder={() => setStep("client")} onOpenClient={selectClient} onToast={onToast} />
+        <HomeScreen session={session} onNewOrder={() => setStep("client")} onOpenClient={(c) => selectClient(c, "planning")} onToast={onToast} />
       )}
 
       {step === "client" && <ClientStep session={session} onSelect={selectClient} />}
@@ -805,6 +812,8 @@ function HomeScreen({ session, onNewOrder, onOpenClient, onToast }: {
   const [events, setEvents] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [weekOffset, setWeekOffset] = useState(0); // 0 = semaine en cours, ±1 = semaine précédente/suivante
+  const [selectedEvent, setSelectedEvent] = useState<any>(null); // RDV ouvert en aperçu
+  const [openingClient, setOpeningClient] = useState(false);
 
   // ── Swipe tactile gauche/droite pour changer de semaine ──────────────────
   const [dragX, setDragX] = useState(0);
@@ -885,18 +894,19 @@ function HomeScreen({ session, onNewOrder, onOpenClient, onToast }: {
     const name = line.replace(/\(.*$/, "").replace(/—.*$/, "").trim();
     if (!ref && !name) { onToast("Aucun client associé à ce RDV", "info"); return; }
 
-    // Cherche d'abord dans le cache local (marche hors ligne + instantané).
+    setOpeningClient(true);
     try {
-      const cached = await sync.getCachedClients();
-      const hit = cached.find((c: any) =>
-        (ref && (c.ref || "").toLowerCase() === ref.toLowerCase()) ||
-        (name && (c.name || "").toLowerCase() === name.toLowerCase())
-      );
-      if (hit) { onOpenClient(hit); return; }
-    } catch {}
+      // Cherche d'abord dans le cache local (marche hors ligne + instantané).
+      try {
+        const cached = await sync.getCachedClients();
+        const hit = cached.find((c: any) =>
+          (ref && (c.ref || "").toLowerCase() === ref.toLowerCase()) ||
+          (name && (c.name || "").toLowerCase() === name.toLowerCase())
+        );
+        if (hit) { onOpenClient(hit); return; }
+      } catch {}
 
-    // Sinon interroge Odoo : par CODE (ref) d'abord — fiable —, puis par nom.
-    try {
+      // Sinon interroge Odoo : par CODE (ref) d'abord — fiable —, puis par nom.
       let rows: any[] = [];
       if (ref) rows = await odoo.searchRead(session, "res.partner", [["ref", "=", ref], ["active", "=", true]], CLIENT_FIELDS, 2);
       if (rows.length !== 1 && name) rows = await odoo.searchRead(session, "res.partner", [["name", "=", name], ["active", "=", true]], CLIENT_FIELDS, 2);
@@ -905,6 +915,8 @@ function HomeScreen({ session, onNewOrder, onOpenClient, onToast }: {
       else onToast("Client introuvable pour ce RDV", "info");
     } catch {
       onToast("Erreur lors de l'ouverture du client", "error");
+    } finally {
+      setOpeningClient(false);
     }
   };
 
@@ -983,7 +995,7 @@ function HomeScreen({ session, onNewOrder, onOpenClient, onToast }: {
                 ) : dayEvents.map((e, idx) => {
                   const col = EVENT_COLORS[idx % EVENT_COLORS.length];
                   return (
-                    <button key={e.id} onClick={() => openEventClient(e)} title="Ouvrir la fiche client"
+                    <button key={e.id} onClick={() => setSelectedEvent(e)} title="Voir le rendez-vous"
                       style={{ background: col.bg, border: "none", borderRadius: 10, padding: "8px 10px", cursor: "pointer", fontFamily: "inherit", textAlign: "left" as const, width: "100%", boxShadow: isToday ? "0 4px 10px rgba(15,23,42,0.12)" : "none" }}>
                       <div style={{ fontSize: 10, fontWeight: 800, color: col.text }}>
                         {odooToLocalDate(e.start).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}
@@ -997,6 +1009,66 @@ function HomeScreen({ session, onNewOrder, onOpenClient, onToast }: {
           );
         })}
       </div>
+
+      {/* ── Aperçu d'un RDV (heure, lieu, client, notes) avant d'ouvrir la fiche ── */}
+      {selectedEvent && (() => {
+        const e = selectedEvent;
+        const start = odooToLocalDate(e.start);
+        const stop = e.stop ? odooToLocalDate(e.stop) : null;
+        const desc: string = e.description || "";
+        const clientLine = (desc.match(/Client\s*:\s*(.+)/i)?.[1]) || "";
+        const clientName = clientLine.replace(/\(.*$/, "").replace(/—.*$/, "").trim();
+        const clientRef = clientLine.match(/\(([^)]+)\)/)?.[1]?.trim() || "";
+        const phone = clientLine.match(/—\s*(.+)$/)?.[1]?.trim() || "";
+        const notes = (desc.split(/\n\n/).slice(1).join("\n\n")).trim();
+        const timeStr = start.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })
+          + (stop ? ` – ${stop.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}` : "");
+        const dateStr = start.toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long" });
+        return (
+          <div onClick={() => setSelectedEvent(null)}
+            style={{ position: "fixed", inset: 0, background: "rgba(15,23,42,0.45)", zIndex: 300, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+            <div onClick={ev => ev.stopPropagation()}
+              style={{ width: "100%", maxWidth: 420, background: C.white, borderRadius: 22, boxShadow: C.shadowXl, fontFamily: "'DM Sans', sans-serif", overflow: "hidden" }}>
+              <div style={{ background: "linear-gradient(135deg, #0d9488, #0f766e)", padding: "22px 24px", color: "#fff" }}>
+                <div style={{ fontSize: 11, fontWeight: 700, opacity: 0.85, textTransform: "uppercase" as const, letterSpacing: "0.05em", marginBottom: 6 }}>Rendez-vous</div>
+                <div style={{ fontSize: 20, fontWeight: 800, lineHeight: 1.25 }}>{e.name}</div>
+              </div>
+              <div style={{ padding: "20px 24px", display: "flex", flexDirection: "column" as const, gap: 14 }}>
+                <Row icon="calendar" label={dateStr} />
+                <Row icon="clock" label={timeStr} />
+                {e.location && <Row icon="pin" label={e.location} />}
+                {clientName && <Row icon="user" label={clientName + (clientRef ? `  ·  ${clientRef}` : "")} />}
+                {phone && <Row icon="phone" label={phone} />}
+                {notes && (
+                  <div style={{ background: C.bg, borderRadius: 12, padding: "12px 14px", fontSize: 13, color: C.textSec, lineHeight: 1.5, whiteSpace: "pre-wrap" as const }}>{notes}</div>
+                )}
+              </div>
+              <div style={{ display: "flex", gap: 10, padding: "0 24px 22px" }}>
+                <button onClick={() => setSelectedEvent(null)}
+                  style={{ flex: "0 0 auto", padding: "13px 18px", background: C.bg, color: C.textSec, border: `1px solid ${C.border}`, borderRadius: 12, fontSize: 14, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>
+                  Fermer
+                </button>
+                <button onClick={() => openEventClient(e)} disabled={openingClient}
+                  style={{ flex: 1, padding: "13px 18px", background: openingClient ? C.muted : C.teal, color: "#fff", border: "none", borderRadius: 12, fontSize: 14, fontWeight: 700, cursor: openingClient ? "default" : "pointer", fontFamily: "inherit" }}>
+                  {openingClient ? "Ouverture…" : "Ouvrir la fiche client"}
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+    </div>
+  );
+}
+
+// Petite ligne icône + texte pour l'aperçu RDV.
+function Row({ icon, label }: { icon: string; label: string }) {
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+      <div style={{ width: 34, height: 34, borderRadius: 10, background: "#f0fdfa", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+        <Icon name={icon} size={16} />
+      </div>
+      <div style={{ fontSize: 14, fontWeight: 600, color: C.text }}>{label}</div>
     </div>
   );
 }
@@ -1040,40 +1112,36 @@ function ClientStep({ session, onSelect }: { session: odoo.OdooSession; onSelect
   // Taper dans la recherche désactive le mode localisation (évite la confusion entre les deux listes)
   useEffect(() => { if (q.length >= 2 && locMode) setLocMode(false); }, [q]); // eslint-disable-line
 
-  const enableLocation = () => {
+  const enableLocation = async () => {
     setLocError("");
-    if (!("geolocation" in navigator)) {
-      setLocError("Géolocalisation non disponible sur cet appareil");
-      return;
-    }
     setLocLoading(true);
-    navigator.geolocation.getCurrentPosition(
-      async (pos) => {
-        const { latitude, longitude } = pos.coords;
-        try {
-          const rows = await odoo.searchRead(session, "res.partner",
-            [["customer_rank", ">", 0], ["active", "=", true], ["partner_latitude", "!=", 0], ["partner_longitude", "!=", 0]],
-            [...CLIENT_FIELDS, "partner_latitude", "partner_longitude"], 500);
-          const withDist = rows
-            .map((r: any) => ({ ...r, _distKm: haversineKm(latitude, longitude, r.partner_latitude, r.partner_longitude) }))
-            .filter((r: any) => r._distKm <= LOC_RADIUS_KM)
-            .sort((a: any, b: any) => a._distKm - b._distKm);
-          if (!withDist.length) {
-            setLocError(`Aucun client à moins de ${fmtDistance(LOC_RADIUS_KM)} de ta position`);
-          }
-          setNearby(withDist);
-          setLocMode(true);
-        } catch (e: any) {
-          setLocError("Erreur de chargement des clients : " + e.message);
-        }
-        setLocLoading(false);
-      },
-      () => {
-        setLocError("Position refusée ou indisponible — vérifie l'autorisation de localisation");
-        setLocLoading(false);
-      },
-      { enableHighAccuracy: true, timeout: 10000 }
-    );
+    try {
+      // Helper qui gère natif (plugin Capacitor) ET web (navigator.geolocation).
+      const { latitude, longitude } = await geo.getCurrentPosition();
+      let rows: any[];
+      try {
+        rows = await odoo.searchRead(session, "res.partner",
+          [["customer_rank", ">", 0], ["active", "=", true], ["partner_latitude", "!=", 0], ["partner_longitude", "!=", 0]],
+          [...CLIENT_FIELDS, "partner_latitude", "partner_longitude"], 500);
+      } catch {
+        // Hors ligne → clients géolocalisés depuis le cache préchargé.
+        rows = await sync.getCachedClients();
+      }
+      const withDist = rows
+        .filter((r: any) => r.partner_latitude && r.partner_longitude)
+        .map((r: any) => ({ ...r, _distKm: haversineKm(latitude, longitude, r.partner_latitude, r.partner_longitude) }))
+        .filter((r: any) => r._distKm <= LOC_RADIUS_KM)
+        .sort((a: any, b: any) => a._distKm - b._distKm);
+      if (!withDist.length) {
+        setLocError(`Aucun client à moins de ${fmtDistance(LOC_RADIUS_KM)} de ta position`);
+      }
+      setNearby(withDist);
+      setLocMode(true);
+    } catch (e: any) {
+      setLocError(e?.message || "Position indisponible — vérifie l'autorisation de localisation");
+    } finally {
+      setLocLoading(false);
+    }
   };
 
   const displayed = q.length >= 2 ? results : (locMode ? nearby : []);

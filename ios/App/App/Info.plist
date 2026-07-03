@@ -4,6 +4,8 @@
 <dict>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>en</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Votre position sert à trouver les clients proches de vous.</string>
 	<key>CFBundleDisplayName</key>
 	<string>Commande</string>
 	<key>CFBundleExecutable</key>
