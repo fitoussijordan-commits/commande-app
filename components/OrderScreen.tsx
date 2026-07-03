@@ -870,7 +870,7 @@ function HomeScreen({ session, onNewOrder, onOpenClient, onToast }: {
         sunday.setDate(monday.getDate() + 7);
         const rows = await odoo.searchRead(session, "calendar.event",
           [["user_id", "=", session.uid], ["start", "<", toOdooDateStr(sunday)], ["stop", ">=", toOdooDateStr(monday)]],
-          ["id", "name", "start", "stop", "location", "description"], 200, "start asc");
+          ["id", "name", "start", "stop", "location", "description", "x_studio_code_client_cli_calendar"], 200, "start asc");
         setEvents(rows);
       } catch {
         setEvents([]);
@@ -887,31 +887,41 @@ function HomeScreen({ session, onNewOrder, onOpenClient, onToast }: {
   // (le champ partner_ids n'est volontairement pas utilisé, cf. AppointmentModal — anti-invitation Outlook).
   // On retrouve donc le client en relisant cette description plutôt que via un lien structuré.
   const openEventClient = async (e: any) => {
+    // 1) Source FIABLE : le code client stocké dans le champ Odoo dédié.
+    const fieldCode = (typeof e.x_studio_code_client_cli_calendar === "string"
+      ? e.x_studio_code_client_cli_calendar : "").trim();
+
+    // 2) Repli sur la description "Client : NOM (CODE) — téléphone" (anciens RDV).
     const desc: string = e.description || "";
-    // Ligne "Client : NOM (CODE) — téléphone"
     const line = (desc.match(/Client\s*:\s*(.+)/i)?.[1]) || "";
-    const ref = line.match(/\(([^)]+)\)/)?.[1]?.trim() || "";
+    const descCode = line.match(/\(([^)]+)\)/)?.[1]?.trim() || "";
     const name = line.replace(/\(.*$/, "").replace(/—.*$/, "").trim();
-    if (!ref && !name) { onToast("Aucun client associé à ce RDV", "info"); return; }
+
+    const code = fieldCode || descCode;   // le code (ref) prime toujours sur le nom
+    if (!code && !name) { onToast("Aucun client associé à ce RDV", "info"); return; }
+
+    // Compare deux codes de façon stricte (insensible casse/espaces).
+    const norm = (s: string) => s.replace(/\s+/g, "").toLowerCase();
 
     setOpeningClient(true);
     try {
-      // Cherche d'abord dans le cache local (marche hors ligne + instantané).
+      // Cache local d'abord (offline + instantané). Le CODE prime ; le nom n'est
+      // utilisé que s'il n'y a AUCUN code, et seulement en correspondance exacte.
       try {
         const cached = await sync.getCachedClients();
-        const hit = cached.find((c: any) =>
-          (ref && (c.ref || "").toLowerCase() === ref.toLowerCase()) ||
-          (name && (c.name || "").toLowerCase() === name.toLowerCase())
-        );
+        let hit: any = null;
+        if (code) hit = cached.find((c: any) => c.ref && norm(c.ref) === norm(code));
+        else if (name) hit = cached.find((c: any) => (c.name || "").trim().toLowerCase() === name.toLowerCase());
         if (hit) { onOpenClient(hit); return; }
       } catch {}
 
-      // Sinon interroge Odoo : par CODE (ref) d'abord — fiable —, puis par nom.
+      // Sinon Odoo : par CODE exact d'abord, puis nom exact. Jamais de "ilike"
+      // approximatif qui pourrait ouvrir un client sans rapport.
       let rows: any[] = [];
-      if (ref) rows = await odoo.searchRead(session, "res.partner", [["ref", "=", ref], ["active", "=", true]], CLIENT_FIELDS, 2);
-      if (rows.length !== 1 && name) rows = await odoo.searchRead(session, "res.partner", [["name", "=", name], ["active", "=", true]], CLIENT_FIELDS, 2);
-      if (rows.length !== 1 && name) rows = await odoo.searchRead(session, "res.partner", [["name", "ilike", name], ["active", "=", true]], CLIENT_FIELDS, 2);
+      if (code) rows = await odoo.searchRead(session, "res.partner", [["ref", "=", code], ["active", "=", true]], CLIENT_FIELDS, 2);
+      if (rows.length !== 1 && !code && name) rows = await odoo.searchRead(session, "res.partner", [["name", "=", name], ["active", "=", true]], CLIENT_FIELDS, 2);
       if (rows.length === 1) onOpenClient(rows[0]);
+      else if (rows.length > 1) onToast("Plusieurs clients ont ce code — ouvre-le via la recherche", "info");
       else onToast("Client introuvable pour ce RDV", "info");
     } catch {
       onToast("Erreur lors de l'ouverture du client", "error");
