@@ -49,17 +49,19 @@ export function useNetwork(pollMs = 30000): NetworkState {
   const mounted = useRef(true);
 
   const run = useCallback(async () => {
-    // Si le navigateur est certain d'être hors ligne, inutile de pinger.
+    // Si le navigateur est certain d'être hors ligne, c'est fiable → hors ligne.
     if (typeof navigator !== "undefined" && !navigator.onLine) {
       if (mounted.current) setOnline(false);
       return;
     }
+    // navigator dit "en ligne" : on le croit tout de suite (évite un faux hors-ligne
+    // le temps du ping). Le ping ne fait que confirmer/rafraîchir en arrière-plan
+    // et ne repasse JAMAIS l'app hors ligne à lui seul (un ping peut échouer pour
+    // du CORS/préflight alors que le réseau est bien là).
+    if (mounted.current) setOnline(true);
     setChecking(true);
-    const ok = await probeConnection();
-    if (mounted.current) {
-      setOnline(ok);
-      setChecking(false);
-    }
+    try { await probeConnection(); } catch {}
+    if (mounted.current) setChecking(false);
   }, []);
 
   useEffect(() => {

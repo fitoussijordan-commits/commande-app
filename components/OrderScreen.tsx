@@ -884,6 +884,10 @@ function HomeScreen({ session, onNewOrder, onOpenClient, onToast }: {
   const [weekOffset, setWeekOffset] = useState(0); // 0 = semaine en cours, ±1 = semaine précédente/suivante
   const [selectedEvent, setSelectedEvent] = useState<any>(null); // RDV ouvert en aperçu
   const [openingClient, setOpeningClient] = useState(false);
+  const [editingEvent, setEditingEvent] = useState<any>(null); // RDV en cours de modification
+  const [cancelling, setCancelling] = useState(false);
+  const [reloadKey, setReloadKey] = useState(0); // force le rechargement du planning
+  const [newAdminRdv, setNewAdminRdv] = useState(false); // nouveau RDV sans client (administratif)
 
   // ── Swipe tactile gauche/droite pour changer de semaine ──────────────────
   const [dragX, setDragX] = useState(0);
@@ -940,7 +944,7 @@ function HomeScreen({ session, onNewOrder, onOpenClient, onToast }: {
         sunday.setDate(monday.getDate() + 7);
         const rows = await odoo.searchRead(session, "calendar.event",
           [["user_id", "=", session.uid], ["start", "<", toOdooDateStr(sunday)], ["stop", ">=", toOdooDateStr(monday)]],
-          ["id", "name", "start", "stop", "location", "description", "x_studio_code_client_cli_calendar"], 200, "start asc");
+          ["id", "name", "start", "stop", "location", "description", "x_studio_code_client_cli_calendar", "x_studio_annul"], 200, "start asc");
         setEvents(rows);
       } catch {
         setEvents([]);
@@ -948,7 +952,25 @@ function HomeScreen({ session, onNewOrder, onOpenClient, onToast }: {
       setLoading(false);
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [session, monday]);
+  }, [session, monday, reloadKey]);
+
+  // Annule un RDV : marque le champ Odoo x_studio_annul = true (garde la trace).
+  const cancelEvent = async (e: any) => {
+    setCancelling(true);
+    try {
+      try {
+        await odoo.write(session, "calendar.event", [e.id], { x_studio_annul: true });
+        onToast("RDV annulé", "success");
+      } catch {
+        await sync.queueAppointmentCancel(e.id, e.name || "RDV");
+        onToast("Annulation enregistrée hors ligne — sera envoyée au retour du réseau", "info");
+      }
+      setSelectedEvent(null);
+      setReloadKey(k => k + 1);
+    } finally {
+      setCancelling(false);
+    }
+  };
 
   const eventsByDay = days.map(d => events.filter(e => sameDay(odooToLocalDate(e.start), d)));
   const totalCount = events.length;
@@ -1064,6 +1086,11 @@ function HomeScreen({ session, onNewOrder, onOpenClient, onToast }: {
             style={{ width: 32, height: 32, borderRadius: "50%", background: C.white, border: `1px solid ${C.border}`, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: C.textSec, boxShadow: C.shadow }}>
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M9 18l6-6-6-6"/></svg>
           </button>
+          <button onClick={() => setNewAdminRdv(true)} title="Nouveau rendez-vous"
+            style={{ display: "flex", alignItems: "center", gap: 6, height: 34, padding: "0 14px", borderRadius: 999, background: C.teal, color: "#fff", border: "none", cursor: "pointer", fontFamily: "inherit", fontSize: 13, fontWeight: 700, boxShadow: "0 8px 18px rgba(13,148,136,0.25)" }}>
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M12 5v14M5 12h14"/></svg>
+            RDV
+          </button>
         </div>
       </div>
 
@@ -1108,11 +1135,12 @@ function HomeScreen({ session, onNewOrder, onOpenClient, onToast }: {
                   const col = EVENT_COLORS[idx % EVENT_COLORS.length];
                   return (
                     <button key={e.id} onClick={() => setSelectedEvent(e)} title="Voir le rendez-vous"
-                      style={{ background: col.bg, border: "none", borderRadius: 10, padding: "8px 10px", cursor: "pointer", fontFamily: "inherit", textAlign: "left" as const, width: "100%", boxShadow: isToday ? "0 4px 10px rgba(15,23,42,0.12)" : "none" }}>
-                      <div style={{ fontSize: 10, fontWeight: 800, color: col.text }}>
+                      style={{ background: e.x_studio_annul ? "#f8fafc" : col.bg, border: "none", borderRadius: 10, padding: "8px 10px", cursor: "pointer", fontFamily: "inherit", textAlign: "left" as const, width: "100%", boxShadow: isToday ? "0 4px 10px rgba(15,23,42,0.12)" : "none", opacity: e.x_studio_annul ? 0.6 : 1 }}>
+                      <div style={{ fontSize: 10, fontWeight: 800, color: e.x_studio_annul ? C.muted : col.text }}>
                         {odooToLocalDate(e.start).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}
+                        {e.x_studio_annul && " · Annulé"}
                       </div>
-                      <div style={{ fontSize: 11, fontWeight: 700, color: C.text, marginTop: 2, lineHeight: 1.3, overflow: "hidden", display: "-webkit-box" as const, WebkitLineClamp: 2, WebkitBoxOrient: "vertical" as const }}>{e.name}</div>
+                      <div style={{ fontSize: 11, fontWeight: 700, color: C.text, marginTop: 2, lineHeight: 1.3, overflow: "hidden", display: "-webkit-box" as const, WebkitLineClamp: 2, WebkitBoxOrient: "vertical" as const, textDecoration: e.x_studio_annul ? "line-through" : "none" }}>{e.name}</div>
                     </button>
                   );
                 })}
@@ -1155,20 +1183,56 @@ function HomeScreen({ session, onNewOrder, onOpenClient, onToast }: {
                   <div style={{ background: C.bg, borderRadius: 12, padding: "12px 14px", fontSize: 13, color: C.textSec, lineHeight: 1.5, whiteSpace: "pre-wrap" as const }}>{notes}</div>
                 )}
               </div>
-              <div style={{ display: "flex", gap: 10, padding: "0 24px 22px" }}>
+              <div style={{ display: "flex", flexDirection: "column" as const, gap: 10, padding: "0 24px 22px" }}>
+                {(clientName || clientRef) && (
+                  <button onClick={() => openEventClient(e)} disabled={openingClient}
+                    style={{ padding: "13px 18px", background: openingClient ? C.muted : C.teal, color: "#fff", border: "none", borderRadius: 12, fontSize: 14, fontWeight: 700, cursor: openingClient ? "default" : "pointer", fontFamily: "inherit" }}>
+                    {openingClient ? "Ouverture…" : "Ouvrir la fiche client"}
+                  </button>
+                )}
+                <div style={{ display: "flex", gap: 10 }}>
+                  <button onClick={() => { setEditingEvent(e); setSelectedEvent(null); }}
+                    style={{ flex: 1, padding: "12px", background: C.white, color: C.tealDark, border: `1.5px solid ${C.tealMid}`, borderRadius: 12, fontSize: 14, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+                    Modifier
+                  </button>
+                  {e.x_studio_annul ? (
+                    <div style={{ flex: 1, padding: "12px", textAlign: "center" as const, color: C.muted, fontSize: 13, fontWeight: 600 }}>Déjà annulé</div>
+                  ) : (
+                    <button onClick={() => cancelEvent(e)} disabled={cancelling}
+                      style={{ flex: 1, padding: "12px", background: cancelling ? C.muted : "#fef2f2", color: "#dc2626", border: "1.5px solid #fecaca", borderRadius: 12, fontSize: 14, fontWeight: 700, cursor: cancelling ? "default" : "pointer", fontFamily: "inherit" }}>
+                      {cancelling ? "Annulation…" : "Annuler le RDV"}
+                    </button>
+                  )}
+                </div>
                 <button onClick={() => setSelectedEvent(null)}
-                  style={{ flex: "0 0 auto", padding: "13px 18px", background: C.bg, color: C.textSec, border: `1px solid ${C.border}`, borderRadius: 12, fontSize: 14, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>
+                  style={{ padding: "11px", background: "transparent", color: C.muted, border: "none", borderRadius: 12, fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>
                   Fermer
-                </button>
-                <button onClick={() => openEventClient(e)} disabled={openingClient}
-                  style={{ flex: 1, padding: "13px 18px", background: openingClient ? C.muted : C.teal, color: "#fff", border: "none", borderRadius: 12, fontSize: 14, fontWeight: 700, cursor: openingClient ? "default" : "pointer", fontFamily: "inherit" }}>
-                  {openingClient ? "Ouverture…" : "Ouvrir la fiche client"}
                 </button>
               </div>
             </div>
           </div>
         );
       })()}
+
+      {/* Modification d'un RDV (réutilise le modal de création en mode édition) */}
+      {editingEvent && (
+        <AppointmentModal
+          session={session}
+          event={editingEvent}
+          onClose={() => setEditingEvent(null)}
+          onToast={(m, t) => { onToast(m, t); setReloadKey(k => k + 1); }}
+        />
+      )}
+
+      {/* Nouveau RDV administratif (sans client, avec étiquette prédéfinie) */}
+      {newAdminRdv && (
+        <AppointmentModal
+          session={session}
+          adminMode
+          onClose={() => setNewAdminRdv(false)}
+          onToast={(m, t) => { onToast(m, t); setReloadKey(k => k + 1); }}
+        />
+      )}
     </div>
   );
 }

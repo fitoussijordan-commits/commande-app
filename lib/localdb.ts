@@ -130,12 +130,13 @@ export type QueuedOrderStatus = "pending" | "syncing" | "synced" | "error";
 // Type d'élément en file : commande, note client, ou RDV.
 export type QueuedKind = "order" | "note" | "appointment";
 
-// Une action Odoo à rejouer : soit un create, soit un appel de méthode.
+// Une action Odoo à rejouer : create, write (modif), ou appel de méthode.
 export interface QueuedAction {
-  op: "create" | "callMethod";
+  op: "create" | "write" | "callMethod";
   model: string;
-  // create : values ; callMethod : method + args + kwargs
+  // create : values ; write : ids + values ; callMethod : method + args + kwargs
   values?: any;
+  ids?: number[];
   method?: string;
   args?: any[];
   kwargs?: any;

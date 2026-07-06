@@ -67,19 +67,47 @@ function defaultStartLocal(): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
+// Étiquettes proposées pour les RDV administratifs (sans client). Ajuste librement.
+const ADMIN_TAGS = ["Administratif", "Formation", "Réunion", "Congé", "Déplacement", "Autre"];
+
 interface Props {
   session: odoo.OdooSession;
-  client: any; // res.partner sélectionné dans la prise de commande
+  client?: any;      // res.partner (mode création rattachée à un client)
+  event?: any;       // calendar.event existant (mode modification)
+  adminMode?: boolean; // RDV sans client (administratif) avec étiquette
   onClose: () => void;
   onToast: (msg: string, type?: "success" | "error" | "info") => void;
 }
 
-export default function AppointmentModal({ session, client, onClose, onToast }: Props) {
-  const [title, setTitle] = useState(`RDV — ${client?.name || ""}`);
-  const [startLocal, setStartLocal] = useState(defaultStartLocal());
-  const [durationHours, setDurationHours] = useState(1);
-  const [location, setLocation] = useState(client?.city || "");
-  const [note, setNote] = useState("");
+// UTC Odoo "YYYY-MM-DD HH:MM:SS" → valeur locale pour <input type="datetime-local">.
+function odooUTCToLocalInput(s: string): string {
+  const d = new Date(s.replace(" ", "T") + "Z");
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+export default function AppointmentModal({ session, client, event, adminMode, onClose, onToast }: Props) {
+  const isEdit = Boolean(event);
+  const [adminTag, setAdminTag] = useState(ADMIN_TAGS[0]);
+
+  // En édition : pré-remplissage depuis le RDV existant.
+  const initStart = event?.start ? odooUTCToLocalInput(event.start) : defaultStartLocal();
+  const initDuration = (event?.start && event?.stop)
+    ? Math.max(0.25, (new Date(event.stop.replace(" ", "T") + "Z").getTime() - new Date(event.start.replace(" ", "T") + "Z").getTime()) / 3600000)
+    : 1;
+  const initNote = (() => {
+    const d: string = event?.description || "";
+    const parts = d.split(/\n\n/);
+    return parts.length > 1 ? parts.slice(1).join("\n\n").trim() : "";
+  })();
+
+  const [title, setTitle] = useState(
+    event?.name || (adminMode ? ADMIN_TAGS[0] : `RDV — ${client?.name || ""}`)
+  );
+  const [startLocal, setStartLocal] = useState(initStart);
+  const [durationHours, setDurationHours] = useState(initDuration);
+  const [location, setLocation] = useState(event?.location || client?.city || "");
+  const [note, setNote] = useState(initNote);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
@@ -93,21 +121,51 @@ export default function AppointmentModal({ session, client, onClose, onToast }: 
       if (isNaN(start.getTime())) throw new Error("Date invalide");
       const stop = new Date(start.getTime() + durationHours * 3600 * 1000);
 
-      // Valeurs de base du RDV (sans les enrichissements qui nécessitent Odoo).
-      // On inclut le CODE client (ref) entre parenthèses : ça permet d'ouvrir la
-      // fiche client de façon fiable depuis le planning (recherche par ref).
-      const codeSuffix = client?.ref ? ` (${client.ref})` : "";
+      // Description : en création on la construit à partir du client ; en édition
+      // on conserve la 1ère ligne "Client : ..." d'origine et on remplace la note.
+      let description: string;
+      if (isEdit) {
+        const orig: string = event?.description || "";
+        const clientLine = orig.split(/\n\n/)[0] || "";
+        description = clientLine + (note ? `\n\n${note}` : "");
+      } else {
+        const codeSuffix = client?.ref ? ` (${client.ref})` : "";
+        const clientPart = client?.name
+          ? `Client : ${client.name}${codeSuffix}${client?.phone ? ` — ${client.phone}` : ""}`
+          : "";
+        description = clientPart + (clientPart && note ? "\n\n" : "") + (note || "");
+      }
+
       const baseValues: any = {
         name: title.trim(),
         start: toOdooUTC(start),
         stop: toOdooUTC(stop),
         location: location.trim(),
-        description: `Client : ${client?.name || ""}${codeSuffix}${client?.phone ? ` — ${client.phone}` : ""}${note ? `\n\n${note}` : ""}`,
+        description,
         user_id: session.uid,
-        // Champ Studio Odoo (calendar.event) : code client, rempli automatiquement.
-        ...(client?.ref ? { x_studio_code_client_cli_calendar: client.ref } : {}),
+        // Code client (uniquement si rattaché à un client).
+        ...(!isEdit && client?.ref ? { x_studio_code_client_cli_calendar: client.ref } : {}),
       };
 
+      // ── MODE ÉDITION : write sur le RDV existant ──
+      if (isEdit) {
+        try {
+          const categId = await getOrCreateTagForTitle(session, title);
+          await odoo.write(session, "calendar.event", [event.id], {
+            ...baseValues,
+            ...(categId ? { categ_ids: [[6, 0, [categId]]] } : {}),
+          });
+          onToast("RDV modifié", "success");
+        } catch {
+          await sync.queueAppointmentEdit(event.id, title.trim(), baseValues);
+          onToast("Modification enregistrée hors ligne — sera envoyée au retour du réseau", "info");
+        }
+        onClose();
+        setSaving(false);
+        return;
+      }
+
+      // ── MODE CRÉATION ──
       try {
         const [organizerPartnerId, categId] = await Promise.all([
           getCurrentUserPartnerId(session),
@@ -122,12 +180,12 @@ export default function AppointmentModal({ session, client, onClose, onToast }: 
         onToast("RDV créé dans le calendrier Odoo", "success");
       } catch {
         // Hors ligne → mise en file (version simplifiée, sans tag/organisateur résolus).
-        await sync.queueAppointment(client?.name || "client", baseValues);
+        await sync.queueAppointment(client?.name || title.trim(), baseValues);
         onToast("RDV enregistré hors ligne — sera créé au retour du réseau", "info");
       }
       onClose();
     } catch (e: any) {
-      setError(e.message || "Erreur lors de la création du RDV");
+      setError(e.message || (isEdit ? "Erreur lors de la modification" : "Erreur lors de la création du RDV"));
     }
     setSaving(false);
   };
@@ -143,13 +201,34 @@ export default function AppointmentModal({ session, client, onClose, onToast }: 
             </svg>
           </div>
           <div>
-            <div style={{ fontSize: 16, fontWeight: 800, color: C.text }}>Prendre un RDV</div>
-            <div style={{ fontSize: 12, color: C.muted }}>{client?.name}</div>
+            <div style={{ fontSize: 16, fontWeight: 800, color: C.text }}>
+              {isEdit ? "Modifier le RDV" : adminMode ? "RDV administratif" : "Prendre un RDV"}
+            </div>
+            <div style={{ fontSize: 12, color: C.muted }}>{client?.name || (adminMode ? "Sans client" : event?.name || "")}</div>
           </div>
         </div>
 
         {error && (
           <div style={{ background: C.redSoft, color: C.red, borderRadius: 10, padding: "10px 14px", fontSize: 13, marginBottom: 14 }}>{error}</div>
+        )}
+
+        {adminMode && (
+          <Field label="Étiquette">
+            <div style={{ display: "flex", flexWrap: "wrap" as const, gap: 8 }}>
+              {ADMIN_TAGS.map(tag => (
+                <button key={tag} type="button"
+                  onClick={() => { setAdminTag(tag); setTitle(tag); }}
+                  style={{
+                    padding: "7px 14px", borderRadius: 999, fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit",
+                    background: adminTag === tag ? C.teal : C.white,
+                    color: adminTag === tag ? "#fff" : C.textSec,
+                    border: `1.5px solid ${adminTag === tag ? C.teal : C.border}`,
+                  }}>
+                  {tag}
+                </button>
+              ))}
+            </div>
+          </Field>
         )}
 
         <Field label="Titre">
@@ -188,7 +267,7 @@ export default function AppointmentModal({ session, client, onClose, onToast }: 
             Annuler
           </button>
           <button type="submit" disabled={saving} style={{ flex: 1, padding: "12px", background: saving ? C.muted : C.teal, color: "#fff", border: "none", borderRadius: 12, fontSize: 14, fontWeight: 700, cursor: saving ? "default" : "pointer", fontFamily: "inherit" }}>
-            {saving ? "Création…" : "Créer le RDV"}
+            {saving ? "Enregistrement…" : (isEdit ? "Enregistrer" : "Créer le RDV")}
           </button>
         </div>
       </form>

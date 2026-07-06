@@ -1,3 +1,5 @@
+import "./globals.css";
+
 export const metadata = {
   title: "Prise de commande",
   description: "Outil de prise de commande — connexion directe Odoo",
@@ -16,21 +18,6 @@ export const viewport = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="fr">
-      <head>
-        <style>{`
-          :root { --sat: env(safe-area-inset-top); --sab: env(safe-area-inset-bottom); }
-          html, body { margin: 0; }
-          /* Réserve la barre de statut iOS en haut et l'indicateur home en bas */
-          body {
-            padding-top: env(safe-area-inset-top);
-            padding-bottom: env(safe-area-inset-bottom);
-            padding-left: env(safe-area-inset-left);
-            padding-right: env(safe-area-inset-right);
-            box-sizing: border-box;
-            background: #f8fafc;
-          }
-        `}</style>
-      </head>
       <body style={{ margin: 0 }}>{children}</body>
     </html>
   );

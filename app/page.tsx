@@ -80,10 +80,49 @@ function ToastStack({ toasts, onDismiss }: { toasts: Toast[]; onDismiss: (id: nu
   );
 }
 
+// ── Écran d'accueil (splash) au lancement ────────────────────────────────────
+// Logo Dr. Hauschka + « Bonjour [prénom] ». Animation par transition au montage
+// (pas de <style>/@keyframes injectés — plus robuste au démarrage natif).
+function Splash({ name, hiding }: { name?: string; hiding: boolean }) {
+  const firstName = name ? name.split(" ")[0] : "";
+  const [entered, setEntered] = useState(false);
+  useEffect(() => {
+    const t = setTimeout(() => setEntered(true), 30);
+    return () => clearTimeout(t);
+  }, []);
+  return (
+    <div style={{
+      position: "fixed", inset: 0, zIndex: 1000, background: "#ffffff",
+      display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+      fontFamily: "'DM Sans', sans-serif",
+      opacity: hiding ? 0 : 1, transition: "opacity 0.5s ease",
+      paddingTop: "env(safe-area-inset-top)", paddingBottom: "env(safe-area-inset-bottom)",
+    }}>
+      <div style={{
+        opacity: entered ? 1 : 0,
+        transform: entered ? "scale(1)" : "scale(0.85)",
+        transition: "opacity 0.7s ease, transform 0.7s cubic-bezier(0.22,1,0.36,1)",
+        display: "flex", flexDirection: "column", alignItems: "center",
+      }}>
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src="/logo-full.png" alt="Dr. Hauschka" width={240}
+          style={{ objectFit: "contain", height: "auto", maxWidth: "70vw" }} />
+        {firstName && (
+          <div style={{ marginTop: 24, fontSize: 17, fontWeight: 600, color: "#0d9488" }}>
+            Bonjour {firstName}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export default function HomePage() {
   const [session, setSession] = useState<odoo.OdooSession | null>(null);
   const [ready, setReady] = useState(false);
   const [toasts, setToasts] = useState<Toast[]>([]);
+  const [showSplash, setShowSplash] = useState(true);
+  const [splashHiding, setSplashHiding] = useState(false);
 
   const toast = useCallback((msg: string, type: ToastType = "info") => {
     const id = Date.now() + Math.random();
@@ -100,6 +139,13 @@ export default function HomePage() {
       if (raw) setSession(JSON.parse(raw));
     } catch {}
     setReady(true);
+  }, []);
+
+  // Écran d'accueil : visible ~1,6 s, puis fondu de sortie.
+  useEffect(() => {
+    const t1 = setTimeout(() => setSplashHiding(true), 1600);
+    const t2 = setTimeout(() => setShowSplash(false), 2150);
+    return () => { clearTimeout(t1); clearTimeout(t2); };
   }, []);
 
   // Persiste la session dès qu'elle change (login, ou refresh du session_id par lib/odoo.ts)
@@ -137,6 +183,7 @@ export default function HomePage() {
         <LoginScreen onLogin={setSession} />
       )}
       <ToastStack toasts={toasts} onDismiss={dismissToast} />
+      {showSplash && <Splash name={session?.name} hiding={splashHiding} />}
     </ErrorBoundary>
   );
 }

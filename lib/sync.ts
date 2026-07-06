@@ -355,6 +355,24 @@ export async function queueAppointment(clientName: string, values: any): Promise
   });
 }
 
+// Modification d'un RDV existant (hors ligne → rejouée au retour réseau).
+export async function queueAppointmentEdit(eventId: number, label: string, values: any): Promise<number> {
+  return db.enqueueAction({
+    kind: "appointment",
+    label: `Modif RDV — ${label}`,
+    actions: [{ op: "write", model: "calendar.event", ids: [eventId], values }],
+  });
+}
+
+// Annulation d'un RDV (marque le champ Odoo x_studio_annul = true).
+export async function queueAppointmentCancel(eventId: number, label: string): Promise<number> {
+  return db.enqueueAction({
+    kind: "appointment",
+    label: `Annulation RDV — ${label}`,
+    actions: [{ op: "write", model: "calendar.event", ids: [eventId], values: { x_studio_annul: true } }],
+  });
+}
+
 // RDV créés hors ligne : une automatisation Odoo Studio (calendar.event) lit
 // record.categ_ids[0] et plante en IndexError si le RDV n'a pas d'étiquette.
 // En ligne, AppointmentModal crée une étiquette portant le titre AVANT le create ;
@@ -415,6 +433,8 @@ export async function flushQueue(
                 : a.values;
               const rid = await odoo.create(session, a.model, values);
               resultIds.push(rid);
+            } else if (a.op === "write") {
+              await odoo.write(session, a.model, a.ids || [], a.values || {});
             } else if (a.op === "callMethod") {
               await odoo.callMethod(session, a.model, a.method!, a.args || [], a.kwargs || {});
             }
