@@ -890,38 +890,61 @@ function HomeScreen({ session, onNewOrder, onOpenClient, onToast }: {
   const [newAdminRdv, setNewAdminRdv] = useState(false); // nouveau RDV sans client (administratif)
 
   // ── Swipe tactile gauche/droite pour changer de semaine ──────────────────
-  const [dragX, setDragX] = useState(0);
-  const [dragging, setDragging] = useState(false);
-  const touchRef = useRef<{ x: number; y: number; locked: null | "h" | "v" }>({ x: 0, y: 0, locked: null });
+  // Perf : on manipule directement le transform du DOM (via gridRef) pendant le
+  // glissement, sans setState → aucun re-render par frame = suivi du doigt fluide.
+  const gridRef = useRef<HTMLDivElement>(null);
+  const touchRef = useRef<{ x: number; y: number; dx: number; locked: null | "h" | "v" }>({ x: 0, y: 0, dx: 0, locked: null });
+  const SWIPE_EASE = "transform 0.32s cubic-bezier(0.22,1,0.36,1)";
 
   const onTouchStart = (e: React.TouchEvent) => {
     const t = e.touches[0];
-    touchRef.current = { x: t.clientX, y: t.clientY, locked: null };
-    setDragging(true);
+    touchRef.current = { x: t.clientX, y: t.clientY, dx: 0, locked: null };
+    if (gridRef.current) gridRef.current.style.transition = "none";
   };
   const onTouchMove = (e: React.TouchEvent) => {
     const t = e.touches[0];
     const dx = t.clientX - touchRef.current.x;
     const dy = t.clientY - touchRef.current.y;
-    // Détermine l'intention (horizontale vs verticale) une seule fois.
     if (touchRef.current.locked === null && (Math.abs(dx) > 8 || Math.abs(dy) > 8)) {
       touchRef.current.locked = Math.abs(dx) > Math.abs(dy) ? "h" : "v";
     }
     if (touchRef.current.locked === "h") {
-      // Résistance élastique douce.
-      setDragX(dx);
+      touchRef.current.dx = dx;
+      if (gridRef.current) gridRef.current.style.transform = `translateX(${dx}px)`;
     }
   };
   const onTouchEnd = () => {
-    const dx = dragX;
-    setDragging(false);
-    const threshold = 60;
-    if (touchRef.current.locked === "h" && Math.abs(dx) > threshold) {
-      // Glisser vers la droite = semaine précédente ; vers la gauche = suivante.
-      setWeekOffset(o => o + (dx > 0 ? -1 : 1));
-    }
-    setDragX(0);
+    const dx = touchRef.current.dx;
+    const el = gridRef.current;
+    const locked = touchRef.current.locked;
     touchRef.current.locked = null;
+    touchRef.current.dx = 0;
+    if (!el) return;
+    const width = el.offsetWidth || 1;
+    const threshold = Math.min(80, width * 0.18);
+
+    if (locked === "h" && Math.abs(dx) > threshold) {
+      const dir = dx > 0 ? 1 : -1; // 1 = vers la droite (semaine précédente)
+      // 1) glisse la semaine courante complètement hors écran (transition douce)
+      el.style.transition = SWIPE_EASE;
+      el.style.transform = `translateX(${dir * width}px)`;
+      // 2) après l'anim : change de semaine et réinjecte la grille depuis l'autre bord
+      window.setTimeout(() => {
+        setWeekOffset(o => o + (dir > 0 ? -1 : 1));
+        if (gridRef.current) {
+          gridRef.current.style.transition = "none";
+          gridRef.current.style.transform = `translateX(${-dir * width}px)`;
+          // force un reflow puis anime jusqu'au centre → la nouvelle semaine entre
+          void gridRef.current.offsetWidth;
+          gridRef.current.style.transition = SWIPE_EASE;
+          gridRef.current.style.transform = "translateX(0px)";
+        }
+      }, 320);
+    } else {
+      // pas assez glissé → retour élastique au centre
+      el.style.transition = SWIPE_EASE;
+      el.style.transform = "translateX(0px)";
+    }
   };
 
   const monday = useMemo(() => {
@@ -1096,6 +1119,7 @@ function HomeScreen({ session, onNewOrder, onOpenClient, onToast }: {
 
       {/* Vue semaine — 7 colonnes façon cartes, glissables gauche/droite */}
       <div
+        ref={gridRef}
         onTouchStart={onTouchStart}
         onTouchMove={onTouchMove}
         onTouchEnd={onTouchEnd}
@@ -1103,8 +1127,8 @@ function HomeScreen({ session, onNewOrder, onOpenClient, onToast }: {
           flex: 1,
           display: "grid", gridTemplateColumns: "repeat(7, minmax(120px, 1fr))", gap: 12,
           alignItems: "stretch",
-          transform: `translateX(${dragX}px)`,
-          transition: dragging ? "none" : "transform 0.28s cubic-bezier(0.22,1,0.36,1)",
+          transform: "translateX(0px)",
+          willChange: "transform",
           touchAction: "pan-y" as const,
         }}
       >
