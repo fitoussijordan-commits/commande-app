@@ -1985,6 +1985,14 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
   }, 0);
   const netTotal = cartTotal - discountTotal;
 
+  // Ruptures de stock : produits dont la quantité commandée dépasse le stock
+  // prévisionnel (virtual_available). Bloque la création du devis.
+  const overStockItems = cartItems.filter(i => {
+    const stock = Math.floor(i.product.virtual_available || 0);
+    return i.qty > stock;
+  });
+  const hasStockIssue = overStockItems.length > 0;
+
   return (
     <div style={{ flex: 1, display: "flex", overflow: "hidden", minHeight: 0 }}>
 
@@ -2204,11 +2212,25 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
               const pct = lineDiscounts[item.product.id] || 0;
               const gross = item.qty * item.unitPrice;
               const net = gross * (1 - pct / 100);
+              // Prix catalogue d'origine (avant pricelist client) pour affichage barré.
+              const catalog = item.product.lst_price || 0;
+              const hasPricelistDiscount = catalog > 0 && catalog - item.unitPrice > 0.01;
+              const pricelistPct = hasPricelistDiscount ? Math.round((1 - item.unitPrice / catalog) * 100) : 0;
               return (
                 <div key={item.product.id} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8, padding: "8px 8px", background: C.bg, borderRadius: 10 }}>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ fontSize: 12, fontWeight: 700, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>{item.product.name}</div>
-                    <div style={{ fontSize: 11, color: C.muted }}>{item.qty} × {fmtPrice(item.unitPrice)}</div>
+                    <div style={{ fontSize: 11, color: C.muted, display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" as const }}>
+                      <span>{item.qty} × {fmtPrice(item.unitPrice)}</span>
+                      {hasPricelistDiscount && (
+                        <span style={{ color: C.muted, textDecoration: "line-through" }}>{fmtPrice(catalog)}</span>
+                      )}
+                      {(pricelistPct > 0 || pct > 0) && (
+                        <span style={{ background: C.orangeSoft, color: C.orange, borderRadius: 5, padding: "1px 6px", fontWeight: 700, fontSize: 10 }}>
+                          −{Math.min(100, pricelistPct + pct)}%
+                        </span>
+                      )}
+                    </div>
                   </div>
                   <div style={{ display: "flex", alignItems: "center", gap: 4, flexShrink: 0 }}>
                     <button onClick={() => onQtyChange(item.product, item.qty - 1)} style={{ width: 36, height: 36, borderRadius: 8, background: C.redSoft, border: "none", cursor: "pointer", color: C.red, fontSize: 17, fontWeight: 700, lineHeight: 1 }}>−</button>
@@ -2263,6 +2285,20 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
 
         </div>
 
+        {/* Alerte rupture de stock — bloque la création du devis */}
+        {hasStockIssue && (
+          <div style={{ margin: "0 12px 8px", padding: "10px 12px", background: C.redSoft, border: `1px solid ${C.red}44`, borderRadius: 12 }}>
+            <div style={{ fontSize: 11, fontWeight: 800, color: C.red, marginBottom: 4, display: "flex", alignItems: "center", gap: 6 }}>
+              <Icon name="package" size={13} /> Stock insuffisant
+            </div>
+            {overStockItems.map(i => (
+              <div key={i.product.id} style={{ fontSize: 11, color: C.red, marginBottom: 2 }}>
+                {i.product.name} — commandé {i.qty}, dispo {Math.floor(i.product.virtual_available || 0)}
+              </div>
+            ))}
+          </div>
+        )}
+
         {/* Bloc récap sombre — note + total + validation */}
         <div style={{ padding: "0 12px 12px" }}>
           <div style={{ background: "#0f172a", borderRadius: 18, padding: "14px 14px 16px", boxShadow: "0 12px 28px rgba(15,23,42,0.35)" }}>
@@ -2288,10 +2324,11 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
 
             {/* Le bouton annonce la mise en file AVANT la validation quand on est hors
                  ligne — pas de surprise après coup. */}
-            <button onClick={onValidate} disabled={submitting || cartCount === 0}
-              style={{ width: "100%", padding: "14px 0", background: cartCount === 0 ? "rgba(255,255,255,0.12)" : submitting ? "rgba(94,234,212,0.4)" : "#2dd4bf", color: cartCount === 0 ? "rgba(255,255,255,0.4)" : "#0f172a", border: "none", borderRadius: 999, fontSize: 14, fontWeight: 800, cursor: cartCount === 0 ? "default" : "pointer", fontFamily: "inherit", transition: "all 0.2s" }}>
+            <button onClick={onValidate} disabled={submitting || cartCount === 0 || hasStockIssue}
+              style={{ width: "100%", padding: "14px 0", background: (cartCount === 0 || hasStockIssue) ? "rgba(255,255,255,0.12)" : submitting ? "rgba(94,234,212,0.4)" : "#2dd4bf", color: (cartCount === 0 || hasStockIssue) ? "rgba(255,255,255,0.4)" : "#0f172a", border: "none", borderRadius: 999, fontSize: 14, fontWeight: 800, cursor: (cartCount === 0 || hasStockIssue) ? "default" : "pointer", fontFamily: "inherit", transition: "all 0.2s" }}>
               {submitting ? "Création…"
                 : cartCount === 0 ? "Panier vide"
+                : hasStockIssue ? "Stock insuffisant — ajuste les quantités"
                 : !navOnline ? "Enregistrer hors ligne · envoi auto"
                 : `Créer le devis${freeItems.length > 0 ? " + BC gratuit" : ""} →`}
             </button>
