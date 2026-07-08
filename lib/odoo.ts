@@ -92,8 +92,12 @@ async function call(session: OdooSession, endpoint: string, params: any) {
   return result;
 }
 
+// Contexte imposant la langue française pour toutes les lectures : les champs
+// traduits (ex: nom de pricelist "WALAOFFERT_2026") sortent en FR, pas en EN.
+const FR_CTX = { lang: "fr_FR" };
+
 export async function searchRead(session: OdooSession, model: string, domain: any[], fields: string[], limit = 0, order = "") {
-  return call(session, "/web/dataset/call_kw", { model, method: "search_read", args: [domain], kwargs: { fields, limit, order } });
+  return call(session, "/web/dataset/call_kw", { model, method: "search_read", args: [domain], kwargs: { fields, limit, order, context: FR_CTX } });
 }
 
 export async function create(session: OdooSession, model: string, values: any) {
