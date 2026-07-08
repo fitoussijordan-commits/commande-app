@@ -2313,21 +2313,41 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
                 )}
               </div>
               {giftItems.map((g, i) => (
-                <div key={i} style={{ marginBottom: 6, paddingBottom: 6, borderBottom: i < giftItems.length - 1 ? `1px solid ${C.green}22` : "none" }}>
-                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6 }}>
-                    <span style={{ fontSize: 11, color: C.text, fontWeight: 600, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>
-                      <strong>{g.qty}×</strong> {g.product.name}
-                    </span>
+                <div key={i} style={{ marginBottom: 6, paddingBottom: 8, borderBottom: i < giftItems.length - 1 ? `1px solid ${C.green}22` : "none" }}>
+                  {/* Ligne façon produit : nom complet + croix */}
+                  <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 6 }}>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 11.5, color: C.text, fontWeight: 700, lineHeight: 1.3 }}>{g.product.name}</div>
+                      {g.product.default_code && (
+                        <div style={{ fontSize: 9.5, color: C.muted, fontFamily: "monospace", marginTop: 1 }}>{g.product.default_code}</div>
+                      )}
+                    </div>
                     <button onClick={() => setGiftItems(prev => prev.filter((_, j) => j !== i))} title="Retirer"
                       style={{ background: "none", border: "none", cursor: "pointer", color: C.red, fontSize: 15, lineHeight: 1, flexShrink: 0 }}>✕</button>
                   </div>
+                  {/* Stepper − / + comme les produits du panier + libellé "offert" */}
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 5 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                      <button onClick={() => setGiftItems(prev => prev.map((x, j) => j === i ? { ...x, qty: Math.max(1, x.qty - 1) } : x))}
+                        style={{ width: 30, height: 30, borderRadius: 8, background: C.redSoft, border: "none", cursor: "pointer", color: C.red, fontSize: 16, fontWeight: 700, lineHeight: 1 }}>−</button>
+                      <span style={{ minWidth: 26, textAlign: "center" as const, fontSize: 13, fontWeight: 800, color: C.text }}>{g.qty}</span>
+                      <button onClick={() => setGiftItems(prev => prev.map((x, j) => j === i ? { ...x, qty: x.qty + 1 } : x))}
+                        style={{ width: 30, height: 30, borderRadius: 8, background: C.greenSoft, border: `1px solid ${C.green}44`, cursor: "pointer", color: C.green, fontSize: 16, fontWeight: 700, lineHeight: 1 }}>+</button>
+                    </div>
+                    <span style={{ fontSize: 11, fontWeight: 700, color: C.green }}>offert · 0,00 €</span>
+                  </div>
                   <select value={g.type} onChange={e => setGiftItems(prev => prev.map((x, j) => j === i ? { ...x, type: e.target.value } : x))}
-                    style={{ width: "100%", marginTop: 4, padding: "5px 6px", fontSize: 11, borderRadius: 6, border: `1px solid ${g.type ? C.green : C.red}`, background: "#fff", color: C.text, fontFamily: "inherit" }}>
+                    style={{ width: "100%", marginTop: 5, padding: "5px 6px", fontSize: 11, borderRadius: 6, border: `1px solid ${g.type ? C.green : C.red}`, background: "#fff", color: C.text, fontFamily: "inherit" }}>
                     <option value="">— Type de gratuité —</option>
                     {freeTypes.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
                   </select>
                 </div>
               ))}
+              {/* Récap gratuités */}
+              <div style={{ marginTop: 6, paddingTop: 6, borderTop: `1px solid ${C.green}33`, fontSize: 11, fontWeight: 700, color: C.green, display: "flex", justifyContent: "space-between" }}>
+                <span>{giftItems.reduce((s, g) => s + g.qty, 0)} article{giftItems.reduce((s, g) => s + g.qty, 0) > 1 ? "s" : ""} offert{giftItems.reduce((s, g) => s + g.qty, 0) > 1 ? "s" : ""}</span>
+                <span>0,00 €</span>
+              </div>
             </div>
           )}
 
