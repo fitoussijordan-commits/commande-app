@@ -268,15 +268,18 @@ function computeFreeItems(cart: Record<number, CartItem>, rules: FreeRule[]): Fr
   return out;
 }
 
-// Résout l'id de l'étiquette Odoo "Validé" (crm.tag, utilisée sur sale.order.tag_ids) — mise en cache
-// au niveau module pour ne faire la recherche qu'une seule fois par session app.
+// Résout l'id de l'étiquette Odoo "Validé DC" (crm.tag, utilisée sur sale.order.tag_ids)
+// — mise en cache au niveau module pour ne la chercher qu'une fois par session.
 let _validatedTagIdCache: number | null | undefined = undefined;
 async function getValidatedTagId(session: odoo.OdooSession): Promise<number | null> {
   if (_validatedTagIdCache !== undefined) return _validatedTagIdCache;
   try {
     const tags = await odoo.searchRead(session, "crm.tag", [["name", "ilike", "valid"]], ["id", "name"], 20);
-    const exact = tags.find((t: any) => (t.name || "").trim().toLowerCase() === "validé");
-    _validatedTagIdCache = exact ? exact.id : (tags[0]?.id ?? null);
+    // Priorité au nom exact "Validé DC"; repli sur "Validé" puis 1er résultat.
+    const norm = (s: string) => (s || "").trim().toLowerCase();
+    const dc = tags.find((t: any) => norm(t.name) === "validé dc");
+    const valide = tags.find((t: any) => norm(t.name) === "validé");
+    _validatedTagIdCache = (dc || valide || tags[0])?.id ?? null;
   } catch {
     // Ne fige PAS le cache (ex. échec réseau hors ligne) : sinon plus aucune
     // commande ne serait étiquetée de toute la session, même en ligne.
@@ -350,6 +353,8 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
   // Gratuités : lignes offertes (produit à 0€ + type_gratuit) + liste des types.
   const [giftItems, setGiftItems] = useState<GiftItem[]>([]);
   const [freeTypes, setFreeTypes] = useState<sync.FreeType[]>([]);
+  // Remise événement Co (10/15%/libre) appliquée sur TOUT le panier (0 = aucune).
+  const [eventDiscount, setEventDiscount] = useState(0);
   const refreshPendingDrafts = useCallback(() => setPendingDrafts(listDrafts()), []);
 
   // D'où vient-on quand on ouvre une fiche client : recherche ou planning.
@@ -438,6 +443,7 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
     setNote("");
     setAppliedPromos({});
     setGiftItems([]);
+    setEventDiscount(0);
     manuallyRemovedRef.current.clear(); // nouvelle commande → réinitialise les retraits manuels
     setResumePrompt(loadDraftForClient(client.id));
     setStep("catalog");
@@ -524,12 +530,16 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
         note: note || "",
         ...tagVals,
         order_line: [
-          ...Object.values(cart).map(item => [0, 0, {
-            product_id: item.product.id,
-            product_uom_qty: item.qty,
-            price_unit: item.unitPrice,
-            ...(lineDiscounts[item.product.id] ? { discount: lineDiscounts[item.product.id] } : {}),
-          }]),
+          ...Object.values(cart).map(item => {
+            // Remise ligne = remise promo Odoo + remise événement Co (cumul, plafonné à 100%).
+            const disc = Math.min(100, (lineDiscounts[item.product.id] || 0) + (eventDiscount || 0));
+            return [0, 0, {
+              product_id: item.product.id,
+              product_uom_qty: item.qty,
+              price_unit: item.unitPrice,
+              ...(disc > 0 ? { discount: disc } : {}),
+            }];
+          }),
           // Produits offerts par une offre marketing → 0€ + type "Gratuités des offres" (auto).
           ...promoFreeLines.map(p => [0, 0, {
             product_id: p.reward.reward_product_id,
@@ -869,7 +879,8 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
           onValidate={handleValidate} submitting={submitting}
           note={note} setNote={setNote} client={client} priceItems={priceItems} onToast={onToast}
           appliedPromos={appliedPromos}
-          giftItems={giftItems} setGiftItems={setGiftItems} freeTypes={freeTypes} />
+          giftItems={giftItems} setGiftItems={setGiftItems} freeTypes={freeTypes}
+          eventDiscount={eventDiscount} setEventDiscount={setEventDiscount} />
       )}
 
       {showAppointment && client && (
@@ -1747,7 +1758,7 @@ function ClientHistory({ session, client }: { session: odoo.OdooSession; client:
 // ═══════════════════════════════════════════════════════════════════════════
 // ÉTAPE 2 — Catalogue + Panier persistant
 // ═══════════════════════════════════════════════════════════════════════════
-function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submitting, note, setNote, client, priceItems, onToast, appliedPromos, giftItems, setGiftItems, freeTypes }: {
+function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submitting, note, setNote, client, priceItems, onToast, appliedPromos, giftItems, setGiftItems, freeTypes, eventDiscount, setEventDiscount }: {
   session: odoo.OdooSession; cart: Record<number, CartItem>;
   onQtyChange: (p: any, q: number, price?: number) => void; freeItems: FreeItem[];
   onValidate: () => void; submitting: boolean;
@@ -1757,6 +1768,7 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
   appliedPromos: Record<number, loyalty.AppliedPromo>;
   giftItems: GiftItem[]; setGiftItems: React.Dispatch<React.SetStateAction<GiftItem[]>>;
   freeTypes: sync.FreeType[];
+  eventDiscount: number; setEventDiscount: React.Dispatch<React.SetStateAction<number>>;
 }) {
   const [smartCats, setSmartCats] = useState<SmartCat[]>([]);
   const [activeCatId, setActiveCatId] = useState<string | null>(null);
@@ -2001,7 +2013,8 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
   const freeCount = freeItems.reduce((s, i) => s + i.qty, 0);
   const lineDiscounts = loyalty.computeLineDiscounts(appliedPromos, cart);
   const discountTotal = cartItems.reduce((s, i) => {
-    const pct = lineDiscounts[i.product.id] || 0;
+    // Remise promo Odoo + remise événement Co, cumulées (plafond 100%).
+    const pct = Math.min(100, (lineDiscounts[i.product.id] || 0) + (eventDiscount || 0));
     return s + (i.qty * i.unitPrice * pct) / 100;
   }, 0);
   const netTotal = cartTotal - discountTotal;
@@ -2242,10 +2255,16 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
               const hasPricelistDiscount = catalog > 0 && catalog - item.unitPrice > 0.01;
               const pricelistPct = hasPricelistDiscount ? Math.round((1 - item.unitPrice / catalog) * 100) : 0;
               return (
-                <div key={item.product.id} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8, padding: "8px 8px", background: C.bg, borderRadius: 10 }}>
+                <div key={item.product.id} style={{ display: "flex", alignItems: "flex-start", gap: 8, marginBottom: 8, padding: "8px 8px", background: C.bg, borderRadius: 10 }}>
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: 12, fontWeight: 700, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>{item.product.name}</div>
-                    <div style={{ fontSize: 11, color: C.muted, display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" as const }}>
+                    {/* Nom complet (retour à la ligne) + code/référence sous le nom */}
+                    <div style={{ fontSize: 12, fontWeight: 700, color: C.text, lineHeight: 1.3 }}>{item.product.name}</div>
+                    {(item.product.default_code || item.product.barcode) && (
+                      <div style={{ fontSize: 10, color: C.muted, fontFamily: "monospace", marginTop: 1 }}>
+                        {item.product.default_code}{item.product.barcode ? ` · ${item.product.barcode}` : ""}
+                      </div>
+                    )}
+                    <div style={{ fontSize: 11, color: C.muted, display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" as const, marginTop: 2 }}>
                       <span>{item.qty} × {fmtPrice(item.unitPrice)}</span>
                       {hasPricelistDiscount && (
                         <span style={{ color: C.muted, textDecoration: "line-through" }}>{fmtPrice(catalog)}</span>
@@ -2341,6 +2360,31 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
           )}
 
         </div>
+
+        {/* Remise événement Co — 10% / 15% / % libre sur tout le panier */}
+        {cartItems.length > 0 && (
+          <div style={{ margin: "0 12px 8px", padding: "8px 10px", background: "#faf5ff", border: "1px solid #e9d5ff", borderRadius: 10 }}>
+            <div style={{ fontSize: 10, fontWeight: 700, color: "#7c3aed", textTransform: "uppercase" as const, letterSpacing: "0.05em", marginBottom: 6, display: "flex", alignItems: "center", gap: 5 }}>
+              <Icon name="tag" size={11} /> Remise événement Co
+            </div>
+            <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+              {[10, 15].map(v => (
+                <button key={v} onClick={() => setEventDiscount(d => d === v ? 0 : v)}
+                  style={{ flex: "0 0 auto", padding: "6px 12px", borderRadius: 8, fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit",
+                    background: eventDiscount === v ? "#7c3aed" : "#fff", color: eventDiscount === v ? "#fff" : "#7c3aed", border: "1.5px solid #c4b5fd" }}>
+                  {v}%
+                </button>
+              ))}
+              <input type="number" min={0} max={100} placeholder="% libre"
+                value={![0, 10, 15].includes(eventDiscount) ? eventDiscount : ""}
+                onChange={e => { const n = Math.max(0, Math.min(100, Number(e.target.value) || 0)); setEventDiscount(n); }}
+                style={{ flex: 1, minWidth: 0, padding: "6px 8px", borderRadius: 8, border: "1.5px solid #c4b5fd", fontSize: 12, fontFamily: "inherit", color: C.text, outline: "none" }} />
+              {eventDiscount > 0 && (
+                <button onClick={() => setEventDiscount(0)} title="Retirer" style={{ background: "none", border: "none", cursor: "pointer", color: C.red, fontSize: 15, flexShrink: 0 }}>✕</button>
+              )}
+            </div>
+          </div>
+        )}
 
         {/* Alerte rupture de stock — bloque la création du devis */}
         {hasStockIssue && (
