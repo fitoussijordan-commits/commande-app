@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import * as odoo from "@/lib/odoo";
 import * as sync from "@/lib/sync";
 
@@ -111,6 +111,17 @@ export default function AppointmentModal({ session, client, event, adminMode, on
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
+  // Type de RDV = étiquette calendar.event.type. Liste chargée depuis Odoo.
+  const [rdvTypes, setRdvTypes] = useState<{ id: number; name: string }[]>([]);
+  const [rdvTypeId, setRdvTypeId] = useState<number | "">(
+    Array.isArray(event?.categ_ids) && event.categ_ids.length ? event.categ_ids[0] : ""
+  );
+  useEffect(() => {
+    odoo.searchRead(session, "calendar.event.type", [], ["id", "name"], 100, "name")
+      .then((rows: any[]) => setRdvTypes(rows))
+      .catch(() => setRdvTypes([]));
+  }, [session]);
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
@@ -147,10 +158,14 @@ export default function AppointmentModal({ session, client, event, adminMode, on
         ...(!isEdit && client?.ref ? { x_studio_code_client_cli_calendar: client.ref } : {}),
       };
 
+      // Type de RDV choisi (étiquette) prioritaire ; sinon étiquette dérivée du titre.
+      const resolveCategId = async (): Promise<number | null> =>
+        (typeof rdvTypeId === "number" ? rdvTypeId : await getOrCreateTagForTitle(session, title));
+
       // ── MODE ÉDITION : write sur le RDV existant ──
       if (isEdit) {
         try {
-          const categId = await getOrCreateTagForTitle(session, title);
+          const categId = await resolveCategId();
           await odoo.write(session, "calendar.event", [event.id], {
             ...baseValues,
             ...(categId ? { categ_ids: [[6, 0, [categId]]] } : {}),
@@ -169,7 +184,7 @@ export default function AppointmentModal({ session, client, event, adminMode, on
       try {
         const [organizerPartnerId, categId] = await Promise.all([
           getCurrentUserPartnerId(session),
-          getOrCreateTagForTitle(session, title),
+          resolveCategId(),
         ]);
         // Important : le CLIENT n'est volontairement PAS ajouté comme participant.
         await odoo.create(session, "calendar.event", {
@@ -233,6 +248,13 @@ export default function AppointmentModal({ session, client, event, adminMode, on
 
         <Field label="Titre">
           <input value={title} onChange={e => setTitle(e.target.value)} style={inputStyle} />
+        </Field>
+
+        <Field label="Type de RDV">
+          <select value={rdvTypeId} onChange={e => setRdvTypeId(e.target.value ? Number(e.target.value) : "")} style={inputStyle}>
+            <option value="">— Choisir un type —</option>
+            {rdvTypes.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+          </select>
         </Field>
 
         <Field label="Date et heure">

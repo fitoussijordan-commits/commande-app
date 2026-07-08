@@ -908,7 +908,7 @@ function fmtDistance(km: number): string {
 const LOC_RADIUS_KM = 1;
 
 // is_company sert au départage quand plusieurs fiches partagent le même code (ref).
-const CLIENT_FIELDS = ["id", "name", "ref", "city", "country_id", "property_product_pricelist", "email", "phone", "is_company"];
+const CLIENT_FIELDS = ["id", "name", "ref", "city", "country_id", "property_product_pricelist", "email", "phone", "is_company", "x_nbre_visites_realisees"];
 
 // ═══════════════════════════════════════════════════════════════════════════
 // ACCUEIL — planning de la semaine du commercial connecté
@@ -1560,11 +1560,18 @@ function ClientHub({ session, client, hasDraft, onOrder, onHistory, onAppointmen
               {client.city && <span style={{ fontSize: 12, color: C.muted, display: "inline-flex", alignItems: "center", gap: 3 }}><Icon name="pin" size={11} /> {client.city}</span>}
               {client.phone && <span style={{ fontSize: 12, color: C.muted, display: "inline-flex", alignItems: "center", gap: 3 }}><Icon name="phone" size={11} /> {client.phone}</span>}
             </div>
-            {client.property_product_pricelist && (
-              <div style={{ display: "inline-block", marginTop: 8, fontSize: 11, fontWeight: 700, color: C.teal, background: C.tealSoft, borderRadius: 8, padding: "3px 9px" }}>
-                {client.property_product_pricelist[1]}
-              </div>
-            )}
+            <div style={{ display: "flex", flexWrap: "wrap" as const, gap: 8, marginTop: 8 }}>
+              {client.property_product_pricelist && (
+                <div style={{ fontSize: 11, fontWeight: 700, color: C.teal, background: C.tealSoft, borderRadius: 8, padding: "3px 9px" }}>
+                  {client.property_product_pricelist[1]}
+                </div>
+              )}
+              {typeof client.x_nbre_visites_realisees === "number" && (
+                <div style={{ fontSize: 11, fontWeight: 700, color: "#7c3aed", background: "#f5f3ff", borderRadius: 8, padding: "3px 9px", display: "inline-flex", alignItems: "center", gap: 4 }}>
+                  <Icon name="calendar" size={11} /> {client.x_nbre_visites_realisees} visite{client.x_nbre_visites_realisees > 1 ? "s" : ""} cette année
+                </div>
+              )}
+            </div>
           </div>
         </div>
 
@@ -1628,6 +1635,60 @@ function ClientHistory({ session, client }: { session: odoo.OdooSession; client:
   const [orderLines, setOrderLines] = useState<any[]>([]);
   const [loadingLines, setLoadingLines] = useState(false);
 
+  // Onglets : commandes / palmarès produits / MEA — + année sélectionnée.
+  const [mode, setMode] = useState<"orders" | "ranking" | "mea">("orders");
+  const nowYear = new Date().getFullYear();
+  const [year, setYear] = useState(nowYear);
+  const YEARS = [nowYear, nowYear - 1, nowYear - 2];
+
+  // Palmarès + MEA : chargés à la demande (lignes de commandes confirmées de l'année).
+  const [ranking, setRanking] = useState<any[]>([]);
+  const [meaOrders, setMeaOrders] = useState<any[]>([]);
+  const [analyLoading, setAnalyLoading] = useState(false);
+
+  useEffect(() => {
+    if (mode === "orders") return;
+    let cancelled = false;
+    (async () => {
+      setAnalyLoading(true);
+      try {
+        const start = `${year}-01-01 00:00:00`;
+        const end = `${year}-12-31 23:59:59`;
+        // Commandes confirmées du client sur l'année (avec modèle de devis pour les MEA).
+        const yearOrders = await odoo.searchRead(session, "sale.order",
+          [["partner_id", "=", client.id], ["state", "in", ["sale", "done"]], ["date_order", ">=", start], ["date_order", "<=", end]],
+          ["id", "name", "date_order", "amount_total", "sale_order_template_id"], 300, "date_order desc");
+        if (cancelled) return;
+
+        // MEA = commandes ayant un modèle de devis.
+        setMeaOrders(yearOrders.filter((o: any) => Array.isArray(o.sale_order_template_id) && o.sale_order_template_id[0]));
+
+        // Palmarès : agrège les lignes de toutes ces commandes.
+        if (mode === "ranking" && yearOrders.length) {
+          const ids = yearOrders.map((o: any) => o.id);
+          const lines = await odoo.searchRead(session, "sale.order.line",
+            [["order_id", "in", ids], ["product_id", "!=", false], ["display_type", "=", false]],
+            ["product_id", "product_uom_qty", "price_subtotal"], 2000);
+          if (cancelled) return;
+          const agg = new Map<number, { name: string; qty: number; times: number; total: number }>();
+          for (const l of lines) {
+            const pid = l.product_id?.[0]; if (!pid) continue;
+            const cur = agg.get(pid) || { name: l.product_id[1] || "", qty: 0, times: 0, total: 0 };
+            cur.qty += l.product_uom_qty || 0; cur.times += 1; cur.total += l.price_subtotal || 0;
+            agg.set(pid, cur);
+          }
+          setRanking(Array.from(agg.values()).sort((a, b) => b.qty - a.qty));
+        } else if (mode === "ranking") {
+          setRanking([]);
+        }
+      } catch {
+        setRanking([]); setMeaOrders([]);
+      }
+      setAnalyLoading(false);
+    })();
+    return () => { cancelled = true; };
+  }, [mode, year, session, client.id]);
+
   const openOrder = async (o: any) => {
     setSelectedOrder(o);
     setLoadingLines(true);
@@ -1669,12 +1730,87 @@ function ClientHistory({ session, client }: { session: odoo.OdooSession; client:
     cancel:   { label: "Annulée",   color: C.red,    bg: C.redSoft },
   };
 
+  const TABS: { id: "orders" | "ranking" | "mea"; label: string }[] = [
+    { id: "orders", label: "Commandes" },
+    { id: "ranking", label: "Palmarès" },
+    { id: "mea", label: "MEA" },
+  ];
+
   return (
     <div style={{ flex: 1, display: "flex", flexDirection: "column" as const, alignItems: "center", padding: "32px 24px", overflowY: "auto" as const }}>
       <div style={{ width: "100%", maxWidth: 640 }}>
-        <div style={{ fontSize: 13, color: C.muted, marginBottom: 18 }}>{client.name}</div>
+        <div style={{ fontSize: 13, color: C.muted, marginBottom: 14 }}>{client.name}</div>
 
-        {loading ? (
+        {/* Barre d'onglets */}
+        <div style={{ display: "flex", gap: 6, marginBottom: 16, background: C.bg, borderRadius: 12, padding: 4 }}>
+          {TABS.map(t => (
+            <button key={t.id} onClick={() => setMode(t.id)}
+              style={{ flex: 1, padding: "8px 0", borderRadius: 9, border: "none", cursor: "pointer", fontFamily: "inherit", fontSize: 13, fontWeight: 700,
+                background: mode === t.id ? C.white : "transparent", color: mode === t.id ? C.tealDark : C.muted, boxShadow: mode === t.id ? C.shadow : "none" }}>
+              {t.label}
+            </button>
+          ))}
+        </div>
+
+        {/* Sélecteur d'année (palmarès + MEA) */}
+        {mode !== "orders" && (
+          <div style={{ display: "flex", gap: 6, marginBottom: 16 }}>
+            {YEARS.map(y => (
+              <button key={y} onClick={() => setYear(y)}
+                style={{ padding: "6px 16px", borderRadius: 999, border: `1.5px solid ${year === y ? C.teal : C.border}`, cursor: "pointer", fontFamily: "inherit", fontSize: 13, fontWeight: 700,
+                  background: year === y ? C.teal : C.white, color: year === y ? "#fff" : C.textSec }}>
+                {y}
+              </button>
+            ))}
+          </div>
+        )}
+
+        {/* ── Onglet PALMARÈS ── */}
+        {mode === "ranking" && (
+          analyLoading ? <div style={{ textAlign: "center" as const, color: C.muted, padding: 40 }}>Chargement…</div>
+          : ranking.length === 0 ? <div style={{ textAlign: "center" as const, color: C.muted, padding: 40 }}>Aucun produit commandé en {year}</div>
+          : (
+            <div style={{ display: "flex", flexDirection: "column" as const, gap: 8 }}>
+              {ranking.map((r, i) => (
+                <div key={i} style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 14px", background: C.white, border: `1px solid ${C.border}`, borderRadius: 12, boxShadow: C.shadow }}>
+                  <div style={{ width: 26, height: 26, borderRadius: 8, background: i < 3 ? C.tealSoft : C.bg, color: i < 3 ? C.tealDark : C.muted, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 13, fontWeight: 800, flexShrink: 0 }}>{i + 1}</div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 13, fontWeight: 600, color: C.text }}>{r.name}</div>
+                    <div style={{ fontSize: 11, color: C.muted, marginTop: 1 }}>{r.times} commande{r.times > 1 ? "s" : ""}</div>
+                  </div>
+                  <div style={{ textAlign: "right" as const, flexShrink: 0 }}>
+                    <div style={{ fontSize: 15, fontWeight: 800, color: C.tealDark }}>{Math.round(r.qty)}</div>
+                    <div style={{ fontSize: 10, color: C.muted }}>unités</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )
+        )}
+
+        {/* ── Onglet MEA ── */}
+        {mode === "mea" && (
+          analyLoading ? <div style={{ textAlign: "center" as const, color: C.muted, padding: 40 }}>Chargement…</div>
+          : meaOrders.length === 0 ? <div style={{ textAlign: "center" as const, color: C.muted, padding: 40 }}>Aucune MEA commandée en {year}</div>
+          : (
+            <div style={{ display: "flex", flexDirection: "column" as const, gap: 10 }}>
+              {meaOrders.map(o => (
+                <button key={o.id} onClick={() => openOrder(o)}
+                  style={{ display: "flex", alignItems: "center", gap: 12, padding: "14px 16px", background: C.white, border: `1px solid ${C.border}`, borderRadius: 14, boxShadow: C.shadow, cursor: "pointer", fontFamily: "inherit", textAlign: "left" as const, width: "100%" }}>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: C.text }}>{o.sale_order_template_id?.[1] || "Offre"}</div>
+                    <div style={{ fontSize: 11, color: C.muted, marginTop: 2 }}>{o.name} · {o.date_order ? fmtDate(new Date(o.date_order.replace(" ", "T") + "Z").getTime()) : "—"}</div>
+                  </div>
+                  <div style={{ fontSize: 14, fontWeight: 800, color: C.tealDark, flexShrink: 0 }}>{fmtPrice(o.amount_total)}</div>
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={C.muted} strokeWidth="2" style={{ flexShrink: 0 }}><path d="M9 18l6-6-6-6"/></svg>
+                </button>
+              ))}
+            </div>
+          )
+        )}
+
+        {/* ── Onglet COMMANDES (existant) ── */}
+        {mode === "orders" && (loading ? (
           <div style={{ textAlign: "center" as const, color: C.muted, padding: 40 }}>Chargement…</div>
         ) : error ? (
           <div style={{ background: C.redSoft, color: C.red, borderRadius: 12, padding: "12px 16px", fontSize: 13 }}>{error}</div>
@@ -1701,7 +1837,7 @@ function ClientHistory({ session, client }: { session: odoo.OdooSession; client:
               );
             })}
           </div>
-        )}
+        ))}
       </div>
 
       {/* ── Détail d'une commande (overlay) ── */}
