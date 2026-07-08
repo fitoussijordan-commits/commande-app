@@ -65,6 +65,8 @@ interface Props {
   desktop?: boolean;
 }
 interface CartItem { product: any; qty: number; unitPrice: number; }
+// Ligne offerte : produit à 0€ + type de gratuité (type_gratuit sur sale.order.line).
+interface GiftItem { product: any; qty: number; type: string; }
 interface FreeRule {
   id: string; name: string; triggerQty: number; freeQty: number;
   allProducts: boolean; productRefs: string[];
@@ -345,6 +347,9 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
   const [loyaltyPrograms, setLoyaltyPrograms] = useState<loyalty.LoyaltyProgram[]>([]);
   const [appliedPromos, setAppliedPromos] = useState<Record<number, loyalty.AppliedPromo>>({});
   const [showPromoPanel, setShowPromoPanel] = useState(false);
+  // Gratuités : lignes offertes (produit à 0€ + type_gratuit) + liste des types.
+  const [giftItems, setGiftItems] = useState<GiftItem[]>([]);
+  const [freeTypes, setFreeTypes] = useState<sync.FreeType[]>([]);
   const refreshPendingDrafts = useCallback(() => setPendingDrafts(listDrafts()), []);
 
   // D'où vient-on quand on ouvre une fiche client : recherche ou planning.
@@ -368,6 +373,7 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
     migrateLegacyDraft();
     refreshPendingDrafts();
     getLoyaltyPrograms(session).then(setLoyaltyPrograms).catch(() => {});
+    sync.loadFreeTypes(session).then(setFreeTypes).catch(() => {});
   }, [session, refreshPendingDrafts]);
 
   // Programmes dont les conditions sont actuellement remplies par le panier
@@ -431,6 +437,7 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
     setCart({});
     setNote("");
     setAppliedPromos({});
+    setGiftItems([]);
     manuallyRemovedRef.current.clear(); // nouvelle commande → réinitialise les retraits manuels
     setResumePrompt(loadDraftForClient(client.id));
     setStep("catalog");
@@ -523,10 +530,19 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
             price_unit: item.unitPrice,
             ...(lineDiscounts[item.product.id] ? { discount: lineDiscounts[item.product.id] } : {}),
           }]),
+          // Produits offerts par une offre marketing → 0€ + type "Gratuités des offres" (auto).
           ...promoFreeLines.map(p => [0, 0, {
             product_id: p.reward.reward_product_id,
             product_uom_qty: p.reward.reward_product_qty,
             price_unit: 0,
+            type_gratuit: "gratuites_des_offres",
+          }]),
+          // Gratuités saisies manuellement (quantité offerte + type de gratuité choisi).
+          ...giftItems.map(g => [0, 0, {
+            product_id: g.product.id,
+            product_uom_qty: g.qty,
+            price_unit: 0,
+            ...(g.type ? { type_gratuit: g.type } : {}),
           }]),
         ],
       };
@@ -852,7 +868,8 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
         <CatalogStep session={session} cart={cart} onQtyChange={setQty} freeItems={freeItems}
           onValidate={handleValidate} submitting={submitting}
           note={note} setNote={setNote} client={client} priceItems={priceItems} onToast={onToast}
-          appliedPromos={appliedPromos} />
+          appliedPromos={appliedPromos}
+          giftItems={giftItems} setGiftItems={setGiftItems} freeTypes={freeTypes} />
       )}
 
       {showAppointment && client && (
@@ -1730,7 +1747,7 @@ function ClientHistory({ session, client }: { session: odoo.OdooSession; client:
 // ═══════════════════════════════════════════════════════════════════════════
 // ÉTAPE 2 — Catalogue + Panier persistant
 // ═══════════════════════════════════════════════════════════════════════════
-function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submitting, note, setNote, client, priceItems, onToast, appliedPromos }: {
+function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submitting, note, setNote, client, priceItems, onToast, appliedPromos, giftItems, setGiftItems, freeTypes }: {
   session: odoo.OdooSession; cart: Record<number, CartItem>;
   onQtyChange: (p: any, q: number, price?: number) => void; freeItems: FreeItem[];
   onValidate: () => void; submitting: boolean;
@@ -1738,6 +1755,8 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
   priceItems: PriceItem[];
   onToast: (msg: string, type?: "success" | "error" | "info") => void;
   appliedPromos: Record<number, loyalty.AppliedPromo>;
+  giftItems: GiftItem[]; setGiftItems: React.Dispatch<React.SetStateAction<GiftItem[]>>;
+  freeTypes: sync.FreeType[];
 }) {
   const [smartCats, setSmartCats] = useState<SmartCat[]>([]);
   const [activeCatId, setActiveCatId] = useState<string | null>(null);
@@ -1752,6 +1771,8 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
   // price fourni depuis la grille (prix client calculé) ; absent depuis le panier
   // (on garde alors le prix déjà enregistré sur la ligne).
   const [pad, setPad] = useState<{ product: any; price?: number } | null>(null);
+  // Modale « offrir » : produit à offrir (quantité + type de gratuité).
+  const [giftFor, setGiftFor] = useState<any | null>(null);
 
   // État réseau léger (événements navigateur, sans ping) : sert uniquement à
   // annoncer AVANT validation que la commande partira en file hors ligne.
@@ -2180,6 +2201,10 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
                         </button>
                         <button onClick={() => onQtyChange(p, qty + 1, clientPrice)} style={{ flex: 1, height: 44, background: "transparent", border: "none", cursor: "pointer", fontSize: 20, fontWeight: 700, color: C.teal, lineHeight: 1 }}>+</button>
                       </div>
+                      <button onClick={() => setGiftFor(p)} title="Offrir une gratuité"
+                        style={{ width: "100%", marginTop: 6, padding: "6px 0", background: C.greenSoft, color: C.green, border: `1px solid ${C.green}44`, borderRadius: 8, cursor: "pointer", fontFamily: "inherit", fontSize: 11, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", gap: 5 }}>
+                        <Icon name="gift" size={12} /> Offrir
+                      </button>
                     </div>
                   </div>
                 );
@@ -2255,7 +2280,39 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
             })
           )}
 
-          {/* Articles gratuits */}
+          {/* Gratuités saisies manuellement (produit à 0€ + type de gratuité) */}
+          {giftItems.length > 0 && (
+            <div style={{ margin: "8px 0", padding: "8px 10px", background: C.greenSoft, border: `1px solid ${C.green}44`, borderRadius: 10 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+                <span style={{ fontSize: 10, fontWeight: 700, color: C.green, textTransform: "uppercase" as const, letterSpacing: "0.05em", display: "flex", alignItems: "center", gap: 5 }}><Icon name="gift" size={11} /> Gratuités</span>
+                {/* Auto-complète Coffre DC sur toutes les lignes sans type */}
+                {giftItems.some(g => !g.type) && (
+                  <button onClick={() => setGiftItems(prev => prev.map(g => g.type ? g : { ...g, type: "coffre_dc" }))}
+                    style={{ fontSize: 10, fontWeight: 700, color: "#fff", background: "#7c3aed", border: "none", borderRadius: 6, padding: "3px 8px", cursor: "pointer", fontFamily: "inherit" }}>
+                    Tout en Coffre DC
+                  </button>
+                )}
+              </div>
+              {giftItems.map((g, i) => (
+                <div key={i} style={{ marginBottom: 6, paddingBottom: 6, borderBottom: i < giftItems.length - 1 ? `1px solid ${C.green}22` : "none" }}>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6 }}>
+                    <span style={{ fontSize: 11, color: C.text, fontWeight: 600, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>
+                      <strong>{g.qty}×</strong> {g.product.name}
+                    </span>
+                    <button onClick={() => setGiftItems(prev => prev.filter((_, j) => j !== i))} title="Retirer"
+                      style={{ background: "none", border: "none", cursor: "pointer", color: C.red, fontSize: 15, lineHeight: 1, flexShrink: 0 }}>✕</button>
+                  </div>
+                  <select value={g.type} onChange={e => setGiftItems(prev => prev.map((x, j) => j === i ? { ...x, type: e.target.value } : x))}
+                    style={{ width: "100%", marginTop: 4, padding: "5px 6px", fontSize: 11, borderRadius: 6, border: `1px solid ${g.type ? C.green : C.red}`, background: "#fff", color: C.text, fontFamily: "inherit" }}>
+                    <option value="">— Type de gratuité —</option>
+                    {freeTypes.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
+                  </select>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Articles gratuits (règles maison — inchangé) */}
           {freeItems.length > 0 && (
             <div style={{ margin: "8px 0", padding: "8px 10px", background: C.greenSoft, border: `1px solid ${C.green}33`, borderRadius: 10 }}>
               <div style={{ fontSize: 10, fontWeight: 700, color: C.green, textTransform: "uppercase" as const, letterSpacing: "0.05em", marginBottom: 5, display: "flex", alignItems: "center", gap: 5 }}><Icon name="gift" size={11} /> BC Gratuit (séparé)</div>
@@ -2349,6 +2406,20 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
         />
       )}
 
+      {/* ── Modale "Offrir une gratuité" ── */}
+      {giftFor && (
+        <GiftModal
+          product={giftFor}
+          freeTypes={freeTypes}
+          onClose={() => setGiftFor(null)}
+          onConfirm={(qty, type) => {
+            setGiftItems(prev => [...prev, { product: giftFor, qty, type }]);
+            setGiftFor(null);
+            onToast(`${qty}× ${giftFor.name} ajouté en gratuité`, "success");
+          }}
+        />
+      )}
+
       {/* ── Modale zoom image ── */}
       {zoom && (
         <div onClick={() => setZoom(null)}
@@ -2398,6 +2469,44 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
 // ═══════════════════════════════════════════════════════════════════════════
 // PAVÉ NUMÉRIQUE — saisie directe d'une quantité (fini les 24 taps sur « + »)
 // ═══════════════════════════════════════════════════════════════════════════
+// Modale d'ajout d'une gratuité : quantité offerte + type de gratuité.
+function GiftModal({ product, freeTypes, onClose, onConfirm }: {
+  product: any; freeTypes: sync.FreeType[];
+  onClose: () => void; onConfirm: (qty: number, type: string) => void;
+}) {
+  const [qty, setQty] = useState(1);
+  const [type, setType] = useState("");
+  return (
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 250, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+      <div onClick={e => e.stopPropagation()} style={{ width: "100%", maxWidth: 380, background: C.white, borderRadius: 18, padding: "22px 22px 20px", boxShadow: C.shadowXl, fontFamily: "'DM Sans', sans-serif" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4, color: C.green, fontWeight: 800, fontSize: 15 }}>
+          <Icon name="gift" size={16} /> Offrir une gratuité
+        </div>
+        <div style={{ fontSize: 12, color: C.muted, marginBottom: 16 }}>{product.name}</div>
+
+        <div style={{ fontSize: 12, fontWeight: 700, color: C.textSec, marginBottom: 6 }}>Quantité offerte</div>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}>
+          <button onClick={() => setQty(q => Math.max(1, q - 1))} style={{ width: 44, height: 44, borderRadius: 10, background: C.redSoft, color: C.red, border: "none", fontSize: 20, fontWeight: 700, cursor: "pointer" }}>−</button>
+          <div style={{ flex: 1, textAlign: "center" as const, fontSize: 20, fontWeight: 800, color: C.text }}>{qty}</div>
+          <button onClick={() => setQty(q => q + 1)} style={{ width: 44, height: 44, borderRadius: 10, background: C.tealSoft, color: C.teal, border: "none", fontSize: 20, fontWeight: 700, cursor: "pointer" }}>+</button>
+        </div>
+
+        <div style={{ fontSize: 12, fontWeight: 700, color: C.textSec, marginBottom: 6 }}>Type de gratuité</div>
+        <select value={type} onChange={e => setType(e.target.value)}
+          style={{ width: "100%", padding: "11px 12px", fontSize: 13, borderRadius: 10, border: `1.5px solid ${C.border}`, background: "#fff", color: C.text, fontFamily: "inherit", marginBottom: 18 }}>
+          <option value="">— Choisir (ou compléter plus tard) —</option>
+          {freeTypes.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
+        </select>
+
+        <div style={{ display: "flex", gap: 10 }}>
+          <button onClick={onClose} style={{ flex: "0 0 auto", padding: "12px 18px", background: C.bg, color: C.textSec, border: `1px solid ${C.border}`, borderRadius: 12, fontSize: 14, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>Annuler</button>
+          <button onClick={() => onConfirm(qty, type)} style={{ flex: 1, padding: "12px", background: C.green, color: "#fff", border: "none", borderRadius: 12, fontSize: 14, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>Ajouter en gratuité</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function QtyPad({ name, initial, onSet, onClose }: {
   name: string; initial: number; onSet: (n: number) => void; onClose: () => void;
 }) {

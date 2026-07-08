@@ -122,6 +122,12 @@ export async function preloadCatalog(
     meaError = e?.message || String(e);
   }
 
+  // 5. Types de gratuité (liste selection type_gratuit) — pour offrir hors ligne.
+  try {
+    const freeTypes = await odoo.fieldSelection(session, "sale.order.line", "type_gratuit");
+    if (freeTypes.length) await db.kvSet(db.STORES.meta, "freeTypes", freeTypes);
+  } catch { /* optionnel */ }
+
   // 5. Programmes de remise Odoo (Réductions & fidélité) — pour que le bouton 🏷️
   // fonctionne aussi hors ligne. Best effort : un échec ne bloque pas le reste.
   onProgress?.({ step: "Remises & fidélité", done: 4, total: steps });
@@ -205,6 +211,25 @@ export async function getCachedHistory(clientId: number): Promise<any[] | undefi
 
 export async function getLastSync(): Promise<number | undefined> {
   return db.kvGet<number>(db.STORES.meta, "lastSync");
+}
+
+// ---- Types de gratuité (champ selection type_gratuit sur sale.order.line) ----
+
+export interface FreeType { value: string; label: string; }
+
+// Charge depuis Odoo et met en cache ; renvoie le cache si hors ligne.
+export async function loadFreeTypes(session: odoo.OdooSession): Promise<FreeType[]> {
+  try {
+    const list = await odoo.fieldSelection(session, "sale.order.line", "type_gratuit");
+    if (list.length) await db.kvSet(db.STORES.meta, "freeTypes", list);
+    return list;
+  } catch {
+    return (await db.kvGet<FreeType[]>(db.STORES.meta, "freeTypes")) || [];
+  }
+}
+
+export async function getCachedFreeTypes(): Promise<FreeType[]> {
+  return (await db.kvGet<FreeType[]>(db.STORES.meta, "freeTypes")) || [];
 }
 
 // ---- Préchargement des images produit (offline) ----

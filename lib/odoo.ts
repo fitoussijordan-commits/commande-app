@@ -111,3 +111,15 @@ export async function write(session: OdooSession, model: string, ids: number[], 
 export async function callMethod(session: OdooSession, model: string, method: string, args: any[] = [], kwargs: any = {}) {
   return call(session, "/web/dataset/call_kw", { model, method, args, kwargs });
 }
+
+// Lit les valeurs possibles d'un champ selection (ex: type_gratuit sur
+// sale.order.line) → [{ value, label }]. Sert à peupler la liste des gratuités.
+export async function fieldSelection(session: OdooSession, model: string, field: string): Promise<{ value: string; label: string }[]> {
+  const res = await call(session, "/web/dataset/call_kw", {
+    model, method: "fields_get",
+    args: [[field], ["selection"]],
+    kwargs: { context: FR_CTX },
+  });
+  const sel = res?.[field]?.selection || [];
+  return sel.map((s: [string, string]) => ({ value: s[0], label: s[1] }));
+}
