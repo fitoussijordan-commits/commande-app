@@ -388,9 +388,40 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
     }
     onToast(`Remise « ${program.name} » appliquée`, "success");
   };
+  // Mémoire des remises retirées manuellement (l'auto-application ne les remet pas).
+  const manuallyRemovedRef = useRef<Set<number>>(new Set());
   const removePromo = (programId: number) => {
+    manuallyRemovedRef.current.add(programId);
     setAppliedPromos(prev => { const n = { ...prev }; delete n[programId]; return n; });
   };
+
+  // ── Application AUTOMATIQUE des remises ───────────────────────────────────
+  // Dès que le panier remplit les conditions d'un programme, la remise est
+  // appliquée sans clic. Si le panier ne remplit plus les conditions, elle est
+  // retirée automatiquement (sauf si l'utilisateur l'a retirée manuellement).
+  useEffect(() => {
+    const triggeredIds = new Set(triggeredPromos.map(p => p.id));
+
+    // 1) Retirer les remises dont les conditions ne sont plus remplies.
+    setAppliedPromos(prev => {
+      let changed = false;
+      const next = { ...prev };
+      for (const idStr of Object.keys(prev)) {
+        const id = Number(idStr);
+        if (!triggeredIds.has(id)) { delete next[id]; changed = true; }
+      }
+      return changed ? next : prev;
+    });
+
+    // 2) Appliquer automatiquement les remises déclenchées et pas encore appliquées
+    //    (et non retirées manuellement par l'utilisateur).
+    for (const program of triggeredPromos) {
+      if (appliedPromos[program.id]) continue;
+      if (manuallyRemovedRef.current.has(program.id)) continue;
+      void applyPromo(program);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cart]);
 
   // Depuis le hub client → "Prise de commande" : repart d'un panier vide, détecte un brouillon
   // existant pour CE client précisément, puis entre dans le catalogue.
@@ -400,6 +431,7 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
     setCart({});
     setNote("");
     setAppliedPromos({});
+    manuallyRemovedRef.current.clear(); // nouvelle commande → réinitialise les retraits manuels
     setResumePrompt(loadDraftForClient(client.id));
     setStep("catalog");
   };
