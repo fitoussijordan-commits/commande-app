@@ -908,7 +908,13 @@ function fmtDistance(km: number): string {
 const LOC_RADIUS_KM = 1;
 
 // is_company sert au départage quand plusieurs fiches partagent le même code (ref).
-const CLIENT_FIELDS = ["id", "name", "ref", "city", "country_id", "property_product_pricelist", "email", "phone", "is_company", "x_nbre_visites_realisees"];
+// parent_id / type : diagnostic des doublons de recherche client (une fiche mère et
+// son adresse enfant portant le même nom ressortent toutes les deux si les deux ont
+// customer_rank > 0). Mettre DEBUG_CLIENTS à false une fois le diagnostic terminé.
+const CLIENT_FIELDS = ["id", "name", "ref", "city", "country_id", "property_product_pricelist", "email", "phone", "is_company", "x_nbre_visites_realisees", "parent_id", "type"];
+
+// Affiche l'identité Odoo brute (id, parent_id, type) sous chaque résultat client.
+const DEBUG_CLIENTS = true;
 
 // ═══════════════════════════════════════════════════════════════════════════
 // ACCUEIL — planning de la semaine du commercial connecté
@@ -1464,6 +1470,11 @@ function ClientStep({ session, onSelect }: { session: odoo.OdooSession; onSelect
                   {c.city && <span style={{ display: "inline-flex", alignItems: "center", gap: 3 }}><Icon name="pin" size={11} /> {c.city}</span>}
                   {c.phone && <span style={{ display: "inline-flex", alignItems: "center", gap: 3 }}><Icon name="phone" size={11} /> {c.phone}</span>}
                 </div>
+                {DEBUG_CLIENTS && (
+                  <div style={{ fontSize: 11, color: C.red, marginTop: 3, fontFamily: "ui-monospace, monospace" }}>
+                    id={c.id} · parent={c.parent_id ? `${c.parent_id[0]} (${c.parent_id[1]})` : "—"} · type={c.type || "—"} · sté={c.is_company ? "oui" : "non"}
+                  </div>
+                )}
               </div>
               {typeof c._distKm === "number" && (
                 <div style={{ fontSize: 11, fontWeight: 700, color: C.teal, background: C.tealSoft, borderRadius: 8, padding: "3px 8px", flexShrink: 0 }}>
