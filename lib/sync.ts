@@ -199,10 +199,12 @@ export async function cacheClientData(clientId: number, data: {
   favorites?: any[];
   stats?: { ca: number; count: number; lastDate: string | null };
   history?: any[];
+  gifts?: Record<string, number>;
 }): Promise<void> {
   if (data.favorites !== undefined) await db.kvSet(db.STORES.favorites, `fav-${clientId}`, data.favorites);
   if (data.stats !== undefined)     await db.kvSet(db.STORES.favorites, `ca-${clientId}`, data.stats);
   if (data.history !== undefined)   await db.kvSet(db.STORES.favorites, `hist-${clientId}`, data.history);
+  if (data.gifts !== undefined)     await db.kvSet(db.STORES.favorites, `gifts-${clientId}`, data.gifts);
 }
 
 export async function getCachedFavorites(clientId: number): Promise<any[] | undefined> {
@@ -213,6 +215,10 @@ export async function getCachedStats(clientId: number): Promise<{ ca: number; co
 }
 export async function getCachedHistory(clientId: number): Promise<any[] | undefined> {
   return db.kvGet<any[]>(db.STORES.favorites, `hist-${clientId}`);
+}
+// Compteurs de gratuités (quotas Studio + périmés) lus sur la fiche client.
+export async function getCachedGifts(clientId: number): Promise<Record<string, number> | undefined> {
+  return db.kvGet<Record<string, number>>(db.STORES.favorites, `gifts-${clientId}`);
 }
 
 export async function getLastSync(): Promise<number | undefined> {

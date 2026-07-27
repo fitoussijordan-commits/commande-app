@@ -1,5 +1,5 @@
 "use client";
-import { useState, useEffect, useCallback, useRef, useMemo, Fragment } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import * as odoo from "@/lib/odoo";
 import AppointmentModal from "@/components/AppointmentModal";
 import ClientNoteModal from "@/components/ClientNoteModal";
@@ -111,43 +111,24 @@ function matchesCat(product: any, cat: SmartCat): boolean {
 }
 
 // ── Type de produit Odoo (x_type_de_produit_id sur product.template) ──────────
-// Échantillons, testeurs, travel size… encombraient le haut des gammes alors qu'on
-// y cherche des articles de vente courante. On ne les masque pas : on les descend
-// en bas de la gamme, regroupés sous un intitulé.
-//
-// La détection se fait par MOT-CLÉ sur le libellé Odoo, pas sur l'ID : les IDs de
-// x_type_de_produit diffèrent d'une base à l'autre, un libellé reste lisible.
-const DEMOTED_TYPE_PATTERNS: RegExp[] = [
-  /[ée]chantillon/i,
-  /testeur/i,
-  /travel/i,
-  /\bplv\b/i,
-  /d[ée]mo/i,
-];
+// Échantillon, testeur, travel size, miniature… Ils deviennent des entrées de
+// filtre dans le volet des gammes, alimentées par le catalogue réel : aucune liste
+// codée en dur, un nouveau type créé dans Odoo apparaît tout seul.
+const TYPE_CAT_PREFIX = "type:";
 
 function productTypeLabel(product: any): string {
   const v = product?.x_type_de_produit_id;
   return Array.isArray(v) ? String(v[1] || "") : "";
 }
 
-// "" pour un article courant, sinon le libellé du type (sert aussi de titre de groupe).
-function demotedGroupLabel(product: any): string {
-  const label = productTypeLabel(product);
-  if (!label) return "";
-  return DEMOTED_TYPE_PATTERNS.some(re => re.test(label)) ? label : "";
+// Clé insensible à la casse ET aux accents : les libellés Odoo sont saisis à la
+// main, « Echantillon » et « Échantillon » doivent tomber dans la même entrée.
+function normalizeTypeKey(label: string): string {
+  return label.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().trim();
 }
 
-function demotionRank(product: any): number {
-  return demotedGroupLabel(product) ? 1 : 0;
-}
-
-// Clé de regroupement insensible à la casse ET aux accents : les libellés Odoo sont
-// saisis à la main, « Echantillon » et « Échantillon » doivent tomber dans le même
-// groupe au lieu d'en créer deux qui se suivent.
-function demotedGroupKey(product: any): string {
-  return demotedGroupLabel(product)
-    .normalize("NFD").replace(/[̀-ͯ]/g, "")
-    .toLowerCase().trim();
+function productTypeKey(product: any): string {
+  return normalizeTypeKey(productTypeLabel(product));
 }
 
 function loadRules(): FreeRule[] { try { return JSON.parse(localStorage.getItem(LS_RULES) || "[]"); } catch { return []; } }
@@ -1749,6 +1730,31 @@ function ClientHub({ session, client, hasDraft, onOrder, onHistory, onAppointmen
   );
 }
 
+// ── Suivi des gratuités (onglet « Suivi Gratuité » de la fiche client Odoo) ───
+// Champs Studio, en paires Quota / Restant. La CONSOMMATION n'est pas stockée :
+// c'est Quota − Restant. Ces champs ne portent AUCUN historique (contrairement au
+// CA qui a x_ca_n_1 / x_ca_n_2), ils reflètent donc uniquement l'état courant —
+// d'où l'affichage réservé à l'année en cours.
+const GIFT_QUOTAS: { label: string; quota: string; left: string }[] = [
+  { label: "Testeurs VC",  quota: "x_studio_testeurs_quota",      left: "x_studio_testeurs_restant" },
+  { label: "Testeurs MAQ", quota: "x_studio_testeurs_maq_quota",  left: "x_studio_testeurs_maq_restant" },
+  { label: "Échantillons", quota: "x_studio_echantillons_quota",  left: "x_studio_echantillons_restant" },
+  { label: "Travel Size",  quota: "x_studio_travel_size_quota",   left: "x_studio_travel_size_restant" },
+  { label: "Miniatures",   quota: "x_studio_miniatures_quota",    left: "x_studio_miniatures_restant" },
+  { label: "Sacs",         quota: "x_studio_sacs_quota",          left: "x_studio_sacs_restant" },
+];
+
+// Périmés : valeurs monétaires, pas des quantités — affichées à part.
+const GIFT_EXPIRED = { asked: "x_valeurs_perimes_demandes", granted: "x_valeurs_perimes_accordes" };
+
+const GIFT_FIELDS = [
+  ...GIFT_QUOTAS.flatMap(g => [g.quota, g.left]),
+  GIFT_EXPIRED.asked, GIFT_EXPIRED.granted,
+];
+
+// Odoo renvoie `false` pour un champ numérique vide — jamais 0.
+function num(v: unknown): number { return typeof v === "number" && isFinite(v) ? v : 0; }
+
 // ═══════════════════════════════════════════════════════════════════════════
 // HISTORIQUE DES COMMANDES — devis/commandes passés de ce client
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1760,8 +1766,8 @@ function ClientHistory({ session, client }: { session: odoo.OdooSession; client:
   const [orderLines, setOrderLines] = useState<any[]>([]);
   const [loadingLines, setLoadingLines] = useState(false);
 
-  // Onglets : commandes / palmarès produits / MEA — + année sélectionnée.
-  const [mode, setMode] = useState<"orders" | "ranking" | "mea">("orders");
+  // Onglets : commandes / palmarès produits / MEA / gratuités — + année sélectionnée.
+  const [mode, setMode] = useState<"orders" | "ranking" | "mea" | "gifts">("orders");
   const nowYear = new Date().getFullYear();
   const [year, setYear] = useState(nowYear);
   const YEARS = [nowYear, nowYear - 1, nowYear - 2];
@@ -1770,6 +1776,38 @@ function ClientHistory({ session, client }: { session: odoo.OdooSession; client:
   const [ranking, setRanking] = useState<any[]>([]);
   const [meaOrders, setMeaOrders] = useState<any[]>([]);
   const [analyLoading, setAnalyLoading] = useState(false);
+
+  // Gratuités : quotas Studio (état courant, fiche client) + consommation de l'année
+  // recalculée depuis les lignes de commande (seule source qui porte un historique).
+  const [giftQuotas, setGiftQuotas] = useState<Record<string, number> | null>(null);
+  const [giftYearLines, setGiftYearLines] = useState<{ label: string; qty: number; lines: number }[]>([]);
+  const [giftTypes, setGiftTypes] = useState<sync.FreeType[]>([]);
+
+  useEffect(() => {
+    if (mode !== "gifts") return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const rows = await odoo.searchRead(session, "res.partner", [["id", "=", client.id]], GIFT_FIELDS, 1);
+        if (cancelled) return;
+        const v = (rows && rows[0]) || {};
+        const flat: Record<string, number> = {};
+        for (const f of GIFT_FIELDS) flat[f] = num(v[f]);
+        setGiftQuotas(flat);
+        sync.cacheClientData(client.id, { gifts: flat }).catch(() => {});
+      } catch {
+        // Hors ligne → derniers quotas connus pour ce client.
+        const cached = await sync.getCachedGifts(client.id).catch(() => undefined);
+        if (!cancelled) setGiftQuotas(cached || null);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [mode, session, client.id]);
+
+  useEffect(() => {
+    if (mode !== "gifts" || giftTypes.length) return;
+    sync.loadFreeTypes(session).then(setGiftTypes).catch(() => {});
+  }, [mode, session, giftTypes.length]);
 
   useEffect(() => {
     if (mode === "orders") return;
@@ -1806,8 +1844,35 @@ function ClientHistory({ session, client }: { session: odoo.OdooSession; client:
         } else if (mode === "ranking") {
           setRanking([]);
         }
+
+        // Gratuités consommées sur l'année : lignes portant un type_gratuit.
+        // Les quotas Odoo n'ont pas d'historique, c'est la seule façon d'avoir
+        // les années précédentes.
+        if (mode === "gifts") {
+          if (!yearOrders.length) { setGiftYearLines([]); }
+          else {
+            const ids = yearOrders.map((o: any) => o.id);
+            const lines = await odoo.searchRead(session, "sale.order.line",
+              [["order_id", "in", ids], ["type_gratuit", "!=", false], ["display_type", "=", false]],
+              ["product_uom_qty", "type_gratuit"], 2000);
+            if (cancelled) return;
+            const agg = new Map<string, { qty: number; lines: number }>();
+            for (const l of lines) {
+              const key = String(l.type_gratuit || "");
+              if (!key) continue;
+              const cur = agg.get(key) || { qty: 0, lines: 0 };
+              cur.qty += l.product_uom_qty || 0; cur.lines += 1;
+              agg.set(key, cur);
+            }
+            setGiftYearLines(
+              Array.from(agg.entries())
+                .map(([value, v]) => ({ label: value, qty: v.qty, lines: v.lines }))
+                .sort((a, b) => b.qty - a.qty)
+            );
+          }
+        }
       } catch {
-        setRanking([]); setMeaOrders([]);
+        setRanking([]); setMeaOrders([]); setGiftYearLines([]);
       }
       setAnalyLoading(false);
     })();
@@ -1855,10 +1920,11 @@ function ClientHistory({ session, client }: { session: odoo.OdooSession; client:
     cancel:   { label: "Annulée",   color: C.red,    bg: C.redSoft },
   };
 
-  const TABS: { id: "orders" | "ranking" | "mea"; label: string }[] = [
+  const TABS: { id: "orders" | "ranking" | "mea" | "gifts"; label: string }[] = [
     { id: "orders", label: "Commandes" },
     { id: "ranking", label: "Palmarès" },
     { id: "mea", label: "MEA" },
+    { id: "gifts", label: "Gratuités" },
   ];
 
   return (
@@ -1932,6 +1998,84 @@ function ClientHistory({ session, client }: { session: odoo.OdooSession; client:
               ))}
             </div>
           )
+        )}
+
+        {/* ── Onglet GRATUITÉS ── */}
+        {mode === "gifts" && (
+          <div style={{ display: "flex", flexDirection: "column" as const, gap: 18 }}>
+
+            {/* Quotas : état courant seulement — les champs Odoo n'ont pas d'historique */}
+            {year === nowYear ? (
+              giftQuotas === null ? (
+                <div style={{ textAlign: "center" as const, color: C.muted, padding: 24, fontSize: 13 }}>Quotas indisponibles hors ligne pour ce client</div>
+              ) : (
+                <div>
+                  <div style={{ fontSize: 11, fontWeight: 800, color: C.muted, textTransform: "uppercase" as const, letterSpacing: "0.05em", marginBottom: 8 }}>Quotas {nowYear} — consommé / alloué</div>
+                  <div style={{ display: "flex", flexDirection: "column" as const, gap: 8 }}>
+                    {GIFT_QUOTAS.map(g => {
+                      const quota = num(giftQuotas[g.quota]);
+                      const left = num(giftQuotas[g.left]);
+                      const used = Math.max(0, quota - left);
+                      const pct = quota > 0 ? Math.min(100, (used / quota) * 100) : 0;
+                      return (
+                        <div key={g.quota} style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 12, padding: "10px 12px", boxShadow: C.shadow }}>
+                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 6 }}>
+                            <span style={{ fontSize: 13, fontWeight: 700, color: quota > 0 ? C.text : C.muted }}>{g.label}</span>
+                            <span style={{ fontSize: 12, fontWeight: 700, color: quota > 0 ? C.tealDark : C.muted }}>
+                              {quota > 0 ? `${used} / ${quota}` : "Pas de quota"}
+                            </span>
+                          </div>
+                          {quota > 0 && (
+                            <div style={{ height: 6, background: C.bg, borderRadius: 999, overflow: "hidden" }}>
+                              <div style={{ width: `${pct}%`, height: "100%", background: pct >= 100 ? C.red : pct >= 80 ? C.orange : C.teal, borderRadius: 999 }} />
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+                    <div style={{ flex: 1, background: C.white, border: `1px solid ${C.border}`, borderRadius: 12, padding: "10px 12px", boxShadow: C.shadow }}>
+                      <div style={{ fontSize: 15, fontWeight: 800, color: C.text }}>{fmtPrice(num(giftQuotas[GIFT_EXPIRED.asked]))}</div>
+                      <div style={{ fontSize: 10.5, color: C.muted, fontWeight: 600, marginTop: 2, textTransform: "uppercase" as const }}>Périmés demandés</div>
+                    </div>
+                    <div style={{ flex: 1, background: C.white, border: `1px solid ${C.border}`, borderRadius: 12, padding: "10px 12px", boxShadow: C.shadow }}>
+                      <div style={{ fontSize: 15, fontWeight: 800, color: C.text }}>{fmtPrice(num(giftQuotas[GIFT_EXPIRED.granted]))}</div>
+                      <div style={{ fontSize: 10.5, color: C.muted, fontWeight: 600, marginTop: 2, textTransform: "uppercase" as const }}>Périmés accordés</div>
+                    </div>
+                  </div>
+                </div>
+              )
+            ) : (
+              <div style={{ fontSize: 12, color: C.muted, background: C.bg, borderRadius: 10, padding: "10px 12px", lineHeight: 1.5 }}>
+                Les quotas Odoo ne conservent pas d'historique : ils ne sont affichés que pour {nowYear}.
+                Ci-dessous, la consommation {year} recalculée depuis les commandes.
+              </div>
+            )}
+
+            {/* Consommation réelle de l'année, depuis les lignes de commande */}
+            <div>
+              <div style={{ fontSize: 11, fontWeight: 800, color: C.muted, textTransform: "uppercase" as const, letterSpacing: "0.05em", marginBottom: 8 }}>Gratuités commandées en {year}</div>
+              {analyLoading ? (
+                <div style={{ textAlign: "center" as const, color: C.muted, padding: 24 }}>Chargement…</div>
+              ) : giftYearLines.length === 0 ? (
+                <div style={{ textAlign: "center" as const, color: C.muted, padding: 24, fontSize: 13 }}>Aucune gratuité sur des commandes confirmées en {year}</div>
+              ) : (
+                <div style={{ display: "flex", flexDirection: "column" as const, gap: 6 }}>
+                  {giftYearLines.map(g => (
+                    <div key={g.label} style={{ display: "flex", alignItems: "center", gap: 10, background: C.greenSoft, border: `1px solid ${C.green}33`, borderRadius: 10, padding: "9px 12px" }}>
+                      <Icon name="gift" size={13} color={C.green} />
+                      <span style={{ flex: 1, fontSize: 13, fontWeight: 700, color: C.text }}>
+                        {giftTypes.find(t => t.value === g.label)?.label || g.label}
+                      </span>
+                      <span style={{ fontSize: 11, color: C.muted }}>{g.lines} ligne{g.lines > 1 ? "s" : ""}</span>
+                      <span style={{ fontSize: 14, fontWeight: 800, color: C.green }}>{Math.round(g.qty)}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
         )}
 
         {/* ── Onglet COMMANDES (existant) ── */}
@@ -2278,23 +2422,30 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
     ? searchResults
     : activeCatId === FAV_CAT_ID
       ? favProducts
+      : activeCatId?.startsWith(TYPE_CAT_PREFIX)
+        ? allProducts.filter(p => productTypeKey(p) === activeCatId.slice(TYPE_CAT_PREFIX.length))
       : activeCatId
         ? allProducts.filter(p => {
             const cat = smartCats.find(c => c.id === activeCatId);
             return cat ? matchesCat(p, cat) : true;
           })
         : allProducts;
-  const filteredProducts = stockOnly ? baseProducts.filter(inStock) : baseProducts;
+  const displayedProducts = stockOnly ? baseProducts.filter(inStock) : baseProducts;
 
-  // Articles courants d'abord, puis les types secondaires regroupés par libellé.
-  // Tri STABLE (garanti par la spec JS) : l'ordre existant — stock décroissant, ou
-  // fréquence de commande pour les favoris — est conservé à l'intérieur de chaque
-  // groupe. On ne fait que déplacer les échantillons vers le bas.
-  const displayedProducts = [...filteredProducts].sort((a, b) => {
-    const ra = demotionRank(a), rb = demotionRank(b);
-    if (ra !== rb) return ra - rb;
-    return demotedGroupKey(a).localeCompare(demotedGroupKey(b), "fr");
-  });
+  // Types présents dans le catalogue réel, avec leur nombre d'articles.
+  const productTypes = useMemo(() => {
+    const m = new Map<string, { key: string; label: string; count: number }>();
+    for (const p of allProducts) {
+      const label = productTypeLabel(p);
+      if (!label) continue;
+      if (stockOnly && !inStock(p)) continue;
+      const key = normalizeTypeKey(label);
+      const cur = m.get(key);
+      if (cur) cur.count++;
+      else m.set(key, { key, label, count: 1 });
+    }
+    return Array.from(m.values()).sort((a, b) => a.label.localeCompare(b.label, "fr"));
+  }, [allProducts, stockOnly]);
 
   const freeProductIds = new Set(freeItems.map(f => f.product.id));
   const cartItems = Object.values(cart);
@@ -2356,6 +2507,26 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
             </button>
           );
         })}
+
+        {/* ── Types de produit (x_type_de_produit_id) ── */}
+        {productTypes.length > 0 && (
+          <div style={{ marginTop: 8, borderTop: `1px solid ${C.border}`, paddingTop: 6 }}>
+            <div style={{ padding: "4px 10px", fontSize: 10, fontWeight: 700, color: C.muted, textTransform: "uppercase" as const, letterSpacing: "0.08em" }}>Type de produit</div>
+            {productTypes.map(t => {
+              const id = TYPE_CAT_PREFIX + t.key;
+              const active = activeCatId === id;
+              return (
+                <button key={t.key} onClick={() => setActiveCatId(id)} title={t.label}
+                  style={{ width: "100%", padding: "10px 10px", background: active ? C.tealSoft : "transparent", border: "none", borderLeft: `3px solid ${active ? C.teal : "transparent"}`, cursor: "pointer", textAlign: "left" as const, fontFamily: "inherit", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6, transition: "all 0.1s" }}>
+                  <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const, fontSize: 12, fontWeight: active ? 700 : 400, color: active ? C.tealDark : C.textSec }}>
+                    {t.label}
+                  </span>
+                  <span style={{ fontSize: 10, fontWeight: 700, color: active ? C.teal : C.muted, background: active ? C.tealMid : C.bg, borderRadius: 5, padding: "1px 5px", flexShrink: 0 }}>{t.count}</span>
+                </button>
+              );
+            })}
+          </div>
+        )}
 
         {/* ── Offres MEA ── */}
         <div style={{ marginTop: 8, borderTop: `1px solid ${C.border}`, paddingTop: 6 }}>
@@ -2465,25 +2636,15 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
             </div>
           ) : (
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(172px, 1fr))", gap: 10 }}>
-              {displayedProducts.map((p, idx) => {
+              {displayedProducts.map(p => {
                 const qty = cart[p.id]?.qty || 0;
                 const isFree = freeProductIds.has(p.id);
                 const stock = Math.max(0, Math.round(p.virtual_available || 0));
                 // Prix client calculé côté client à partir des items pricelist (0 appel supplémentaire)
                 const clientPrice = applyPricelist(p.lst_price || 0, p.id, p.product_tmpl_id?.[0] || 0, priceItems, qty || 1);
                 const hasDiscount = priceItems.length > 0 && Math.abs(clientPrice - (p.lst_price || 0)) > 0.01;
-                // Intertitre pleine largeur au premier article de chaque type secondaire.
-                const group = demotedGroupLabel(p);
-                const showGroupHeader = !!group && demotedGroupKey(p) !== (idx > 0 ? demotedGroupKey(displayedProducts[idx - 1]) : "");
                 return (
-                  <Fragment key={p.id}>
-                  {showGroupHeader && (
-                    <div style={{ gridColumn: "1 / -1", marginTop: idx > 0 ? 10 : 0, paddingBottom: 4, borderBottom: `1px solid ${C.border}`, display: "flex", alignItems: "center", gap: 7 }}>
-                      <Icon name="package" size={12} color={C.muted} />
-                      <span style={{ fontSize: 11, fontWeight: 800, color: C.muted, textTransform: "uppercase" as const, letterSpacing: "0.05em" }}>{group}</span>
-                    </div>
-                  )}
-                  <div style={{ background: C.white, borderRadius: 14, overflow: "hidden", border: `2px solid ${qty > 0 ? C.teal : isFree ? C.green : C.border}`, boxShadow: qty > 0 ? `0 0 0 3px ${C.tealSoft}` : C.shadow, transition: "all 0.15s" }}>
+                  <div key={p.id} style={{ background: C.white, borderRadius: 14, overflow: "hidden", border: `2px solid ${qty > 0 ? C.teal : isFree ? C.green : C.border}`, boxShadow: qty > 0 ? `0 0 0 3px ${C.tealSoft}` : C.shadow, transition: "all 0.15s" }}>
                     <div onClick={() => openZoom(p)} title="Agrandir l'image" style={{ height: 80, background: C.bg, display: "flex", alignItems: "center", justifyContent: "center", position: "relative" as const, cursor: "zoom-in" }}>
                       <div style={{ position: "absolute" }}><Icon name="package" size={30} color={C.border} /></div>
                       <ProductImage id={p.id} networkUrl={imgUrl(p.id)} style={{ height: 72, objectFit: "contain", position: "relative" as const, zIndex: 1 }} />
@@ -2523,7 +2684,6 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
                       </button>
                     </div>
                   </div>
-                  </Fragment>
                 );
               })}
             </div>
