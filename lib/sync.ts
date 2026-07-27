@@ -10,9 +10,12 @@ import * as db from "@/lib/localdb";
 import * as loyalty from "@/lib/loyalty";
 
 // Champs produits — identiques à ceux consommés dans OrderScreen (favoris, MEA, recherche).
+// x_type_de_produit_id : type de produit Odoo (échantillon, testeur, travel size…).
+// Nécessaire au regroupement du catalogue — sans lui, le tri par type ne s'applique
+// pas aux résultats hors ligne.
 export const PRODUCT_FIELDS = [
   "id", "name", "default_code", "barcode", "lst_price",
-  "product_tmpl_id", "virtual_available",
+  "product_tmpl_id", "virtual_available", "x_type_de_produit_id",
 ];
 
 // Champs clients — alignés sur CLIENT_FIELDS d'OrderScreen (+ géoloc pour la carte).

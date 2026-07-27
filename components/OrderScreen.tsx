@@ -1,5 +1,5 @@
 "use client";
-import { useState, useEffect, useCallback, useRef, useMemo } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo, Fragment } from "react";
 import * as odoo from "@/lib/odoo";
 import AppointmentModal from "@/components/AppointmentModal";
 import ClientNoteModal from "@/components/ClientNoteModal";
@@ -108,6 +108,46 @@ function getCatCode(product: any): string {
 
 function matchesCat(product: any, cat: SmartCat): boolean {
   return getCatCode(product) === cat.code;
+}
+
+// ── Type de produit Odoo (x_type_de_produit_id sur product.template) ──────────
+// Échantillons, testeurs, travel size… encombraient le haut des gammes alors qu'on
+// y cherche des articles de vente courante. On ne les masque pas : on les descend
+// en bas de la gamme, regroupés sous un intitulé.
+//
+// La détection se fait par MOT-CLÉ sur le libellé Odoo, pas sur l'ID : les IDs de
+// x_type_de_produit diffèrent d'une base à l'autre, un libellé reste lisible.
+const DEMOTED_TYPE_PATTERNS: RegExp[] = [
+  /[ée]chantillon/i,
+  /testeur/i,
+  /travel/i,
+  /\bplv\b/i,
+  /d[ée]mo/i,
+];
+
+function productTypeLabel(product: any): string {
+  const v = product?.x_type_de_produit_id;
+  return Array.isArray(v) ? String(v[1] || "") : "";
+}
+
+// "" pour un article courant, sinon le libellé du type (sert aussi de titre de groupe).
+function demotedGroupLabel(product: any): string {
+  const label = productTypeLabel(product);
+  if (!label) return "";
+  return DEMOTED_TYPE_PATTERNS.some(re => re.test(label)) ? label : "";
+}
+
+function demotionRank(product: any): number {
+  return demotedGroupLabel(product) ? 1 : 0;
+}
+
+// Clé de regroupement insensible à la casse ET aux accents : les libellés Odoo sont
+// saisis à la main, « Echantillon » et « Échantillon » doivent tomber dans le même
+// groupe au lieu d'en créer deux qui se suivent.
+function demotedGroupKey(product: any): string {
+  return demotedGroupLabel(product)
+    .normalize("NFD").replace(/[̀-ͯ]/g, "")
+    .toLowerCase().trim();
 }
 
 function loadRules(): FreeRule[] { try { return JSON.parse(localStorage.getItem(LS_RULES) || "[]"); } catch { return []; } }
@@ -2184,9 +2224,19 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
       domain.push(["name", "ilike", q.trim()]);
       domain.push(["default_code", "ilike", q.trim()]);
     }
+    const BASE_FIELDS = ["id", "name", "default_code", "barcode", "lst_price", "product_tmpl_id", "virtual_available"];
     try {
-      const p = await odoo.searchRead(session, "product.product", domain,
-        ["id", "name", "default_code", "barcode", "lst_price", "product_tmpl_id", "virtual_available"], 500, "name");
+      let p: any[];
+      try {
+        p = await odoo.searchRead(session, "product.product", domain,
+          [...BASE_FIELDS, "x_type_de_produit_id"], 500, "name");
+      } catch (e) {
+        // Filet de sécurité : un champ personnalisé absent de l'instance fait planter
+        // TOUTE la requête (cf. l'incident `sequence` sur pricelist). Plutôt que de
+        // vider le catalogue, on retente sans le champ — on perd juste le regroupement.
+        if (odoo.isNetworkError(e) || odoo.isSessionExpired(e)) throw e;
+        p = await odoo.searchRead(session, "product.product", domain, BASE_FIELDS, 500, "name");
+      }
       // Produits en stock en premier, puis les autres
       p.sort((a: any, b: any) => (b.virtual_available || 0) - (a.virtual_available || 0));
       if (!q) setAllProducts(p);
@@ -2234,7 +2284,17 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
             return cat ? matchesCat(p, cat) : true;
           })
         : allProducts;
-  const displayedProducts = stockOnly ? baseProducts.filter(inStock) : baseProducts;
+  const filteredProducts = stockOnly ? baseProducts.filter(inStock) : baseProducts;
+
+  // Articles courants d'abord, puis les types secondaires regroupés par libellé.
+  // Tri STABLE (garanti par la spec JS) : l'ordre existant — stock décroissant, ou
+  // fréquence de commande pour les favoris — est conservé à l'intérieur de chaque
+  // groupe. On ne fait que déplacer les échantillons vers le bas.
+  const displayedProducts = [...filteredProducts].sort((a, b) => {
+    const ra = demotionRank(a), rb = demotionRank(b);
+    if (ra !== rb) return ra - rb;
+    return demotedGroupKey(a).localeCompare(demotedGroupKey(b), "fr");
+  });
 
   const freeProductIds = new Set(freeItems.map(f => f.product.id));
   const cartItems = Object.values(cart);
@@ -2405,15 +2465,25 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
             </div>
           ) : (
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(172px, 1fr))", gap: 10 }}>
-              {displayedProducts.map(p => {
+              {displayedProducts.map((p, idx) => {
                 const qty = cart[p.id]?.qty || 0;
                 const isFree = freeProductIds.has(p.id);
                 const stock = Math.max(0, Math.round(p.virtual_available || 0));
                 // Prix client calculé côté client à partir des items pricelist (0 appel supplémentaire)
                 const clientPrice = applyPricelist(p.lst_price || 0, p.id, p.product_tmpl_id?.[0] || 0, priceItems, qty || 1);
                 const hasDiscount = priceItems.length > 0 && Math.abs(clientPrice - (p.lst_price || 0)) > 0.01;
+                // Intertitre pleine largeur au premier article de chaque type secondaire.
+                const group = demotedGroupLabel(p);
+                const showGroupHeader = !!group && demotedGroupKey(p) !== (idx > 0 ? demotedGroupKey(displayedProducts[idx - 1]) : "");
                 return (
-                  <div key={p.id} style={{ background: C.white, borderRadius: 14, overflow: "hidden", border: `2px solid ${qty > 0 ? C.teal : isFree ? C.green : C.border}`, boxShadow: qty > 0 ? `0 0 0 3px ${C.tealSoft}` : C.shadow, transition: "all 0.15s" }}>
+                  <Fragment key={p.id}>
+                  {showGroupHeader && (
+                    <div style={{ gridColumn: "1 / -1", marginTop: idx > 0 ? 10 : 0, paddingBottom: 4, borderBottom: `1px solid ${C.border}`, display: "flex", alignItems: "center", gap: 7 }}>
+                      <Icon name="package" size={12} color={C.muted} />
+                      <span style={{ fontSize: 11, fontWeight: 800, color: C.muted, textTransform: "uppercase" as const, letterSpacing: "0.05em" }}>{group}</span>
+                    </div>
+                  )}
+                  <div style={{ background: C.white, borderRadius: 14, overflow: "hidden", border: `2px solid ${qty > 0 ? C.teal : isFree ? C.green : C.border}`, boxShadow: qty > 0 ? `0 0 0 3px ${C.tealSoft}` : C.shadow, transition: "all 0.15s" }}>
                     <div onClick={() => openZoom(p)} title="Agrandir l'image" style={{ height: 80, background: C.bg, display: "flex", alignItems: "center", justifyContent: "center", position: "relative" as const, cursor: "zoom-in" }}>
                       <div style={{ position: "absolute" }}><Icon name="package" size={30} color={C.border} /></div>
                       <ProductImage id={p.id} networkUrl={imgUrl(p.id)} style={{ height: 72, objectFit: "contain", position: "relative" as const, zIndex: 1 }} />
@@ -2453,6 +2523,7 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
                       </button>
                     </div>
                   </div>
+                  </Fragment>
                 );
               })}
             </div>
