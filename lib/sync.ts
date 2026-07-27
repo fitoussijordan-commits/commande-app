@@ -23,7 +23,7 @@ export const CLIENT_FIELDS = [
   "id", "name", "ref", "city", "country_id",
   "property_product_pricelist", "email", "phone",
   "partner_latitude", "partner_longitude", "is_company",
-  "parent_id", "type",
+  "parent_id", "type", "x_evolution_ca_n_n_1",
 ];
 
 const KEY = "all";

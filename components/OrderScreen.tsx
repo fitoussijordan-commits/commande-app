@@ -909,7 +909,21 @@ const LOC_RADIUS_KM = 1;
 
 // is_company sert au départage quand plusieurs fiches partagent le même code (ref).
 // parent_id / type servent à écarter les adresses enfants (voir dedupeClients).
-const CLIENT_FIELDS = ["id", "name", "ref", "city", "country_id", "property_product_pricelist", "email", "phone", "is_company", "x_nbre_visites_realisees", "parent_id", "type"];
+const CLIENT_FIELDS = ["id", "name", "ref", "city", "country_id", "property_product_pricelist", "email", "phone", "is_company", "x_nbre_visites_realisees", "parent_id", "type", "x_evolution_ca_n_n_1"];
+
+// Évolution du CA année N vs N-1 (onglet « Conditions commerciales » de la fiche
+// client Odoo, champ x_evolution_ca_n_n_1).
+//
+// ATTENTION au facteur 100 : le champ porte le widget `percentage` côté Odoo, qui
+// stocke un RATIO et multiplie par 100 à l'affichage. Vérifié sur les données de
+// PHARMACIE AZUR — CA à date N-1 = 6 075,97 € et CA à date N = 5 389,33 €, soit
+// -0,11301 en base, affiché « -11,3% » par Odoo. On applique donc le même ×100.
+function fmtEvolution(v: unknown): string | null {
+  if (typeof v !== "number" || !isFinite(v)) return null;
+  const pct = v * 100;
+  // Le signe + n'est pas automatique en JS, et il porte l'information ici.
+  return `${pct > 0 ? "+" : ""}${pct.toFixed(1).replace(".", ",")} %`;
+}
 
 // Types d'adresse Odoo qui ne sont PAS des clients commandables : ce sont des
 // adresses rattachées à une société mère (livraison, facturation…).
@@ -1582,6 +1596,11 @@ function ClientHub({ session, client, hasDraft, onOrder, onHistory, onAppointmen
     ? odooToLocalDate(stats.lastDate).toLocaleDateString("fr-FR", { day: "numeric", month: "short" })
     : "—";
 
+  // Évolution CA N/N-1 : lue directement sur la fiche client, donc disponible hors
+  // ligne sans appel supplémentaire (contrairement aux stats calculées sur sale.order).
+  const evolutionValue = typeof client.x_evolution_ca_n_n_1 === "number" ? client.x_evolution_ca_n_n_1 : 0;
+  const evolution = fmtEvolution(client.x_evolution_ca_n_n_1);
+
   // Refonte : une seule carte accentuée (l'action principale), les autres en blanc.
   const cards = [
     { key: "order", icon: "cart", title: "Prise de commande", subtitle: hasDraft ? "Brouillon en attente" : "Nouveau devis", primary: true, badge: hasDraft, onClick: onOrder },
@@ -1627,8 +1646,10 @@ function ClientHub({ session, client, hasDraft, onOrder, onHistory, onAppointmen
             <div style={{ fontSize: 10.5, opacity: 0.85, fontWeight: 600, marginTop: 2, textTransform: "uppercase" as const, letterSpacing: "0.03em" }}>CA 12 mois</div>
           </div>
           <div style={{ background: C.white, border: `1.5px solid ${C.border}`, borderRadius: 16, padding: "14px 16px", boxShadow: C.shadow }}>
-            <div style={{ fontSize: 19, fontWeight: 800, color: C.text }}>{stats ? stats.count : "…"}</div>
-            <div style={{ fontSize: 10.5, color: C.muted, fontWeight: 600, marginTop: 2, textTransform: "uppercase" as const, letterSpacing: "0.03em" }}>Commandes</div>
+            <div style={{ fontSize: 19, fontWeight: 800, color: evolution === null ? C.muted : (evolutionValue >= 0 ? C.green : C.red) }}>
+              {evolution ?? "—"}
+            </div>
+            <div style={{ fontSize: 10.5, color: C.muted, fontWeight: 600, marginTop: 2, textTransform: "uppercase" as const, letterSpacing: "0.03em" }}>Évolution CA N-1</div>
           </div>
           <div style={{ background: C.white, border: `1.5px solid ${C.border}`, borderRadius: 16, padding: "14px 16px", boxShadow: C.shadow }}>
             <div style={{ fontSize: 19, fontWeight: 800, color: C.text }}>{lastDateLabel}</div>
