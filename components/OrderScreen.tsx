@@ -111,24 +111,32 @@ function matchesCat(product: any, cat: SmartCat): boolean {
 }
 
 // ── Type de produit Odoo (x_type_de_produit_id sur product.template) ──────────
-// Échantillon, testeur, travel size, miniature… Ils deviennent des entrées de
-// filtre dans le volet des gammes, alimentées par le catalogue réel : aucune liste
-// codée en dur, un nouveau type créé dans Odoo apparaît tout seul.
+// Volontairement PAS la liste brute des types Odoo : seulement les cinq catégories
+// utiles en visite. « Accessoires » regroupe plusieurs types Odoo (sacs, éponges).
+//
+// Le rattachement se fait par MOT-CLÉ sur le libellé, pas sur l'ID : les IDs de
+// x_type_de_produit diffèrent d'une base à l'autre, et un libellé au singulier,
+// au pluriel ou mal accentué tombe quand même dans la bonne catégorie.
 const TYPE_CAT_PREFIX = "type:";
+
+const PRODUCT_TYPE_GROUPS: { id: string; label: string; patterns: RegExp[] }[] = [
+  { id: "testeurs",    label: "Testeurs",     patterns: [/testeur/i] },
+  { id: "echantillons", label: "Échantillons", patterns: [/[ée]chantillon/i] },
+  { id: "travel",      label: "Travel size",  patterns: [/travel/i] },
+  { id: "miniatures",  label: "Miniatures",   patterns: [/miniature/i] },
+  { id: "accessoires", label: "Accessoires",  patterns: [/\bsacs?\b/i, /[ée]ponge/i, /accessoire/i] },
+];
 
 function productTypeLabel(product: any): string {
   const v = product?.x_type_de_produit_id;
   return Array.isArray(v) ? String(v[1] || "") : "";
 }
 
-// Clé insensible à la casse ET aux accents : les libellés Odoo sont saisis à la
-// main, « Echantillon » et « Échantillon » doivent tomber dans la même entrée.
-function normalizeTypeKey(label: string): string {
-  return label.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().trim();
-}
-
-function productTypeKey(product: any): string {
-  return normalizeTypeKey(productTypeLabel(product));
+function matchesTypeGroup(product: any, groupId: string): boolean {
+  const label = productTypeLabel(product);
+  if (!label) return false;
+  const group = PRODUCT_TYPE_GROUPS.find(g => g.id === groupId);
+  return group ? group.patterns.some(re => re.test(label)) : false;
 }
 
 function loadRules(): FreeRule[] { try { return JSON.parse(localStorage.getItem(LS_RULES) || "[]"); } catch { return []; } }
@@ -2423,7 +2431,7 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
     : activeCatId === FAV_CAT_ID
       ? favProducts
       : activeCatId?.startsWith(TYPE_CAT_PREFIX)
-        ? allProducts.filter(p => productTypeKey(p) === activeCatId.slice(TYPE_CAT_PREFIX.length))
+        ? allProducts.filter(p => matchesTypeGroup(p, activeCatId.slice(TYPE_CAT_PREFIX.length)))
       : activeCatId
         ? allProducts.filter(p => {
             const cat = smartCats.find(c => c.id === activeCatId);
@@ -2432,19 +2440,14 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
         : allProducts;
   const displayedProducts = stockOnly ? baseProducts.filter(inStock) : baseProducts;
 
-  // Types présents dans le catalogue réel, avec leur nombre d'articles.
+  // Les cinq catégories de type, avec leur nombre d'articles. Une catégorie sans
+  // aucun produit n'est pas affichée (inutile de proposer un filtre vide).
   const productTypes = useMemo(() => {
-    const m = new Map<string, { key: string; label: string; count: number }>();
-    for (const p of allProducts) {
-      const label = productTypeLabel(p);
-      if (!label) continue;
-      if (stockOnly && !inStock(p)) continue;
-      const key = normalizeTypeKey(label);
-      const cur = m.get(key);
-      if (cur) cur.count++;
-      else m.set(key, { key, label, count: 1 });
-    }
-    return Array.from(m.values()).sort((a, b) => a.label.localeCompare(b.label, "fr"));
+    return PRODUCT_TYPE_GROUPS.map(g => ({
+      id: g.id,
+      label: g.label,
+      count: allProducts.filter(p => matchesTypeGroup(p, g.id) && (!stockOnly || inStock(p))).length,
+    })).filter(g => g.count > 0);
   }, [allProducts, stockOnly]);
 
   const freeProductIds = new Set(freeItems.map(f => f.product.id));
@@ -2513,10 +2516,10 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
           <div style={{ marginTop: 8, borderTop: `1px solid ${C.border}`, paddingTop: 6 }}>
             <div style={{ padding: "4px 10px", fontSize: 10, fontWeight: 700, color: C.muted, textTransform: "uppercase" as const, letterSpacing: "0.08em" }}>Type de produit</div>
             {productTypes.map(t => {
-              const id = TYPE_CAT_PREFIX + t.key;
+              const id = TYPE_CAT_PREFIX + t.id;
               const active = activeCatId === id;
               return (
-                <button key={t.key} onClick={() => setActiveCatId(id)} title={t.label}
+                <button key={t.id} onClick={() => setActiveCatId(id)} title={t.label}
                   style={{ width: "100%", padding: "10px 10px", background: active ? C.tealSoft : "transparent", border: "none", borderLeft: `3px solid ${active ? C.teal : "transparent"}`, cursor: "pointer", textAlign: "left" as const, fontFamily: "inherit", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6, transition: "all 0.1s" }}>
                   <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const, fontSize: 12, fontWeight: active ? 700 : 400, color: active ? C.tealDark : C.textSec }}>
                     {t.label}
