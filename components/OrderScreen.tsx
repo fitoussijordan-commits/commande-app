@@ -917,7 +917,7 @@ const LOC_RADIUS_KM = 1;
 
 // is_company sert au départage quand plusieurs fiches partagent le même code (ref).
 // parent_id / type servent à écarter les adresses enfants (voir dedupeClients).
-const CLIENT_FIELDS = ["id", "name", "ref", "city", "country_id", "property_product_pricelist", "email", "phone", "is_company", "x_nbre_visites_realisees", "parent_id", "type", "x_evolution_ca_n_n_1"];
+const CLIENT_FIELDS = ["id", "name", "ref", "city", "country_id", "property_product_pricelist", "email", "phone", "is_company", "x_nbre_visites_realisees", "parent_id", "type", "x_evolution_ca_n_n_1", "x_ca_n_1"];
 
 // Évolution du CA année N vs N-1 (onglet « Conditions commerciales » de la fiche
 // client Odoo, champ x_evolution_ca_n_n_1).
@@ -1608,6 +1608,9 @@ function ClientHub({ session, client, hasDraft, onOrder, onHistory, onAppointmen
   // ligne sans appel supplémentaire (contrairement aux stats calculées sur sale.order).
   const evolutionValue = typeof client.x_evolution_ca_n_n_1 === "number" ? client.x_evolution_ca_n_n_1 : 0;
   const evolution = fmtEvolution(client.x_evolution_ca_n_n_1);
+  // Montant de référence affiché sous le pourcentage (champ monétaire x_ca_n_1).
+  // Odoo renvoie `false` — et non 0 — quand le champ n'est pas rempli.
+  const caN1 = typeof client.x_ca_n_1 === "number" ? fmtPrice(client.x_ca_n_1) : null;
 
   // Refonte : une seule carte accentuée (l'action principale), les autres en blanc.
   const cards = [
@@ -1657,6 +1660,9 @@ function ClientHub({ session, client, hasDraft, onOrder, onHistory, onAppointmen
             <div style={{ fontSize: 19, fontWeight: 800, color: evolution === null ? C.muted : (evolutionValue >= 0 ? C.green : C.red) }}>
               {evolution ?? "—"}
             </div>
+            {caN1 && (
+              <div style={{ fontSize: 12, fontWeight: 700, color: C.textSec, marginTop: 1 }}>{caN1}</div>
+            )}
             <div style={{ fontSize: 10.5, color: C.muted, fontWeight: 600, marginTop: 2, textTransform: "uppercase" as const, letterSpacing: "0.03em" }}>Évolution CA N-1</div>
           </div>
           <div style={{ background: C.white, border: `1.5px solid ${C.border}`, borderRadius: 16, padding: "14px 16px", boxShadow: C.shadow }}>
