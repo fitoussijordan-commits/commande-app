@@ -162,6 +162,14 @@ function migrateLegacyDraft() {
 
 function uid() { return Math.random().toString(36).slice(2, 9); }
 function fmtPrice(n: number) { return new Intl.NumberFormat("fr-FR", { style: "currency", currency: "EUR" }).format(n); }
+
+// Certaines offres Odoo utilisent un vrai produit comme titre de rubrique, dont le
+// nom est encadré de tirets — ex. « ----- Éléments de PLV optionnels : ----- ».
+// Ce n'est pas un article à vendre : prix nul, stock nul, et sa présence au panier
+// déclenchait une fausse alerte de rupture qui bloquait le devis.
+function isSeparatorProduct(product: any): boolean {
+  return /^\s*[-–—]{3,}/.test(String(product?.name || ""));
+}
 function fmtDate(ts: number) {
   const d = new Date(ts);
   return `${d.toLocaleDateString("fr-FR")} à ${d.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}`;
@@ -2105,8 +2113,10 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
 
       let lines: any[];
       try {
+        // display_type = false : on écarte les lignes de section et de note du
+        // modèle Odoo, qui ne sont pas des produits à mettre au panier.
         lines = await odoo.searchRead(session, "sale.order.template.line",
-          [["id", "in", lineIds], ["product_id", "!=", false]],
+          [["id", "in", lineIds], ["product_id", "!=", false], ["display_type", "=", false]],
           ["id", "product_id", "product_uom_qty"],
           200);
       } catch {
@@ -2134,6 +2144,11 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
       for (const line of lines) {
         const product: any = productMap.get(line.product_id[0]);
         if (!product) continue;
+        // Certaines offres utilisent un VRAI produit comme séparateur de rubrique
+        // (ex. « ----- Éléments de PLV optionnels : ----- », code so1, prix 0). Il a
+        // un product_id, donc display_type ne le filtre pas — mais il n'a aucun stock,
+        // ce qui déclenchait une fausse alerte de rupture.
+        if (isSeparatorProduct(product)) continue;
         const qty = Math.max(1, Math.round(line.product_uom_qty || 1));
         const clientPrice = applyPricelist(product.lst_price || 0, product.id, product.product_tmpl_id?.[0] || 0, priceItems, qty);
         onQtyChange(product, (cart[product.id]?.qty || 0) + qty, clientPrice);
@@ -2224,8 +2239,11 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
   const netTotal = cartTotal - discountTotal;
 
   // Ruptures de stock : produits dont la quantité commandée dépasse le stock
-  // prévisionnel (virtual_available). Bloque la création du devis.
+  // prévisionnel (virtual_available). AVERTISSEMENT seulement — le devis reste
+  // créable : le stock bouge entre la visite et la livraison, et un devis n'est pas
+  // une expédition. Les faux séparateurs (stock nul par nature) sont ignorés.
   const overStockItems = cartItems.filter(i => {
+    if (isSeparatorProduct(i.product)) return false;
     const stock = Math.floor(i.product.virtual_available || 0);
     return i.qty > stock;
   });
@@ -2460,8 +2478,18 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
               const pricelistPct = hasPricelistDiscount ? Math.round((1 - item.unitPrice / catalog) * 100) : 0;
               return (
                 <div key={item.product.id} style={{ marginBottom: 8, padding: "10px 10px", background: C.bg, borderRadius: 10 }}>
-                  {/* Étage 1 : nom complet sur toute la largeur */}
-                  <div style={{ fontSize: 12.5, fontWeight: 700, color: C.text, lineHeight: 1.3, marginBottom: 2 }}>{item.product.name}</div>
+                  {/* Étage 1 : nom complet + croix de suppression rapide */}
+                  <div style={{ display: "flex", alignItems: "flex-start", gap: 8, marginBottom: 2 }}>
+                    <div style={{ flex: 1, minWidth: 0, fontSize: 12.5, fontWeight: 700, color: C.text, lineHeight: 1.3 }}>{item.product.name}</div>
+                    <button onClick={() => onQtyChange(item.product, 0)}
+                      title="Retirer cet article du panier"
+                      aria-label={`Retirer ${item.product.name} du panier`}
+                      style={{ flexShrink: 0, width: 26, height: 26, marginTop: -2, marginRight: -2, borderRadius: 7, background: "transparent", border: "none", cursor: "pointer", color: C.muted, fontSize: 15, lineHeight: 1, fontFamily: "inherit", display: "flex", alignItems: "center", justifyContent: "center" }}
+                      onMouseEnter={e => { e.currentTarget.style.background = C.redSoft; e.currentTarget.style.color = C.red; }}
+                      onMouseLeave={e => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = C.muted; }}>
+                      ✕
+                    </button>
+                  </div>
                   <div style={{ fontSize: 10, color: C.muted, display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" as const, marginBottom: 8 }}>
                     {item.product.default_code && <span style={{ fontFamily: "monospace" }}>{item.product.default_code}</span>}
                     <span>{item.qty} × {fmtPrice(item.unitPrice)}</span>
@@ -2610,14 +2638,14 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
           </div>
         )}
 
-        {/* Alerte rupture de stock — bloque la création du devis */}
+        {/* Alerte rupture de stock — informative, ne bloque plus la validation */}
         {hasStockIssue && (
-          <div style={{ margin: "0 12px 8px", padding: "10px 12px", background: C.redSoft, border: `1px solid ${C.red}44`, borderRadius: 12 }}>
-            <div style={{ fontSize: 11, fontWeight: 800, color: C.red, marginBottom: 4, display: "flex", alignItems: "center", gap: 6 }}>
-              <Icon name="package" size={13} /> Stock insuffisant
+          <div style={{ margin: "0 12px 8px", padding: "10px 12px", background: C.orangeSoft, border: `1px solid ${C.orange}44`, borderRadius: 12 }}>
+            <div style={{ fontSize: 11, fontWeight: 800, color: C.orange, marginBottom: 4, display: "flex", alignItems: "center", gap: 6 }}>
+              <Icon name="package" size={13} /> Stock insuffisant — devis possible
             </div>
             {overStockItems.map(i => (
-              <div key={i.product.id} style={{ fontSize: 11, color: C.red, marginBottom: 2 }}>
+              <div key={i.product.id} style={{ fontSize: 11, color: C.orange, marginBottom: 2 }}>
                 {i.product.name} — commandé {i.qty}, dispo {Math.floor(i.product.virtual_available || 0)}
               </div>
             ))}
@@ -2649,11 +2677,10 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
 
             {/* Le bouton annonce la mise en file AVANT la validation quand on est hors
                  ligne — pas de surprise après coup. */}
-            <button onClick={onValidate} disabled={submitting || cartCount === 0 || hasStockIssue}
-              style={{ width: "100%", padding: "14px 0", background: (cartCount === 0 || hasStockIssue) ? "rgba(255,255,255,0.12)" : submitting ? "rgba(94,234,212,0.4)" : "#2dd4bf", color: (cartCount === 0 || hasStockIssue) ? "rgba(255,255,255,0.4)" : "#0f172a", border: "none", borderRadius: 999, fontSize: 14, fontWeight: 800, cursor: (cartCount === 0 || hasStockIssue) ? "default" : "pointer", fontFamily: "inherit", transition: "all 0.2s" }}>
+            <button onClick={onValidate} disabled={submitting || cartCount === 0}
+              style={{ width: "100%", padding: "14px 0", background: cartCount === 0 ? "rgba(255,255,255,0.12)" : submitting ? "rgba(94,234,212,0.4)" : "#2dd4bf", color: cartCount === 0 ? "rgba(255,255,255,0.4)" : "#0f172a", border: "none", borderRadius: 999, fontSize: 14, fontWeight: 800, cursor: cartCount === 0 ? "default" : "pointer", fontFamily: "inherit", transition: "all 0.2s" }}>
               {submitting ? "Création…"
                 : cartCount === 0 ? "Panier vide"
-                : hasStockIssue ? "Stock insuffisant — ajuste les quantités"
                 : !navOnline ? "Enregistrer hors ligne · envoi auto"
                 : `Créer le devis${freeItems.length > 0 ? " + BC gratuit" : ""} →`}
             </button>
