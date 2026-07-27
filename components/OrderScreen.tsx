@@ -163,6 +163,11 @@ function migrateLegacyDraft() {
 function uid() { return Math.random().toString(36).slice(2, 9); }
 function fmtPrice(n: number) { return new Intl.NumberFormat("fr-FR", { style: "currency", currency: "EUR" }).format(n); }
 
+// Type de gratuité proposé par défaut (valeur de la sélection `type_gratuit` sur
+// sale.order.line côté Odoo). C'est le cas très majoritaire — on le présélectionne,
+// le commercial reste libre d'en choisir un autre.
+const DEFAULT_FREE_TYPE = "coffre_dc";
+
 // Certaines offres Odoo utilisent un vrai produit comme titre de rubrique, dont le
 // nom est encadré de tirets — ex. « ----- Éléments de PLV optionnels : ----- ».
 // Ce n'est pas un article à vendre : prix nul, stock nul, et sa présence au panier
@@ -2539,7 +2544,7 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
                 <span style={{ fontSize: 10, fontWeight: 700, color: C.green, textTransform: "uppercase" as const, letterSpacing: "0.05em", display: "flex", alignItems: "center", gap: 5 }}><Icon name="gift" size={11} /> Gratuités</span>
                 {/* Auto-complète Coffre DC sur toutes les lignes sans type */}
                 {giftItems.some(g => !g.type) && (
-                  <button onClick={() => setGiftItems(prev => prev.map(g => g.type ? g : { ...g, type: "coffre_dc" }))}
+                  <button onClick={() => setGiftItems(prev => prev.map(g => g.type ? g : { ...g, type: DEFAULT_FREE_TYPE }))}
                     style={{ fontSize: 10, fontWeight: 700, color: "#fff", background: "#7c3aed", border: "none", borderRadius: 6, padding: "3px 8px", cursor: "pointer", fontFamily: "inherit" }}>
                     Tout en Coffre DC
                   </button>
@@ -2776,7 +2781,18 @@ function GiftModal({ product, freeTypes, onClose, onConfirm }: {
   onClose: () => void; onConfirm: (qty: number, type: string) => void;
 }) {
   const [qty, setQty] = useState(1);
-  const [type, setType] = useState("");
+  // Présélection de Coffre DC. Les types viennent d'Odoo et peuvent arriver après le
+  // premier rendu (ou depuis le cache hors ligne), d'où l'initialisation + l'effet.
+  const hasDefault = (list: sync.FreeType[]) => list.some(t => t.value === DEFAULT_FREE_TYPE);
+  const [type, setType] = useState(() => (hasDefault(freeTypes) ? DEFAULT_FREE_TYPE : ""));
+  // Le garde-fou évite de réimposer le défaut si le commercial repasse sur « aucun ».
+  const defaultApplied = useRef(type !== "");
+  useEffect(() => {
+    if (defaultApplied.current || !hasDefault(freeTypes)) return;
+    defaultApplied.current = true;
+    setType(DEFAULT_FREE_TYPE);
+  }, [freeTypes]); // eslint-disable-line react-hooks/exhaustive-deps
+
   return (
     <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 250, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
       <div onClick={e => e.stopPropagation()} style={{ width: "100%", maxWidth: 380, background: C.white, borderRadius: 18, padding: "22px 22px 20px", boxShadow: C.shadowXl, fontFamily: "'DM Sans', sans-serif" }}>
@@ -2795,7 +2811,7 @@ function GiftModal({ product, freeTypes, onClose, onConfirm }: {
         <div style={{ fontSize: 12, fontWeight: 700, color: C.textSec, marginBottom: 6 }}>Type de gratuité</div>
         <select value={type} onChange={e => setType(e.target.value)}
           style={{ width: "100%", padding: "11px 12px", fontSize: 13, borderRadius: 10, border: `1.5px solid ${C.border}`, background: "#fff", color: C.text, fontFamily: "inherit", marginBottom: 18 }}>
-          <option value="">— Choisir (ou compléter plus tard) —</option>
+          <option value="">— Aucun (compléter plus tard) —</option>
           {freeTypes.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
         </select>
 
