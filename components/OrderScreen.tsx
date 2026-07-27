@@ -908,13 +908,50 @@ function fmtDistance(km: number): string {
 const LOC_RADIUS_KM = 1;
 
 // is_company sert au départage quand plusieurs fiches partagent le même code (ref).
-// parent_id / type : diagnostic des doublons de recherche client (une fiche mère et
-// son adresse enfant portant le même nom ressortent toutes les deux si les deux ont
-// customer_rank > 0). Mettre DEBUG_CLIENTS à false une fois le diagnostic terminé.
+// parent_id / type servent à écarter les adresses enfants (voir dedupeClients).
 const CLIENT_FIELDS = ["id", "name", "ref", "city", "country_id", "property_product_pricelist", "email", "phone", "is_company", "x_nbre_visites_realisees", "parent_id", "type"];
 
-// Affiche l'identité Odoo brute (id, parent_id, type) sous chaque résultat client.
-const DEBUG_CLIENTS = true;
+// Types d'adresse Odoo qui ne sont PAS des clients commandables : ce sont des
+// adresses rattachées à une société mère (livraison, facturation…).
+const ADDRESS_TYPES = new Set(["delivery", "invoice", "other", "private"]);
+
+// Score de « fiche la plus légitime » quand deux enregistrements se disputent le
+// même code client : société > fiche racine > fiche renseignée.
+function clientScore(c: any): number {
+  return (c.is_company ? 4 : 0) + (c.parent_id ? 0 : 2) + (c.phone ? 1 : 0);
+}
+
+// Dédoublonne les résultats de recherche client.
+//
+// Odoo peut renvoyer DEUX enregistrements res.partner pour ce qui est, côté
+// utilisateur, un seul client : la société mère et une de ses adresses enfants
+// (livraison/facturation) portant le même nom et le même code. L'adresse enfant
+// n'apparaît pas comme une ligne séparée dans la liste Contacts d'Odoo — elle vit
+// dans l'onglet « Contacts & Adresses » — mais si elle a customer_rank > 0 elle
+// remonte quand même dans un search_read, d'où le doublon à l'écran.
+//
+// Deux passes : on écarte les adresses enfants, puis, en filet de sécurité, on ne
+// garde qu'une fiche par couple (code, nom).
+function dedupeClients(rows: any[]): any[] {
+  // Passe 1 — adresses enfants. Repli sur la liste brute si le filtre vide tout
+  // (instance Odoo sans champ `type`, ou cache préchargé avant cette version).
+  const roots = rows.filter(c => !(c.parent_id && ADDRESS_TYPES.has(c.type)));
+  const base = roots.length ? roots : rows;
+
+  // Passe 2 — doublons réels sur (code, nom). Sans code, on ne touche à rien :
+  // deux clients distincts peuvent légitimement porter le même nom.
+  const bestByKey = new Map<string, number>();
+  const out: any[] = [];
+  for (const c of base) {
+    const ref = (c.ref || "").trim().toLowerCase();
+    if (!ref) { out.push(c); continue; }
+    const key = `${ref}|${(c.name || "").trim().toLowerCase()}`;
+    const at = bestByKey.get(key);
+    if (at === undefined) { bestByKey.set(key, out.push(c) - 1); continue; }
+    if (clientScore(c) > clientScore(out[at])) out[at] = c;
+  }
+  return out;
+}
 
 // ═══════════════════════════════════════════════════════════════════════════
 // ACCUEIL — planning de la semaine du commercial connecté
@@ -1412,7 +1449,9 @@ function ClientStep({ session, onSelect }: { session: odoo.OdooSession; onSelect
     }
   };
 
-  const displayed = q.length >= 2 ? results : (locMode ? nearby : []);
+  // Dédoublonnage à l'affichage : couvre d'un seul coup la recherche en ligne, le
+  // repli sur le cache hors ligne et la liste « clients proches ».
+  const displayed = dedupeClients(q.length >= 2 ? results : (locMode ? nearby : []));
 
   return (
     <div style={{ flex: 1, display: "flex", flexDirection: "column" as const, alignItems: "center", justifyContent: "center", padding: 40 }}>
@@ -1470,11 +1509,6 @@ function ClientStep({ session, onSelect }: { session: odoo.OdooSession; onSelect
                   {c.city && <span style={{ display: "inline-flex", alignItems: "center", gap: 3 }}><Icon name="pin" size={11} /> {c.city}</span>}
                   {c.phone && <span style={{ display: "inline-flex", alignItems: "center", gap: 3 }}><Icon name="phone" size={11} /> {c.phone}</span>}
                 </div>
-                {DEBUG_CLIENTS && (
-                  <div style={{ fontSize: 11, color: C.red, marginTop: 3, fontFamily: "ui-monospace, monospace" }}>
-                    id={c.id} · parent={c.parent_id ? `${c.parent_id[0]} (${c.parent_id[1]})` : "—"} · type={c.type || "—"} · sté={c.is_company ? "oui" : "non"}
-                  </div>
-                )}
               </div>
               {typeof c._distKm === "number" && (
                 <div style={{ fontSize: 11, fontWeight: 700, color: C.teal, background: C.tealSoft, borderRadius: 8, padding: "3px 8px", flexShrink: 0 }}>
