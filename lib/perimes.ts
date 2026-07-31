@@ -873,21 +873,47 @@ export function exchangesValue(lines: ExchangeLine[]): number {
 // Un article de type SERVICE ne génère aucun mouvement de stock. La ligne
 // négative devient une pure réduction financière, et le physique reste porté par
 // le seul transfert de rebut, avec ses lots.
-let _serviceCache: { id: number; name: string } | null | undefined;
+// On ne met en cache QUE le résultat positif. Mémoriser un « introuvable »
+// obligeait à recharger toute l'app après avoir créé l'article dans Odoo.
+let _serviceCache: { id: number; name: string } | null = null;
+
+const REPRISE_RE = /(repris|retour|geste).*(p[ée]rim)|p[ée]rim.*(repris|retour|geste)/i;
 
 export async function findRepriseService(
   session: odoo.OdooSession,
 ): Promise<{ id: number; name: string } | null> {
-  if (_serviceCache !== undefined) return _serviceCache;
+  if (_serviceCache) return _serviceCache;
   try {
+    // Filtrage côté Odoo sur le nom ou la référence interne. Un simple
+    // [["type","=","service"]] plafonné ramenait les 300 premiers par ordre
+    // alphabétique — « Reprise périmés » pouvait tomber au-delà.
+    //
+    // Deux variantes d'écriture : `ilike` ignore la casse mais PAS les accents,
+    // donc « perim » ne trouve pas « périmés ».
     const rows = await odoo.searchRead(session, "product.product",
-      [["type", "=", "service"]], ["id", "name"], 300, "name");
-    const re = /(repris|retour|geste).*(p[ée]rim)|p[ée]rim.*(repris|retour|geste)/i;
-    const hit = rows.find((r: any) => re.test(String(r.name || "")));
-    _serviceCache = hit ? { id: hit.id, name: String(hit.name) } : null;
-    return _serviceCache;
+      ["&", ["type", "=", "service"],
+        "|", "|", "|",
+        ["name", "ilike", "repris"],
+        ["name", "ilike", "périm"],
+        ["name", "ilike", "perim"],
+        ["default_code", "ilike", "périm"]],
+      ["id", "name", "default_code"], 50, "name");
+
+    const hit = rows.find((r: any) =>
+      REPRISE_RE.test(String(r.name || "")) || REPRISE_RE.test(String(r.default_code || "")));
+    if (hit) {
+      _serviceCache = { id: hit.id, name: String(hit.name) };
+      return _serviceCache;
+    }
+    // Repli : un seul service correspondant, on le prend même si le libellé
+    // s'écarte du motif attendu.
+    if (rows.length === 1) {
+      _serviceCache = { id: rows[0].id, name: String(rows[0].name) };
+      return _serviceCache;
+    }
+    return null;
   } catch {
-    return null;   // on ne fige pas le cache sur un échec réseau
+    return null;
   }
 }
 
