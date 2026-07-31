@@ -28,6 +28,7 @@ export interface PerimeLine {
   suspicious?: boolean; // prix retrouvé incohérent avec le catalogue
   lot?: string;
   lotId?: number;       // id du lot Odoo EXISTANT — à réutiliser, pas à recréer
+  deliveredQty?: number; // quantité réellement livrée de ce lot à ce client
 }
 
 // ── Barème par statut client ─────────────────────────────────────────────────
@@ -120,6 +121,7 @@ export async function findPaidPriceByLot(
   const family = Array.isArray(clientIds) ? clientIds : [clientIds];
   const mls = await odoo.searchRead(session, "stock.move.line",
     [["picking_id.partner_id", "child_of", family],
+     ["picking_id.picking_type_id.code", "=", "outgoing"],
      ["product_id", "=", productId],
      ["state", "=", "done"],
      ["lot_id", "!=", false]],
@@ -236,6 +238,7 @@ export interface LotHit {
   product: any;
   lot: string;
   lotId: number;
+  deliveredQty: number;
   netUnit: number | null;   // null = ligne de vente introuvable
   date: string;
   orderName: string;
@@ -253,14 +256,18 @@ export async function searchDeliveredLots(
   // child_of sur TOUTE la famille de fiches (société, adresses de livraison et
   // doublons partageant le même code) — voir resolveClientFamily.
   const family = Array.isArray(clientIds) ? clientIds : [clientIds];
-  const mls = await odoo.searchRead(session, "stock.move.line",
+  // picking_type_id.code = outgoing : SANS ce filtre, nos propres transferts de
+  // rebut — qui portent le même client et le même lot — ressortaient comme des
+  // livraisons, avec un prix inconnu et une quantité livrée gonflée.
+  const mls = await readMoveLines(session,
     [["picking_id.partner_id", "child_of", family],
+     ["picking_id.picking_type_id.code", "=", "outgoing"],
      ["state", "=", "done"],
      ["lot_id", "!=", false],
-     ["lot_id.name", "ilike", q]],
-    ["product_id", "lot_id", "move_id", "date"], 200, "date desc");
+     ["lot_id.name", "ilike", q]]);
   if (!mls.length) return [];
-  return buildLotHits(session, mls, limit);
+  const returned = await alreadyReturned(session, family, q);
+  return buildLotHits(session, mls, limit, returned);
 }
 
 // Où ce lot a-t-il été livré, tous clients confondus ? Sert au diagnostic quand
@@ -294,6 +301,7 @@ export async function diagnoseLot(
   try {
     const rows = await odoo.searchRead(session, "stock.move.line",
       [["state", "=", "done"], ["lot_id.name", "ilike", q],
+       ["picking_id.picking_type_id.code", "=", "outgoing"],
        ["picking_id.partner_id.name", "ilike", clientName]],
       ["picking_id"], 100, "date desc");
     const pids = Array.from(new Set(rows.map((r: any) => r.picking_id?.[0]).filter(Boolean)));
@@ -352,10 +360,54 @@ export async function lotExistsAnywhere(
   return false;
 }
 
+// stock.move.line : la quantité réalisée s'appelle `quantity` en Odoo 17 et
+// `qty_done` en 16. Demander un champ inexistant fait échouer TOUTE la requête,
+// d'où la tentative puis le repli. La valeur est normalisée en `_qty`.
+async function readMoveLines(session: odoo.OdooSession, domain: any[]): Promise<any[]> {
+  const base = ["product_id", "lot_id", "move_id", "date"];
+  try {
+    const rows = await odoo.searchRead(session, "stock.move.line",
+      [...domain], [...base, "quantity"], 200, "date desc");
+    return rows.map((r: any) => ({ ...r, _qty: Number(r.quantity) || 0 }));
+  } catch (e) {
+    if (odoo.isNetworkError(e)) throw e;
+    const rows = await odoo.searchRead(session, "stock.move.line",
+      [...domain], [...base, "qty_done"], 200, "date desc");
+    return rows.map((r: any) => ({ ...r, _qty: Number(r.qty_done) || 0 }));
+  }
+}
+
+// Quantités DÉJÀ reprises pour ce client, par (produit, lot). Sans ça, on
+// pourrait reprendre dix fois le même lot de cinq unités.
+async function alreadyReturned(
+  session: odoo.OdooSession,
+  family: number[],
+  lotQuery: string,
+): Promise<Map<string, number>> {
+  const out = new Map<string, number>();
+  try {
+    const rows = await readMoveLines(session,
+      [["picking_id.partner_id", "child_of", family],
+       ["picking_id.picking_type_id.code", "=", "incoming"],
+       ["state", "=", "done"],
+       ["lot_id", "!=", false],
+       ["lot_id.name", "ilike", lotQuery]]);
+    for (const r of rows) {
+      const pid = r.product_id?.[0];
+      const lot = String(r.lot_id?.[1] || "");
+      if (!pid || !lot) continue;
+      const key = `${pid}|${normalizeLot(lot)}`;
+      out.set(key, (out.get(key) || 0) + (r._qty || 0));
+    }
+  } catch { /* best effort : sans info, on ne bloque pas */ }
+  return out;
+}
+
 async function buildLotHits(
   session: odoo.OdooSession,
   mls: any[],
   limit: number,
+  returned?: Map<string, number>,
 ): Promise<LotHit[]> {
 
   // Un même lot a pu partir en plusieurs livraisons : on garde la plus récente,
@@ -366,8 +418,15 @@ async function buildLotHits(
     const lot = String(m.lot_id?.[1] || "");
     if (!pid || !lot) continue;
     const key = `${pid}|${normalizeLot(lot)}`;
-    if (!seen.has(key)) seen.set(key, m);
-    if (seen.size >= limit) break;
+    const prev = seen.get(key);
+    if (prev) {
+      // Plusieurs livraisons du même lot : on cumule les quantités, sinon le
+      // plafond de reprise serait celui d'une seule expédition.
+      prev._total = (prev._total || prev._qty || 0) + (m._qty || 0);
+      continue;
+    }
+    if (seen.size >= limit) continue;
+    seen.set(key, { ...m, _total: m._qty || 0 });
   }
   const rows = Array.from(seen.values());
 
@@ -388,6 +447,9 @@ async function buildLotHits(
         product,
         lot: String(r.lot_id[1]),
         lotId: r.lot_id[0],
+        // Reprenable = livré − déjà repris.
+        deliveredQty: Math.max(0, (Number(r._total) || 0)
+          - (returned?.get(`${r.product_id[0]}|${normalizeLot(String(r.lot_id[1]))}`) || 0)),
         netUnit: p ? p.netUnit : null,
         date: String(r.date || "").slice(0, 10),
         orderName: p?.orderName || "",

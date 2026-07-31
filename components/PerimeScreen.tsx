@@ -157,6 +157,7 @@ export default function PerimeScreen({ session, client, priceItems, freeTypes, o
     const base = known ? h.netUnit! : (h.product.lst_price || 0);
     setReturns(prev => [...prev, {
       product: h.product, qty: 1, lot: h.lot, lotId: h.lotId,
+      deliveredQty: h.deliveredQty,
       basePrice: base,
       unitPrice: perimes.reprisePrice(base, bareme, known ? "facture" : "catalogue"),
       source: known ? "facture" as const : "catalogue" as const,
@@ -387,6 +388,10 @@ export default function PerimeScreen({ session, client, priceItems, freeTypes, o
                     <div style={{ fontSize: 13, fontWeight: 700, color: C.text }}>{h.product.name}</div>
                     <div style={{ fontSize: 10.5, color: C.muted }}>
                       Lot <strong style={{ color: C.textSec }}>{h.lot}</strong> · livré le {h.date}
+                      {" · "}
+                      <strong style={{ color: h.deliveredQty > 0 ? C.green : C.red }}>
+                        {h.deliveredQty > 0 ? `${h.deliveredQty} reprenable${h.deliveredQty > 1 ? "s" : ""}` : "déjà tout repris"}
+                      </strong>
                     </div>
                   </div>
                   <div style={{ textAlign: "right" as const, flexShrink: 0 }}>
@@ -445,7 +450,13 @@ export default function PerimeScreen({ session, client, priceItems, freeTypes, o
                       style={{ width: 34, height: 34, borderRadius: 8, background: C.white, border: `1px solid ${C.border}`, cursor: "pointer", fontSize: 16, fontWeight: 700, color: C.red }}>−</button>
                     <span style={{ minWidth: 30, textAlign: "center" as const, fontSize: 14, fontWeight: 800, color: C.text }}>{l.qty}</span>
                     <button onClick={() => mode === "return"
-                      ? setReturns(p => p.map((x, j) => j === i ? { ...x, qty: x.qty + 1 } : x))
+                      ? setReturns(p => p.map((x, j) => {
+                          if (j !== i) return x;
+                          // Plafonné à ce qui a réellement été livré et pas encore repris.
+                          const max = x.deliveredQty;
+                          if (typeof max === "number" && max > 0 && x.qty >= max) return x;
+                          return { ...x, qty: x.qty + 1 };
+                        }))
                       : setExchanges(p => p.map((x, j) => j === i ? { ...x, qty: x.qty + 1 } : x))}
                       style={{ width: 34, height: 34, borderRadius: 8, background: C.white, border: `1px solid ${C.border}`, cursor: "pointer", fontSize: 16, fontWeight: 700, color: C.teal }}>+</button>
                   </div>
@@ -491,6 +502,17 @@ export default function PerimeScreen({ session, client, priceItems, freeTypes, o
                       {facture && r.orderName && <span style={{ color: C.muted }}>· {r.orderName}</span>}
                       <span style={{ color: C.muted }}>· reprise {Math.round(bareme.taux * 100)} %{!facture && bareme.rsf > 0 ? ` (RSF ${(bareme.rsf * 100).toFixed(2).replace(/\.?0+$/, "")} %)` : ""}</span>
                       {!facture && <span style={{ color: C.muted }}>· saisis le n° de lot pour le prix réel</span>}
+                    </div>
+                  );
+                })()}
+
+                {mode === "return" && (() => {
+                  const r = l as perimes.PerimeLine;
+                  if (typeof r.deliveredQty !== "number") return null;
+                  if (r.qty <= r.deliveredQty) return null;
+                  return (
+                    <div style={{ fontSize: 11, marginTop: 6, padding: "7px 9px", background: C.redSoft, border: `1px solid ${C.red}44`, borderRadius: 8, color: C.red, lineHeight: 1.45 }}>
+                      Quantité supérieure au livré : {r.qty} demandés pour {r.deliveredQty} reprenable{r.deliveredQty > 1 ? "s" : ""} sur ce lot.
                     </div>
                   );
                 })()}
