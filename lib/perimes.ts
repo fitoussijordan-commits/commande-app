@@ -111,8 +111,9 @@ export async function findPaidPriceByLot(
   const wanted = normalizeLot(lot);
   if (!wanted) return null;
 
+  // child_of : couvre la société ET ses adresses de livraison (voir searchDeliveredLots).
   const mls = await odoo.searchRead(session, "stock.move.line",
-    [["picking_id.partner_id", "=", clientId],
+    [["picking_id.partner_id", "child_of", clientId],
      ["product_id", "=", productId],
      ["state", "=", "done"],
      ["lot_id", "!=", false]],
@@ -182,14 +183,45 @@ export async function searchDeliveredLots(
   const q = query.trim();
   if (q.length < 2) return [];
 
+  // child_of et non "=" : une livraison part vers l'ADRESSE DE LIVRAISON, qui est
+  // une fiche enfant de la société. Chercher sur le seul ID de la société mère ne
+  // remonte donc rien, alors que le produit est bien parti chez ce client.
   const mls = await odoo.searchRead(session, "stock.move.line",
-    [["picking_id.partner_id", "=", clientId],
+    [["picking_id.partner_id", "child_of", clientId],
      ["state", "=", "done"],
      ["lot_id", "!=", false],
      ["lot_id.name", "ilike", q]],
     ["product_id", "lot_id", "move_id", "date"], 200, "date desc");
   if (!mls.length) return [];
   return buildLotHits(session, mls, limit);
+}
+
+// Où ce lot a-t-il été livré, tous clients confondus ? Sert au diagnostic quand
+// la recherche bornée au client ne donne rien : soit il est parti ailleurs, soit
+// il est chez une fiche voisine (autre adresse, autre société du groupe).
+export async function findLotRecipients(
+  session: odoo.OdooSession,
+  query: string,
+  limit = 5,
+): Promise<string[]> {
+  const rows = await odoo.searchRead(session, "stock.move.line",
+    [["state", "=", "done"], ["lot_id", "!=", false], ["lot_id.name", "ilike", query.trim()]],
+    ["picking_id"], 50, "date desc");
+
+  const pickingIds = Array.from(new Set(
+    rows.map((r: any) => r.picking_id?.[0]).filter(Boolean)));
+  if (!pickingIds.length) return [];
+
+  const pickings = await odoo.searchRead(session, "stock.picking",
+    [["id", "in", pickingIds]], ["partner_id"], pickingIds.length);
+
+  const names = new Set<string>();
+  for (const p of pickings) {
+    const n = p.partner_id?.[1];
+    if (n) names.add(String(n));
+    if (names.size >= limit) break;
+  }
+  return Array.from(names);
 }
 
 // Le lot existe-t-il dans Odoo, indépendamment du client ? Sert uniquement à

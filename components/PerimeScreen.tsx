@@ -67,10 +67,16 @@ export default function PerimeScreen({ session, client, priceItems, freeTypes, o
           if (hits.length) return;
           // Aucun lot livré à ce client : ce lot existe-t-il seulement ?
           try {
-            const exists = await perimes.lotExistsAnywhere(session, text.trim());
-            setLotNote(exists
-              ? "Ce lot existe dans Odoo mais n'a jamais été livré à ce client."
-              : "Aucun lot ne correspond dans Odoo.");
+            // Dire OÙ le lot est parti est bien plus utile que « pas trouvé ».
+            const dest = await perimes.findLotRecipients(session, text.trim());
+            if (dest.length) {
+              setLotNote(`Ce lot a été livré à : ${dest.join(", ")}. Sélectionne cette fiche client pour le reprendre.`);
+            } else {
+              const exists = await perimes.lotExistsAnywhere(session, text.trim());
+              setLotNote(exists
+                ? "Ce lot existe dans Odoo mais n'apparaît sur aucune livraison validée."
+                : "Aucun lot ne correspond dans Odoo.");
+            }
           } catch { setLotNote("Aucun lot livré à ce client ne correspond."); }
         })
         .catch(e => {
