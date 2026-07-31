@@ -437,8 +437,27 @@ export async function resolveRebutLocation(
     // Sans filtre sur usage : si l'emplacement a été créé en "internal" par une
     // version précédente, on le retrouve quand même pour ne pas en faire un second.
     const found = await odoo.searchRead(session, "stock.location",
-      [["name", "=", name]], ["id", "usage"], 1);
-    if (found.length) return { id: found[0].id };
+      [["name", "=", name]], ["id", "usage", "scrap_location"], 1);
+
+    if (found.length) {
+      const loc = found[0];
+      // AUTO-RÉPARATION. Un emplacement rebut resté en "internal" fait compter les
+      // périmés dans le stock disponible et dans la valorisation. Le corriger ici
+      // évite d'avoir à le refaire à la main pour chaque commercial, chaque mois.
+      if (loc.usage !== REBUT_USAGE || !loc.scrap_location) {
+        try {
+          await odoo.write(session, "stock.location", [loc.id],
+            { usage: REBUT_USAGE, scrap_location: true });
+        } catch (e: any) {
+          // Odoo refuse de changer le type d'un emplacement qui contient encore
+          // du stock. Il faut le vider avant — on le dit explicitement.
+          return { error: `l'emplacement « ${name} » est encore en « interne » et Odoo refuse de le convertir `
+            + `(${e?.message || "erreur inconnue"}). Vide-le dans Odoo — Stock → Ajustements d'inventaire, `
+            + `mets les quantités à 0 pour cet emplacement — puis relance.` };
+        }
+      }
+      return { id: loc.id };
+    }
 
     // Parent : la branche « Rebut » si elle existe, sinon on crée à la racine.
     let parentId: number | null = null;
