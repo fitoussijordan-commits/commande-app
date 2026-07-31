@@ -632,15 +632,29 @@ export async function createRebutPicking(
       if (opts.orderName) parts.push(`éch. ${opts.orderName}`);
       parts.push(dateStr);
       const uom = uomByProduct.get(l.product.id);
-      const moveId = await odoo.create(session, "stock.move", {
-        name: parts.join(" — "),
+      const label = parts.join(" — ");
+      // name ET description_picking : c'est `description_picking` qui s'affiche
+      // sur la ligne d'un transfert et sur le bon imprimé, `name` reste le
+      // libellé technique du mouvement.
+      const moveVals: any = {
+        name: label,
+        description_picking: label,
         product_id: l.product.id,
         product_uom_qty: l.qty,
         ...(uom ? { product_uom: uom } : {}),
         picking_id: pickingId,
         location_id: srcId,
         location_dest_id: opts.locationId,
-      });
+      };
+      let moveId: number;
+      try {
+        moveId = await odoo.create(session, "stock.move", moveVals);
+      } catch (e) {
+        if (odoo.isNetworkError(e)) throw e;
+        // Champ absent sur cette version : on garde au moins le libellé technique.
+        delete moveVals.description_picking;
+        moveId = await odoo.create(session, "stock.move", moveVals);
+      }
       lineByMove.set(moveId, l);
     }
 
