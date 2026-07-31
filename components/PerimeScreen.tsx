@@ -3,6 +3,7 @@ import { useState, useEffect } from "react";
 import * as odoo from "@/lib/odoo";
 import * as sync from "@/lib/sync";
 import * as perimes from "@/lib/perimes";
+import { applyPricelist } from "@/lib/pricing";
 
 const C = {
   bg: "#f8fafc", white: "#fff", text: "#0f172a", textSec: "#334155",
@@ -157,9 +158,14 @@ export default function PerimeScreen({ session, client, priceItems, freeTypes, o
         : [...prev, { product: p, qty: 1, basePrice: price,
             unitPrice: perimes.reprisePrice(price, bareme, "catalogue"), source: "catalogue" as const, lot: "" }]);
     } else {
+      // Prix au TARIF DU CLIENT, pas au catalogue : c'est celui qu'Odoo
+      // facturera. Sans ça, le budget affiché diverge du BC réel (ex. tarif
+      // Ambassadeur −17 % : 13,24 € annoncés, 10,99 € facturés).
+      const clientPrice = Math.round(
+        applyPricelist(price, p.id, p.product_tmpl_id?.[0] || 0, priceItems as any, 1) * 100) / 100;
       setExchanges(prev => prev.some(l => l.product.id === p.id)
         ? prev.map(l => l.product.id === p.id ? { ...l, qty: l.qty + 1 } : l)
-        : [...prev, { product: p, qty: 1, unitPrice: price }]);
+        : [...prev, { product: p, qty: 1, unitPrice: clientPrice }]);
     }
     setQ(""); setResults([]); setLotHits([]); setLotNote("");
   };
@@ -174,11 +180,16 @@ export default function PerimeScreen({ session, client, priceItems, freeTypes, o
     setSubmitting(true);
     const localRef = perimes.newLocalRef();
     try {
+      const tags = await perimes.getPerimeTagIds(session);
+      if (tags.missing.length) {
+        onToast(`Étiquette(s) introuvable(s) dans Odoo : ${tags.missing.join(", ")}`, "info");
+      }
       const payload = perimes.buildExchangeOrderPayload({
         clientId: client.id,
         pricelistId: client.property_product_pricelist?.[0] || false,
         returns, exchanges, repName, localRef,
         freeType: perimeType,
+        tagIds: tags.ids,
       });
       const orderId = await odoo.create(session, "sale.order", payload);
 

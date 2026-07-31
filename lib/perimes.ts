@@ -473,7 +473,7 @@ async function resolveCustomerLocation(
 export function buildExchangeOrderPayload(opts: {
   clientId: number; pricelistId: number | false;
   returns: PerimeLine[]; exchanges: ExchangeLine[];
-  repName: string; localRef: string; freeType?: string;
+  repName: string; localRef: string; freeType?: string; tagIds?: number[];
 }): any {
   const noteLines = opts.returns.map(
     r => `• ${r.product.name}${r.lot ? ` (lot ${r.lot})` : ""} × ${r.qty}`);
@@ -482,6 +482,7 @@ export function buildExchangeOrderPayload(opts: {
     state: "draft",
     ...(opts.pricelistId ? { pricelist_id: opts.pricelistId } : {}),
     client_order_ref: opts.localRef,
+    ...(opts.tagIds && opts.tagIds.length ? { tag_ids: [[6, 0, opts.tagIds]] } : {}),
     note: [`Retour périmés — ${opts.repName}`, ...noteLines].join("\n"),
     order_line: [
       // Repris : quantité négative → la valeur se déduit du BC.
@@ -513,4 +514,38 @@ export function exchangesValue(lines: ExchangeLine[]): number {
 
 export function newLocalRef(): string {
   return `PERIM-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+// ── Étiquettes du BC de reprise ──────────────────────────────────────────────
+// « Geste co périmé » + « Validé DC ». Recherchées par libellé et non par id :
+// les ids de crm.tag diffèrent d'une base à l'autre, et un id codé en dur
+// étiquetterait silencieusement la mauvaise chose.
+const TAG_PATTERNS: { label: string; match: RegExp }[] = [
+  { label: "Geste co périmé", match: /geste\s*co.*p[ée]rim/i },
+  { label: "Validé DC",       match: /^valid[ée]\s*dc$/i },
+];
+
+let _perimeTagCache: { ids: number[]; missing: string[] } | undefined;
+
+export async function getPerimeTagIds(
+  session: odoo.OdooSession,
+): Promise<{ ids: number[]; missing: string[] }> {
+  if (_perimeTagCache) return _perimeTagCache;
+  try {
+    // On ratisse large côté Odoo puis on filtre en JS : les libellés réels
+    // peuvent varier en casse, accents ou espaces.
+    const tags = await odoo.searchRead(session, "crm.tag", [], ["id", "name"], 0);
+    const ids: number[] = [];
+    const missing: string[] = [];
+    for (const p of TAG_PATTERNS) {
+      const hit = tags.find((t: any) => p.match.test(String(t.name || "").trim()));
+      if (hit) ids.push(hit.id); else missing.push(p.label);
+    }
+    _perimeTagCache = { ids, missing };
+    return _perimeTagCache;
+  } catch {
+    // On ne fige PAS le cache sur un échec réseau : sinon plus aucun BC ne
+    // serait étiqueté du reste de la session, même une fois le réseau revenu.
+    return { ids: [], missing: TAG_PATTERNS.map(p => p.label) };
+  }
 }
