@@ -648,8 +648,9 @@ async function confirmAndValidate(
   lineByMove: Map<number, PerimeLine>,
 ): Promise<string> {
   try {
-    await odoo.callMethod(session, "stock.picking", "action_confirm", [[pickingId]]);
-    try { await odoo.callMethod(session, "stock.picking", "action_assign", [[pickingId]]); } catch {}
+    const ctx = { skip_expired: true, skip_backorder: true };
+    await odoo.callMethod(session, "stock.picking", "action_confirm", [[pickingId]], { context: ctx });
+    try { await odoo.callMethod(session, "stock.picking", "action_assign", [[pickingId]], { context: ctx }); } catch {}
 
     let mls = await odoo.searchRead(session, "stock.move.line",
       [["picking_id", "=", pickingId]], ["id", "move_id", "product_id"], 0);
@@ -680,10 +681,36 @@ async function confirmAndValidate(
       }
     }
 
-    const res: any = await odoo.callMethod(session, "stock.picking", "button_validate", [[pickingId]]);
+    // Contexte de validation. Sans ces drapeaux, Odoo renvoie un assistant au lieu
+    // de valider, et le transfert reste en brouillon :
+    //   skip_expired    → module product_expiry : « ce transfert contient des lots
+    //                     périmés, confirmez-vous ? ». Ici c'est le principe même
+    //                     de l'opération, la question n'a pas lieu d'être posée.
+    //   skip_backorder  → pas de reliquat : on reprend exactement ce qui est saisi.
+    const validateCtx = {
+      skip_expired: true,
+      skip_backorder: true,
+      picking_ids_not_to_backorder: [pickingId],
+    };
+
+    const res: any = await odoo.callMethod(
+      session, "stock.picking", "button_validate", [[pickingId]], { context: validateCtx });
     // Un retour de type dict avec res_model = assistant (backorder, lots…) :
     // Odoo n'a PAS validé, il attend une réponse humaine.
     if (res && typeof res === "object" && res.res_model) {
+      // Un assistant subsiste malgré le contexte : on tente de le valider
+      // directement, il expose toujours une méthode de confirmation.
+      const wizardId = res.res_id || res.context?.default_pick_ids;
+      if (res.res_id) {
+        for (const m of ["process", "action_confirm", "action_validate"]) {
+          try {
+            await odoo.callMethod(session, res.res_model, m, [[wizardId]], { context: validateCtx });
+            const st = await odoo.searchRead(session, "stock.picking",
+              [["id", "=", pickingId]], ["state"], 1);
+            if (st[0]?.state === "done") return "";
+          } catch { /* méthode absente sur cet assistant : on essaie la suivante */ }
+        }
+      }
       return `transfert créé mais non validé — Odoo demande une confirmation (${res.res_model})`;
     }
     return "";
