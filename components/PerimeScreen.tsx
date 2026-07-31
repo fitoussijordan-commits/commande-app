@@ -37,7 +37,9 @@ export default function PerimeScreen({ session, client, priceItems, freeTypes, o
   const [submitting, setSubmitting] = useState(false);
   const [lotLoading, setLotLoading] = useState<number | null>(null);
 
-  const decote = perimes.decoteFor(client);
+  const bareme = perimes.baremeFor(client);
+  const statut = perimes.statutLabel(client);
+  const sansReprise = bareme.taux === 0;
 
   // Type de gratuité « périmés » retrouvé par son libellé — jamais codé en dur,
   // la valeur technique diffère d'une instance à l'autre.
@@ -74,11 +76,11 @@ export default function PerimeScreen({ session, client, priceItems, freeTypes, o
       const hit = await perimes.findPaidPriceByLot(session, client.id, line.product.id, line.lot);
       setReturns(prev => prev.map((x, j) => {
         if (j !== index) return x;
-        if (!hit) return { ...x, source: "catalogue" as const };
+        if (!hit) return { ...x, source: "catalogue" as const, unitPrice: perimes.reprisePrice(x.basePrice, bareme, "catalogue") };
         return {
           ...x,
           basePrice: hit.netUnit,
-          unitPrice: perimes.reprisePrice(hit.netUnit, decote),
+          unitPrice: perimes.reprisePrice(hit.netUnit, bareme, "facture"),
           source: "facture" as const,
           invoiceDate: hit.date,
         };
@@ -96,7 +98,7 @@ export default function PerimeScreen({ session, client, priceItems, freeTypes, o
       setReturns(prev => prev.some(l => l.product.id === p.id)
         ? prev.map(l => l.product.id === p.id ? { ...l, qty: l.qty + 1 } : l)
         : [...prev, { product: p, qty: 1, basePrice: price,
-            unitPrice: perimes.reprisePrice(price, decote), source: "catalogue" as const, lot: "" }]);
+            unitPrice: perimes.reprisePrice(price, bareme, "catalogue"), source: "catalogue" as const, lot: "" }]);
     } else {
       setExchanges(prev => prev.some(l => l.product.id === p.id)
         ? prev.map(l => l.product.id === p.id ? { ...l, qty: l.qty + 1 } : l)
@@ -110,6 +112,7 @@ export default function PerimeScreen({ session, client, priceItems, freeTypes, o
   const balance = returnsTotal - exchangesTotal;
 
   const validate = async () => {
+    if (sansReprise) { onToast("Statut sans droit à reprise", "error"); return; }
     if (!returns.length) { onToast("Aucun produit périmé saisi", "error"); return; }
     setSubmitting(true);
     const localRef = perimes.newLocalRef();
@@ -162,9 +165,20 @@ export default function PerimeScreen({ session, client, priceItems, freeTypes, o
 
         <div style={{ fontSize: 13, color: C.muted, marginBottom: 4 }}>{client.name}</div>
         <div style={{ fontSize: 22, fontWeight: 800, color: C.text, marginBottom: 2 }}>Retour périmés</div>
-        <div style={{ fontSize: 12, color: C.muted, marginBottom: 18 }}>
+        <div style={{ fontSize: 12, color: C.muted, marginBottom: 12 }}>
           Rebut : <strong style={{ color: C.textSec }}>{locationLabel}</strong>
+          {statut && <> · Statut : <strong style={{ color: C.textSec }}>{statut}</strong> — reprise {Math.round(bareme.taux * 100)} %</>}
         </div>
+
+        {/* Taux à 0 : soit Partenaire, soit un statut absent du barème. Dans les
+            deux cas il faut le dire, pas afficher un budget de 0,00 €. */}
+        {sansReprise && (
+          <div style={{ background: C.redSoft, border: `1px solid ${C.red}44`, borderRadius: 12, padding: "11px 13px", marginBottom: 14, fontSize: 12.5, color: C.red, lineHeight: 1.5 }}>
+            {statut
+              ? <>Le statut <strong>{statut}</strong> ne donne pas droit à la reprise de périmés.</>
+              : <>Aucun statut client renseigné dans Odoo — impossible de déterminer le taux de reprise.</>}
+          </div>
+        )}
 
         {/* Bascule reprise / échange */}
         <div style={{ display: "flex", gap: 6, marginBottom: 14, background: C.bg, borderRadius: 12, padding: 4 }}>
@@ -265,7 +279,7 @@ export default function PerimeScreen({ session, client, priceItems, freeTypes, o
                         {facture ? `Prix payé ${fmt(r.basePrice)}` : `Prix catalogue ${fmt(r.basePrice)} — estimé`}
                       </span>
                       {facture && r.invoiceDate && <span style={{ color: C.muted }}>livré le {r.invoiceDate}</span>}
-                      {decote > 0 && <span style={{ color: C.muted }}>· décote {Math.round(decote * 100)} %</span>}
+                      <span style={{ color: C.muted }}>· reprise {Math.round(bareme.taux * 100)} %{!facture && bareme.rsf > 0 ? ` (RSF ${(bareme.rsf * 100).toFixed(2).replace(/\.?0+$/, "")} %)` : ""}</span>
                       {!facture && <span style={{ color: C.muted }}>· saisis le n° de lot pour le prix réel</span>}
                     </div>
                   );
@@ -286,12 +300,15 @@ export default function PerimeScreen({ session, client, priceItems, freeTypes, o
             </span>
           </div>
 
-          <button onClick={validate} disabled={submitting || returns.length === 0}
+          <button onClick={validate} disabled={submitting || returns.length === 0 || sansReprise}
             style={{ width: "100%", marginTop: 12, padding: "13px 0", borderRadius: 999, border: "none", fontSize: 14, fontWeight: 800, fontFamily: "inherit",
-              background: returns.length === 0 ? "rgba(255,255,255,0.12)" : "#2dd4bf",
-              color: returns.length === 0 ? "rgba(255,255,255,0.4)" : "#0f172a",
-              cursor: returns.length === 0 ? "default" : "pointer" }}>
-            {submitting ? "Création…" : returns.length === 0 ? "Saisis un produit périmé" : "Créer le BC de retour →"}
+              background: (returns.length === 0 || sansReprise) ? "rgba(255,255,255,0.12)" : "#2dd4bf",
+              color: (returns.length === 0 || sansReprise) ? "rgba(255,255,255,0.4)" : "#0f172a",
+              cursor: (returns.length === 0 || sansReprise) ? "default" : "pointer" }}>
+            {submitting ? "Création…"
+              : sansReprise ? "Reprise non autorisée pour ce statut"
+              : returns.length === 0 ? "Saisis un produit périmé"
+              : "Créer le BC de retour →"}
           </button>
           {!perimeType && exchanges.length > 0 && (
             <div style={{ fontSize: 10, color: "rgba(255,255,255,0.45)", textAlign: "center" as const, marginTop: 7 }}>

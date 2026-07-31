@@ -27,33 +27,73 @@ export interface PerimeLine {
   lot?: string;
 }
 
-// ── Barème de décote ─────────────────────────────────────────────────────────
-// Taux par statut client (res.partner.x_statut_client_id). À remplacer par les
-// valeurs réelles dès réception du barème — un seul endroit à modifier.
+// ── Barème par statut client ─────────────────────────────────────────────────
+// Indexé sur res.partner.x_statut_client_id.
 //
-// Convention retenue : le taux est la FRACTION RETENUE sur le prix payé.
-//   prix de reprise = prix payé × (1 − taux)
-// Un taux de 0 signifie donc reprise à 100 % du prix payé.
-export const DEFAULT_DECOTE = 0;
+// ATTENTION au sens de la colonne « décote » : c'est un COEFFICIENT DE
+// RESTITUTION, pas une remise. 0,8 = 80 % du prix payé rendu en valeur de reprise.
+// Le tableau le prouve de lui-même : Partenaire vaut 0 avec le RSF le plus bas
+// (5 %), Rose vaut 0,8 avec le plus haut (32,5 %) — la colonne monte avec le
+// statut. Interprétée comme une remise, Partenaire deviendrait le statut le plus
+// généreux, ce qui contredit tout le reste de la grille.
+//
+//   valeur de reprise = prix payé × taux
+//   taux 0  →  aucune reprise (Partenaire)
+export interface Bareme { taux: number; rsf: number }
 
-export const DECOTE_BY_STATUT: Record<string, number> = {
-  // "ambassadeur": 0.2,
-  // "compagnon": 0.3,
+export const BAREME_BY_STATUT: Record<string, Bareme> = {
+  partenaire:         { taux: 0,   rsf: 0.05 },
+  ambassadeur:        { taux: 0.8, rsf: 0.17 },
+  compagnon:          { taux: 0.7, rsf: 0.13 },
+  challenger:         { taux: 0.5, rsf: 0.08 },
+  naturaliafranchise: { taux: 0.5, rsf: 0.15 },
+  lvcfranchise:       { taux: 0.5, rsf: 0.15 },
+  biocbon:            { taux: 0.5, rsf: 0.15 },
+  sobio:              { taux: 0.5, rsf: 0.15 },
+  leauvive:           { taux: 0.5, rsf: 0.15 },
+  lcb:                { taux: 0.5, rsf: 0.15 },
+  marcelfils:         { taux: 0.5, rsf: 0.15 },
+  mybioshop:          { taux: 0.5, rsf: 0.15 },
+  elsieambassadeur:   { taux: 0.8, rsf: 0.17 },
+  elsiecompagnon:     { taux: 0.8, rsf: 0.13 },
+  bourrache:          { taux: 0.5, rsf: 0.225 },
+  calendula:          { taux: 0.5, rsf: 0.245 },
+  anthyllide:         { taux: 0.7, rsf: 0.275 },
+  prunelier:          { taux: 0.7, rsf: 0.295 },
+  rose:               { taux: 0.8, rsf: 0.325 },
 };
 
+// Statut inconnu → aucune reprise plutôt qu'un taux par défaut inventé. Une
+// valeur de reprise fausse partirait en avoir sans que personne ne la remarque.
+export const BAREME_INCONNU: Bareme = { taux: 0, rsf: 0 };
+
+// Clé réduite aux lettres et chiffres : absorbe accents, casse, espaces,
+// apostrophes droites ou typographiques et esperluettes.
+// « Bio C'Bon », « bio c’bon », « BIO C BON » → « biocbon ».
 export function statutKey(client: any): string {
   const v = client?.x_statut_client_id;
   const label = Array.isArray(v) ? String(v[1] || "") : "";
-  return label.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().trim();
+  return label.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().replace(/[^a-z0-9]/g, "");
 }
 
-export function decoteFor(client: any): number {
-  const k = statutKey(client);
-  return k && k in DECOTE_BY_STATUT ? DECOTE_BY_STATUT[k] : DEFAULT_DECOTE;
+export function statutLabel(client: any): string {
+  const v = client?.x_statut_client_id;
+  return Array.isArray(v) ? String(v[1] || "") : "";
 }
 
-export function reprisePrice(basePrice: number, decote: number): number {
-  return Math.max(0, basePrice * (1 - decote));
+export function baremeFor(client: any): Bareme {
+  return BAREME_BY_STATUT[statutKey(client)] || BAREME_INCONNU;
+}
+
+// Valeur de reprise unitaire.
+//
+// `source` compte : quand le prix vient d'une facture, il est DÉJÀ net de la
+// remise réellement consentie — réappliquer le RSF le décompterait deux fois.
+// Le RSF ne sert que de repli, pour estimer ce que le client a payé quand on
+// n'a pas retrouvé le lot et qu'on part du prix catalogue.
+export function reprisePrice(basePrice: number, b: Bareme, source: PriceSource): number {
+  const paid = source === "facture" ? basePrice : basePrice * (1 - b.rsf);
+  return Math.max(0, paid * b.taux);
 }
 
 // ── Prix réellement payé par le client, retrouvé par le numéro de lot ────────

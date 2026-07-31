@@ -959,7 +959,7 @@ const LOC_RADIUS_KM = 1;
 
 // is_company sert au départage quand plusieurs fiches partagent le même code (ref).
 // parent_id / type servent à écarter les adresses enfants (voir dedupeClients).
-const CLIENT_FIELDS = ["id", "name", "ref", "city", "country_id", "property_product_pricelist", "email", "phone", "is_company", "x_nbre_visites_realisees", "parent_id", "type", "x_evolution_ca_n_n_1", "x_ca_n_1"];
+const CLIENT_FIELDS = ["id", "name", "ref", "city", "country_id", "property_product_pricelist", "email", "phone", "is_company", "x_nbre_visites_realisees", "parent_id", "type", "x_evolution_ca_n_n_1", "x_ca_n_1", "x_statut_client_id"];
 
 // Évolution du CA année N vs N-1 (onglet « Conditions commerciales » de la fiche
 // client Odoo, champ x_evolution_ca_n_n_1).
