@@ -358,6 +358,20 @@ export async function createRebutPicking(
       [["code", "=", "incoming"]], ["id", "default_location_src_id"], 1);
     if (!types.length) return { error: "aucun type d'opération « réception » trouvé dans Odoo" };
 
+    // Emplacement SOURCE. Obligatoire sur stock.move : sans lui, Odoo refuse la
+    // création (« un champ obligatoire n'est pas défini — Source Location »).
+    // Pour une reprise, la marchandise vient de chez le client.
+    const srcId = await resolveCustomerLocation(session, opts.clientId, types[0].default_location_src_id?.[0]);
+    if (!srcId) return { error: "emplacement source (client) introuvable" };
+
+    // product_uom est lui aussi requis : un create brut ne déclenche pas les
+    // onchange qui le rempliraient depuis le produit.
+    const uoms = await odoo.searchRead(session, "product.product",
+      [["id", "in", Array.from(new Set(opts.lines.map(l => l.product.id)))]],
+      ["id", "uom_id"], 0);
+    const uomByProduct = new Map<number, number>(
+      uoms.map((p: any) => [p.id, p.uom_id?.[0]]).filter((e: any) => e[1]));
+
     const dateStr = new Date().toLocaleDateString("fr-FR");
 
     // origin = « Document d'origine » d'Odoo : c'est LE champ qu'un gestionnaire
@@ -383,6 +397,7 @@ export async function createRebutPicking(
     const pickingId = await odoo.create(session, "stock.picking", {
       partner_id: opts.clientId,
       picking_type_id: types[0].id,
+      location_id: srcId,
       location_dest_id: opts.locationId,
       origin,
       note,
@@ -398,11 +413,14 @@ export async function createRebutPicking(
       parts.push(`retour périmé ${opts.clientName}`);
       if (opts.orderName) parts.push(`éch. ${opts.orderName}`);
       parts.push(dateStr);
+      const uom = uomByProduct.get(l.product.id);
       await odoo.create(session, "stock.move", {
         name: parts.join(" — "),
         product_id: l.product.id,
         product_uom_qty: l.qty,
+        ...(uom ? { product_uom: uom } : {}),
         picking_id: pickingId,
+        location_id: srcId,
         location_dest_id: opts.locationId,
       });
     }
@@ -427,6 +445,28 @@ export async function recentReprises(
   return odoo.searchRead(session, "sale.order", domain,
     ["id", "name", "date_order", "amount_total", "state", "partner_id", "client_order_ref"],
     limit, "id desc");
+}
+
+// Emplacement d'où vient la marchandise reprise : l'emplacement client propre à
+// la fiche s'il est défini, sinon l'emplacement « client » générique d'Odoo,
+// sinon celui par défaut du type d'opération.
+async function resolveCustomerLocation(
+  session: odoo.OdooSession,
+  clientId: number,
+  fallbackId?: number,
+): Promise<number | null> {
+  try {
+    const rows = await odoo.searchRead(session, "res.partner",
+      [["id", "=", clientId]], ["property_stock_customer"], 1);
+    const id = rows[0]?.property_stock_customer?.[0];
+    if (id) return id;
+  } catch { /* champ absent ou illisible : on continue */ }
+  try {
+    const locs = await odoo.searchRead(session, "stock.location",
+      [["usage", "=", "customer"]], ["id"], 1);
+    if (locs.length) return locs[0].id;
+  } catch { /* idem */ }
+  return fallbackId || null;
 }
 
 // Le BC unique : repris en négatif + échange en positif.
