@@ -111,41 +111,118 @@ export async function findPaidPriceByLot(
   const wanted = normalizeLot(lot);
   if (!wanted) return null;
 
-  // 1. Mouvements sortants livrés de ce produit vers ce client, portant un lot.
   const mls = await odoo.searchRead(session, "stock.move.line",
     [["picking_id.partner_id", "=", clientId],
      ["product_id", "=", productId],
      ["state", "=", "done"],
      ["lot_id", "!=", false]],
-    ["lot_id", "move_id", "date"], 200, "date desc");
+    ["product_id", "lot_id", "move_id", "date"], 200, "date desc");
 
+  // Comparaison normalisée côté JS : le `ilike` d'Odoo ne sait pas ignorer les
+  // espaces internes, « AB 123 » doit pourtant retrouver « AB123 ».
   const hits = mls.filter((m: any) => normalizeLot(m.lot_id?.[1] || "") === wanted);
   if (!hits.length) return null;
 
-  // 2. Ligne de vente d'origine → prix unitaire net de remise.
-  const moveIds = hits.map((m: any) => m.move_id?.[0]).filter(Boolean);
-  if (!moveIds.length) return null;
+  const prices = await resolveNetPrices(session, hits.map((h: any) => h.move_id?.[0]));
+  for (const h of hits) {          // déjà triés du plus récent au plus ancien
+    const net = prices.get(h.move_id?.[0]);
+    if (net != null) return { netUnit: net, date: String(h.date || "").slice(0, 10) };
+  }
+  return null;
+}
+
+// Prix unitaire net (remise déduite) de la ligne de vente à l'origine de chaque
+// mouvement. Le pont stock → vente est stock.move.sale_line_id.
+async function resolveNetPrices(
+  session: odoo.OdooSession,
+  moveIds: (number | undefined)[],
+): Promise<Map<number, number>> {
+  const out = new Map<number, number>();
+  const ids = Array.from(new Set(moveIds.filter((v): v is number => !!v)));
+  if (!ids.length) return out;
 
   const moves = await odoo.searchRead(session, "stock.move",
-    [["id", "in", moveIds]], ["id", "sale_line_id"], moveIds.length);
-  const saleLineIds = moves.map((m: any) => m.sale_line_id?.[0]).filter(Boolean);
-  if (!saleLineIds.length) return null;
+    [["id", "in", ids]], ["id", "sale_line_id"], ids.length);
+  const saleLineIds = Array.from(new Set(
+    moves.map((m: any) => m.sale_line_id?.[0]).filter(Boolean)));
+  if (!saleLineIds.length) return out;
 
   const sols = await odoo.searchRead(session, "sale.order.line",
     [["id", "in", saleLineIds]], ["id", "price_unit", "discount"], saleLineIds.length);
-  if (!sols.length) return null;
-
-  // Plusieurs livraisons du même lot → on prend la plus récente.
-  const byMove = new Map<number, any>(moves.map((m: any) => [m.id, m]));
   const bySol = new Map<number, any>(sols.map((s: any) => [s.id, s]));
-  for (const h of hits) {
-    const mv = byMove.get(h.move_id?.[0]);
-    const sol = mv?.sale_line_id?.[0] ? bySol.get(mv.sale_line_id[0]) : null;
+
+  for (const m of moves) {
+    const sol = m.sale_line_id?.[0] ? bySol.get(m.sale_line_id[0]) : null;
     if (!sol) continue;
-    const net = (sol.price_unit || 0) * (1 - (sol.discount || 0) / 100);
-    return { netUnit: net, date: String(h.date || "").slice(0, 10) };
+    out.set(m.id, (sol.price_unit || 0) * (1 - (sol.discount || 0) / 100));
   }
-  return null;
+  return out;
+}
+
+// ── Recherche PAR NUMÉRO DE LOT ──────────────────────────────────────────────
+// Le geste terrain : le commercial lit le lot sur le pot périmé et le tape. On
+// remonte le produit ET le prix payé en une fois, sans qu'il ait à identifier la
+// référence lui-même.
+//
+// Bornée aux lots réellement livrés À CE CLIENT : un lot vendu ailleurs n'a pas
+// à apparaître, et ça garde la requête légère.
+export interface LotHit {
+  product: any;
+  lot: string;
+  netUnit: number | null;   // null = ligne de vente introuvable
+  date: string;
+}
+
+export async function searchDeliveredLots(
+  session: odoo.OdooSession,
+  clientId: number,
+  query: string,
+  limit = 20,
+): Promise<LotHit[]> {
+  const q = query.trim();
+  if (q.length < 2) return [];
+
+  const mls = await odoo.searchRead(session, "stock.move.line",
+    [["picking_id.partner_id", "=", clientId],
+     ["state", "=", "done"],
+     ["lot_id", "!=", false],
+     ["lot_id.name", "ilike", q]],
+    ["product_id", "lot_id", "move_id", "date"], 200, "date desc");
+  if (!mls.length) return [];
+
+  // Un même lot a pu partir en plusieurs livraisons : on garde la plus récente,
+  // c'est elle qui porte le prix le plus représentatif.
+  const seen = new Map<string, any>();
+  for (const m of mls) {
+    const pid = m.product_id?.[0];
+    const lot = String(m.lot_id?.[1] || "");
+    if (!pid || !lot) continue;
+    const key = `${pid}|${normalizeLot(lot)}`;
+    if (!seen.has(key)) seen.set(key, m);
+    if (seen.size >= limit) break;
+  }
+  const rows = Array.from(seen.values());
+
+  const [prices, products] = await Promise.all([
+    resolveNetPrices(session, rows.map(r => r.move_id?.[0])),
+    odoo.searchRead(session, "product.product",
+      [["id", "in", Array.from(new Set(rows.map(r => r.product_id[0])))]],
+      ["id", "name", "default_code", "lst_price", "product_tmpl_id"], 0),
+  ]);
+  const byProduct = new Map<number, any>(products.map((p: any) => [p.id, p]));
+
+  return rows
+    .map(r => {
+      const product = byProduct.get(r.product_id[0]);
+      if (!product) return null;
+      return {
+        product,
+        lot: String(r.lot_id[1]),
+        netUnit: prices.get(r.move_id?.[0]) ?? null,
+        date: String(r.date || "").slice(0, 10),
+      } as LotHit;
+    })
+    .filter((x): x is LotHit => x !== null);
 }
 
 // Un lot saisi « ab-123 » doit retrouver « AB-123 ».

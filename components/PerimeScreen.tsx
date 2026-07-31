@@ -36,6 +36,7 @@ export default function PerimeScreen({ session, client, priceItems, freeTypes, o
   const [exchanges, setExchanges] = useState<perimes.ExchangeLine[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const [lotLoading, setLotLoading] = useState<number | null>(null);
+  const [lotHits, setLotHits] = useState<perimes.LotHit[]>([]);
 
   const bareme = perimes.baremeFor(client);
   const statut = perimes.statutLabel(client);
@@ -50,8 +51,14 @@ export default function PerimeScreen({ session, client, priceItems, freeTypes, o
 
   const search = async (text: string) => {
     setQ(text);
-    if (text.trim().length < 2) { setResults([]); return; }
+    if (text.trim().length < 2) { setResults([]); setLotHits([]); return; }
     setSearching(true);
+    // En mode reprise, on cherche en parallèle par n° de lot livré à ce client :
+    // le commercial lit le lot sur le pot, pas la référence produit.
+    if (mode === "return") {
+      perimes.searchDeliveredLots(session, client.id, text.trim())
+        .then(setLotHits).catch(() => setLotHits([]));
+    } else { setLotHits([]); }
     try {
       const r = await odoo.searchRead(session, "product.product",
         ["&", ["sale_ok", "=", true], "|",
@@ -92,6 +99,20 @@ export default function PerimeScreen({ session, client, priceItems, freeTypes, o
     setLotLoading(null);
   };
 
+  // Ajout depuis un résultat lot : produit, lot et prix payé déjà connus.
+  const addFromLot = (h: perimes.LotHit) => {
+    const known = h.netUnit != null;
+    const base = known ? h.netUnit! : (h.product.lst_price || 0);
+    setReturns(prev => [...prev, {
+      product: h.product, qty: 1, lot: h.lot,
+      basePrice: base,
+      unitPrice: perimes.reprisePrice(base, bareme, known ? "facture" : "catalogue"),
+      source: known ? "facture" as const : "catalogue" as const,
+      invoiceDate: known ? h.date : undefined,
+    }]);
+    setQ(""); setResults([]); setLotHits([]);
+  };
+
   const addProduct = (p: any) => {
     const price = p.lst_price || 0;
     if (mode === "return") {
@@ -104,7 +125,7 @@ export default function PerimeScreen({ session, client, priceItems, freeTypes, o
         ? prev.map(l => l.product.id === p.id ? { ...l, qty: l.qty + 1 } : l)
         : [...prev, { product: p, qty: 1, unitPrice: price }]);
     }
-    setQ(""); setResults([]);
+    setQ(""); setResults([]); setLotHits([]);
   };
 
   const returnsTotal = perimes.returnsValue(returns);
@@ -183,7 +204,7 @@ export default function PerimeScreen({ session, client, priceItems, freeTypes, o
         {/* Bascule reprise / échange */}
         <div style={{ display: "flex", gap: 6, marginBottom: 14, background: C.bg, borderRadius: 12, padding: 4 }}>
           {([["return", `Périmés repris (${returns.length})`], ["exchange", `Échange (${exchanges.length})`]] as [Mode, string][]).map(([id, label]) => (
-            <button key={id} onClick={() => { setMode(id); setQ(""); setResults([]); }}
+            <button key={id} onClick={() => { setMode(id); setQ(""); setResults([]); setLotHits([]); }}
               style={{ flex: 1, padding: "9px 0", borderRadius: 9, border: "none", cursor: "pointer", fontFamily: "inherit", fontSize: 13, fontWeight: 700,
                 background: mode === id ? C.white : "transparent", color: mode === id ? C.tealDark : C.muted, boxShadow: mode === id ? C.shadow : "none" }}>
               {label}
@@ -193,10 +214,41 @@ export default function PerimeScreen({ session, client, priceItems, freeTypes, o
 
         {/* Recherche produit */}
         <input value={q} onChange={e => search(e.target.value)}
-          placeholder={mode === "return" ? "Produit périmé à reprendre…" : "Produit d'échange…"}
+          placeholder={mode === "return" ? "N° de lot, nom ou référence produit…" : "Produit d'échange…"}
           style={{ width: "100%", boxSizing: "border-box" as const, padding: "12px 14px", border: `1.5px solid ${C.border}`, borderRadius: 12, fontSize: 15, fontFamily: "inherit", background: C.white, color: C.text, outline: "none", marginBottom: 8 }} />
 
         {searching && <div style={{ fontSize: 12, color: C.muted, padding: "4px 2px" }}>Recherche…</div>}
+
+        {lotHits.length > 0 && (
+          <div style={{ marginBottom: 12 }}>
+            <div style={{ fontSize: 10, fontWeight: 800, color: C.muted, textTransform: "uppercase" as const, letterSpacing: "0.06em", marginBottom: 5 }}>
+              Lots livrés à ce client
+            </div>
+            <div style={{ display: "flex", flexDirection: "column" as const, gap: 5, maxHeight: 200, overflowY: "auto" as const }}>
+              {lotHits.map(h => (
+                <button key={`${h.product.id}-${h.lot}`} onClick={() => addFromLot(h)}
+                  style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", background: C.greenSoft, border: `1px solid ${C.green}44`, borderRadius: 10, cursor: "pointer", fontFamily: "inherit", textAlign: "left" as const }}>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: C.text }}>{h.product.name}</div>
+                    <div style={{ fontSize: 10.5, color: C.muted }}>
+                      Lot <strong style={{ color: C.textSec }}>{h.lot}</strong> · livré le {h.date}
+                    </div>
+                  </div>
+                  <div style={{ textAlign: "right" as const, flexShrink: 0 }}>
+                    {h.netUnit != null ? (
+                      <>
+                        <div style={{ fontSize: 13, fontWeight: 800, color: C.green }}>{fmt(h.netUnit)}</div>
+                        <div style={{ fontSize: 9.5, color: C.muted }}>payé</div>
+                      </>
+                    ) : (
+                      <div style={{ fontSize: 10.5, color: C.orange, fontWeight: 700 }}>prix inconnu</div>
+                    )}
+                  </div>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
 
         {results.length > 0 && (
           <div style={{ display: "flex", flexDirection: "column" as const, gap: 5, marginBottom: 14, maxHeight: 220, overflowY: "auto" as const }}>
