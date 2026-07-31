@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import * as odoo from "@/lib/odoo";
 import * as sync from "@/lib/sync";
 import * as perimes from "@/lib/perimes";
@@ -41,6 +41,15 @@ export default function PerimeScreen({ session, client, priceItems, freeTypes, o
   // ou refus Odoo. Ne JAMAIS avaler l'erreur en silence — sans ça, impossible de
   // distinguer « pas de résultat » de « la requête a planté ».
   const [lotNote, setLotNote] = useState("");
+  const [lastResult, setLastResult] = useState<{ orderName: string; pickingName: string | null; stockError: string } | null>(null);
+  const [recent, setRecent] = useState<any[]>([]);
+
+  // « Où est passé mon BC ? » — on liste les reprises déjà créées pour ce client
+  // en cherchant la référence PERIM- portée par le bon de commande.
+  const loadRecent = () => {
+    perimes.recentReprises(session, client.id).then(setRecent).catch(() => setRecent([]));
+  };
+  useEffect(() => { loadRecent(); }, [client.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const bareme = perimes.baremeFor(client);
   const statut = perimes.statutLabel(client);
@@ -184,13 +193,17 @@ export default function PerimeScreen({ session, client, priceItems, freeTypes, o
       // Mouvement de stock vers l'emplacement rebut du commercial. Sans droits
       // stock, Odoo refuse : on garde le BC et on le signale, plutôt que de
       // perdre toute la saisie.
-      const locId = await perimes.resolveRebutLocation(session, repName);
+      const loc = await perimes.resolveRebutLocation(session, repName);
       let picking: { id: number; name: string } | null = null;
-      if (locId) {
-        picking = await perimes.createRebutPicking(session, {
+      let stockError = "";
+      if ("error" in loc) {
+        stockError = loc.error;
+      } else {
+        const r = await perimes.createRebutPicking(session, {
           clientId: client.id, clientName: client.name, clientRef: client.ref,
-          repName, locationId: locId, lines: returns, localRef, orderName,
+          repName, locationId: loc.id, lines: returns, localRef, orderName,
         });
+        if ("error" in r) stockError = r.error; else picking = r;
       }
 
       // Lien croisé : le BC doit aussi pointer vers le transfert, sinon la
@@ -203,13 +216,17 @@ export default function PerimeScreen({ session, client, priceItems, freeTypes, o
         } catch {}
       }
 
+      // Le n° du BC reste affiché à l'écran : un toast disparaît, et il faut
+      // pouvoir retrouver le document ensuite.
+      setLastResult({ orderName, pickingName: picking?.name || null, stockError });
+      setReturns([]); setExchanges([]);
       onToast(
         picking
-          ? `✅ BC ${orderName} + transfert ${picking.name} vers « ${locationLabel} »`
-          : `✅ BC ${orderName} créé — transfert rebut non créé, droits stock manquants`,
+          ? `BC ${orderName} + transfert ${picking.name}`
+          : `BC ${orderName} créé — transfert rebut en échec`,
         picking ? "success" : "info",
       );
-      onDone();
+      loadRecent();
     } catch (e: any) {
       // Erreur réseau → la saisie reste à l'écran pour être rejouée.
       onToast(
@@ -262,6 +279,51 @@ export default function PerimeScreen({ session, client, priceItems, freeTypes, o
           style={{ width: "100%", boxSizing: "border-box" as const, padding: "12px 14px", border: `1.5px solid ${C.border}`, borderRadius: 12, fontSize: 15, fontFamily: "inherit", background: C.white, color: C.text, outline: "none", marginBottom: 8 }} />
 
         {searching && <div style={{ fontSize: 12, color: C.muted, padding: "4px 2px" }}>Recherche…</div>}
+
+        {/* Résultat de la dernière création — reste affiché, contrairement au toast. */}
+        {lastResult && (
+          <div style={{ background: C.greenSoft, border: `1px solid ${C.green}55`, borderRadius: 12, padding: "12px 14px", marginBottom: 14 }}>
+            <div style={{ fontSize: 13, fontWeight: 800, color: C.green, marginBottom: 4 }}>
+              BC {lastResult.orderName} créé
+            </div>
+            <div style={{ fontSize: 11.5, color: C.textSec, lineHeight: 1.55 }}>
+              C&apos;est un <strong>devis</strong> sur {client.name}. Dans Odoo : Ventes → Devis, ou cherche
+              la référence <strong>{lastResult.orderName}</strong>.
+            </div>
+            {lastResult.pickingName ? (
+              <div style={{ fontSize: 11.5, color: C.textSec, marginTop: 5 }}>
+                Transfert de rebut <strong>{lastResult.pickingName}</strong> → {locationLabel}
+              </div>
+            ) : (
+              <div style={{ fontSize: 11.5, color: C.red, marginTop: 5, lineHeight: 1.5 }}>
+                Transfert de rebut NON créé. Erreur Odoo : {lastResult.stockError || "non renseignée"}
+              </div>
+            )}
+            <button onClick={() => setLastResult(null)}
+              style={{ marginTop: 8, background: "none", border: "none", padding: 0, cursor: "pointer", fontFamily: "inherit", fontSize: 11, fontWeight: 700, color: C.muted }}>
+              Masquer
+            </button>
+          </div>
+        )}
+
+        {/* Reprises déjà enregistrées pour ce client */}
+        {recent.length > 0 && returns.length === 0 && (
+          <div style={{ marginBottom: 14 }}>
+            <div style={{ fontSize: 10, fontWeight: 800, color: C.muted, textTransform: "uppercase" as const, letterSpacing: "0.06em", marginBottom: 5 }}>
+              Reprises déjà créées pour ce client
+            </div>
+            <div style={{ display: "flex", flexDirection: "column" as const, gap: 4 }}>
+              {recent.map(o => (
+                <div key={o.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 11px", background: C.white, border: `1px solid ${C.border}`, borderRadius: 9, fontSize: 12 }}>
+                  <strong style={{ color: C.text }}>{o.name}</strong>
+                  <span style={{ color: C.muted, fontSize: 11 }}>{String(o.date_order || "").slice(0, 10)}</span>
+                  <span style={{ color: C.muted, fontSize: 11 }}>· {o.state === "draft" ? "Devis" : o.state === "sale" ? "Confirmé" : o.state}</span>
+                  <span style={{ marginLeft: "auto", fontWeight: 700, color: o.amount_total < 0 ? C.orange : C.tealDark }}>{fmt(o.amount_total || 0)}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         {lotNote && (
           <div style={{ background: C.orangeSoft, border: `1px solid ${C.orange}44`, borderRadius: 10, padding: "9px 12px", marginBottom: 10, fontSize: 12, color: C.orange, lineHeight: 1.45 }}>

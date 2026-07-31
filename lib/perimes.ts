@@ -307,30 +307,32 @@ export function rebutLocationName(repName: string, d = new Date()): string {
 
 // Cherche l'emplacement du mois, le crée s'il manque. Renvoie null si le
 // commercial n'a pas les droits stock (AccessError) — le flux continue sans.
+// Renvoie l'id, ou une erreur EXPLICITE. Ne jamais renvoyer null muet : attribuer
+// à tort un échec aux « droits manquants » envoie sur une fausse piste.
 export async function resolveRebutLocation(
   session: odoo.OdooSession,
   repName: string,
-): Promise<number | null> {
+): Promise<{ id: number } | { error: string }> {
   const name = rebutLocationName(repName);
   try {
     const found = await odoo.searchRead(session, "stock.location",
       [["name", "=", name], ["usage", "=", "internal"]], ["id"], 1);
-    if (found.length) return found[0].id;
+    if (found.length) return { id: found[0].id };
 
-    // Parent : la branche « Rebut » si elle existe, sinon l'emplacement de stock
-    // interne par défaut. On ne crée pas la racine à la volée.
+    // Parent : la branche « Rebut » si elle existe, sinon on crée à la racine.
     let parentId: number | null = null;
     const rebut = await odoo.searchRead(session, "stock.location",
       [["name", "=", "Rebut"], ["usage", "=", "internal"]], ["id"], 1);
     if (rebut.length) parentId = rebut[0].id;
 
-    return await odoo.create(session, "stock.location", {
+    const id = await odoo.create(session, "stock.location", {
       name,
       usage: "internal",
       ...(parentId ? { location_id: parentId } : {}),
     });
-  } catch {
-    return null;
+    return { id };
+  } catch (e: any) {
+    return { error: `emplacement « ${name} » : ${e?.message || "erreur inconnue"}` };
   }
 }
 
@@ -344,7 +346,7 @@ export async function createRebutPicking(
     locationId: number; lines: PerimeLine[]; localRef: string;
     orderName?: string;   // n° du BC d'échange, pour le lien croisé
   },
-): Promise<{ id: number; name: string } | null> {
+): Promise<{ id: number; name: string } | { error: string }> {
   try {
     // `ilike` et non `=` : origin contient aussi le n° de BC, mais la clé
     // d'idempotence doit rester retrouvable dedans.
@@ -354,7 +356,7 @@ export async function createRebutPicking(
 
     const types = await odoo.searchRead(session, "stock.picking.type",
       [["code", "=", "incoming"]], ["id", "default_location_src_id"], 1);
-    if (!types.length) return null;
+    if (!types.length) return { error: "aucun type d'opération « réception » trouvé dans Odoo" };
 
     const dateStr = new Date().toLocaleDateString("fr-FR");
 
@@ -408,9 +410,23 @@ export async function createRebutPicking(
     const created = await odoo.searchRead(session, "stock.picking",
       [["id", "=", pickingId]], ["name"], 1);
     return { id: pickingId, name: created[0]?.name || String(pickingId) };
-  } catch {
-    return null;
+  } catch (e: any) {
+    return { error: `transfert : ${e?.message || "erreur inconnue"}` };
   }
+}
+
+// Reprises déjà créées, retrouvées par la référence PERIM- portée par le BC.
+// Répond à « où est passé mon BC ? » sans avoir à fouiller Odoo.
+export async function recentReprises(
+  session: odoo.OdooSession,
+  clientId?: number,
+  limit = 10,
+): Promise<any[]> {
+  const domain: any[] = [["client_order_ref", "like", "PERIM-"]];
+  if (clientId) domain.push(["partner_id", "child_of", clientId]);
+  return odoo.searchRead(session, "sale.order", domain,
+    ["id", "name", "date_order", "amount_total", "state", "partner_id", "client_order_ref"],
+    limit, "id desc");
 }
 
 // Le BC unique : repris en négatif + échange en positif.
