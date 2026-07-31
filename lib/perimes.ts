@@ -818,6 +818,7 @@ export function buildExchangeOrderPayload(opts: {
   clientId: number; pricelistId: number | false;
   returns: PerimeLine[]; exchanges: ExchangeLine[];
   repName: string; localRef: string; freeType?: string; tagIds?: number[];
+  serviceProductId?: number;   // article de service portant la reprise
 }): any {
   const noteLines = opts.returns.map(
     r => `• ${r.product.name}${r.lot ? ` (lot ${r.lot})` : ""} × ${r.qty}`);
@@ -829,12 +830,19 @@ export function buildExchangeOrderPayload(opts: {
     ...(opts.tagIds && opts.tagIds.length ? { tag_ids: [[6, 0, opts.tagIds]] } : {}),
     note: [`Retour périmés — ${opts.repName}`, ...noteLines].join("\n"),
     order_line: [
-      // Repris : quantité négative → la valeur se déduit du BC.
+      // Repris : ligne négative = la réduction accordée au client.
+      //
+      // Sur l'ARTICLE DE SERVICE quand il existe : aucun mouvement de stock n'est
+      // généré, le physique reste porté par le seul transfert de rebut. À défaut,
+      // repli sur le produit lui-même — mais Odoo créera alors un second circuit
+      // logistique à la confirmation, en doublon du transfert de rebut.
       ...opts.returns.map(r => [0, 0, {
-        product_id: r.product.id,
+        product_id: opts.serviceProductId || r.product.id,
         product_uom_qty: -Math.abs(r.qty),
         price_unit: r.unitPrice,
-        name: r.lot ? `${r.product.name} — RETOUR PÉRIMÉ lot ${r.lot}` : `${r.product.name} — RETOUR PÉRIMÉ`,
+        name: `Reprise périmé — ${r.product.name}`
+          + (r.lot ? ` — lot ${r.lot}` : "")
+          + (r.product.default_code ? ` [${r.product.default_code}]` : ""),
       }]),
       // Échange : produits neufs au tarif de l'année en cours.
       ...opts.exchanges.map(e => [0, 0, {
@@ -854,6 +862,33 @@ export function returnsValue(lines: PerimeLine[]): number {
 
 export function exchangesValue(lines: ExchangeLine[]): number {
   return lines.reduce((s, l) => s + l.qty * l.unitPrice, 0);
+}
+
+// ── Article de service portant la reprise ────────────────────────────────────
+// Une ligne de vente sur un produit STOCKABLE en quantité négative déclenche
+// tout le circuit logistique d'Odoo à la confirmation du BC : WH/RET, WH/OUT,
+// WH/PICK… Le produit rentrerait donc DEUX fois — une par ce circuit, une par
+// notre transfert de rebut.
+//
+// Un article de type SERVICE ne génère aucun mouvement de stock. La ligne
+// négative devient une pure réduction financière, et le physique reste porté par
+// le seul transfert de rebut, avec ses lots.
+let _serviceCache: { id: number; name: string } | null | undefined;
+
+export async function findRepriseService(
+  session: odoo.OdooSession,
+): Promise<{ id: number; name: string } | null> {
+  if (_serviceCache !== undefined) return _serviceCache;
+  try {
+    const rows = await odoo.searchRead(session, "product.product",
+      [["type", "=", "service"]], ["id", "name"], 300, "name");
+    const re = /(repris|retour|geste).*(p[ée]rim)|p[ée]rim.*(repris|retour|geste)/i;
+    const hit = rows.find((r: any) => re.test(String(r.name || "")));
+    _serviceCache = hit ? { id: hit.id, name: String(hit.name) } : null;
+    return _serviceCache;
+  } catch {
+    return null;   // on ne fige pas le cache sur un échec réseau
+  }
 }
 
 export function newLocalRef(): string {

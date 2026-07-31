@@ -198,6 +198,10 @@ export default function PerimeScreen({ session, client, priceItems, freeTypes, o
     setSubmitting(true);
     const localRef = perimes.newLocalRef();
     try {
+      const service = await perimes.findRepriseService(session);
+      if (!service) {
+        onToast("Article de service « Reprise périmés » introuvable — Odoo créera un second mouvement de stock à la confirmation du BC", "info");
+      }
       const tags = await perimes.getPerimeTagIds(session);
       if (tags.missing.length) {
         onToast(`Étiquette(s) introuvable(s) dans Odoo : ${tags.missing.join(", ")}`, "info");
@@ -208,6 +212,7 @@ export default function PerimeScreen({ session, client, priceItems, freeTypes, o
         returns, exchanges, repName, localRef,
         freeType: perimeType,
         tagIds: tags.ids,
+        serviceProductId: service?.id,
       });
       const orderId = await odoo.create(session, "sale.order", payload);
 
