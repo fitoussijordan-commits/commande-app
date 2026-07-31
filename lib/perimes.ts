@@ -24,6 +24,8 @@ export interface PerimeLine {
   basePrice: number;   // prix payé par le client, AVANT décote
   source: PriceSource;
   invoiceDate?: string;
+  orderName?: string;   // commande d'origine, pour vérifier un prix douteux
+  suspicious?: boolean; // prix retrouvé incohérent avec le catalogue
   lot?: string;
 }
 
@@ -110,7 +112,7 @@ export async function findPaidPriceByLot(
   clientIds: number | number[],
   productId: number,
   lot: string,
-): Promise<{ netUnit: number; date: string } | null> {
+): Promise<{ netUnit: number; date: string; orderName: string } | null> {
   const wanted = normalizeLot(lot);
   if (!wanted) return null;
 
@@ -129,19 +131,21 @@ export async function findPaidPriceByLot(
 
   const prices = await resolveNetPrices(session, hits.map((h: any) => h.move_id?.[0]));
   for (const h of hits) {          // déjà triés du plus récent au plus ancien
-    const net = prices.get(h.move_id?.[0]);
-    if (net != null) return { netUnit: net, date: String(h.date || "").slice(0, 10) };
+    const p = prices.get(h.move_id?.[0]);
+    if (p) return { netUnit: p.netUnit, date: String(h.date || "").slice(0, 10), orderName: p.orderName };
   }
   return null;
 }
 
 // Prix unitaire net (remise déduite) de la ligne de vente à l'origine de chaque
 // mouvement. Le pont stock → vente est stock.move.sale_line_id.
+export interface PaidLine { netUnit: number; gross: number; discount: number; orderName: string }
+
 async function resolveNetPrices(
   session: odoo.OdooSession,
   moveIds: (number | undefined)[],
-): Promise<Map<number, number>> {
-  const out = new Map<number, number>();
+): Promise<Map<number, PaidLine>> {
+  const out = new Map<number, PaidLine>();
   const ids = Array.from(new Set(moveIds.filter((v): v is number => !!v)));
   if (!ids.length) return out;
 
@@ -151,16 +155,48 @@ async function resolveNetPrices(
     moves.map((m: any) => m.sale_line_id?.[0]).filter(Boolean)));
   if (!saleLineIds.length) return out;
 
+  // order_id : le n° de commande est indispensable pour vérifier un prix suspect
+  // (un testeur « payé 234,62 € » doit pouvoir être retracé en un clic).
   const sols = await odoo.searchRead(session, "sale.order.line",
-    [["id", "in", saleLineIds]], ["id", "price_unit", "discount"], saleLineIds.length);
+    [["id", "in", saleLineIds]],
+    ["id", "price_unit", "discount", "price_subtotal", "product_uom_qty", "order_id"],
+    saleLineIds.length);
   const bySol = new Map<number, any>(sols.map((s: any) => [s.id, s]));
 
   for (const m of moves) {
     const sol = m.sale_line_id?.[0] ? bySol.get(m.sale_line_id[0]) : null;
     if (!sol) continue;
-    out.set(m.id, (sol.price_unit || 0) * (1 - (sol.discount || 0) / 100));
+
+    // price_subtotal / quantité = prix UNITAIRE réellement payé, remise comprise.
+    //
+    // On n'utilise plus price_unit directement : selon la façon dont la commande a
+    // été saisie, il peut porter le total de la ligne et non le prix à l'unité —
+    // d'où un testeur ressorti à 234,62 € au lieu de quelques euros. Le sous-total
+    // divisé par la quantité est juste dans les deux cas, et intègre déjà la remise.
+    const qty = Number(sol.product_uom_qty) || 0;
+    const subtotal = Number(sol.price_subtotal) || 0;
+    const gross = Number(sol.price_unit) || 0;
+    const discount = Number(sol.discount) || 0;
+
+    const netUnit = qty > 0
+      ? subtotal / qty
+      : gross * (1 - discount / 100);   // repli : ligne sans quantité exploitable
+
+    out.set(m.id, {
+      netUnit: Math.round(netUnit * 100) / 100,
+      gross, discount,
+      orderName: String(sol.order_id?.[1] || ""),
+    });
   }
   return out;
+}
+
+// Un prix retrouvé très supérieur au prix catalogue du produit est douteux :
+// ligne de vente mal rattachée au mouvement, ou prix exprimé pour un carton.
+// On ne l'applique pas en silence.
+export function isPaidPriceSuspicious(netUnit: number, lstPrice: number): boolean {
+  if (!lstPrice || lstPrice <= 0) return false;
+  return netUnit > lstPrice * 2.5;
 }
 
 // ── Périmètre client ─────────────────────────────────────────────────────────
@@ -200,6 +236,7 @@ export interface LotHit {
   lot: string;
   netUnit: number | null;   // null = ligne de vente introuvable
   date: string;
+  orderName: string;
 }
 
 export async function searchDeliveredLots(
@@ -229,34 +266,68 @@ export async function searchDeliveredLots(
 // il est chez une fiche voisine (autre adresse, autre société du groupe).
 export interface LotRecipient { id: number; name: string; ref: string }
 
-export async function findLotRecipients(
+export interface LotDiagnosis {
+  // Fiches PORTANT LE NOM DU CLIENT qui ont reçu ce lot — la seule chose utile :
+  // « est-ce une autre fiche de mon client ? »
+  sameName: LotRecipient[];
+  // Le lot figure sur une livraison NON validée pour ce client.
+  pendingStates: string[];
+  // Nombre total de livraisons validées de ce lot, tous clients confondus.
+  totalDeliveries: number;
+}
+
+// Diagnostic ciblé. Lister les destinataires d'un lot de production n'apprend
+// rien : il part chez des centaines de clients, et un échantillon arbitraire de
+// six noms (les premiers par ordre alphabétique) induit en erreur.
+export async function diagnoseLot(
   session: odoo.OdooSession,
   query: string,
-  limit = 6,
-): Promise<LotRecipient[]> {
-  const rows = await odoo.searchRead(session, "stock.move.line",
-    [["state", "=", "done"], ["lot_id", "!=", false], ["lot_id.name", "ilike", query.trim()]],
-    ["picking_id"], 400, "date desc");
+  clientName: string,
+  family: number[],
+): Promise<LotDiagnosis> {
+  const q = query.trim();
+  const out: LotDiagnosis = { sameName: [], pendingStates: [], totalDeliveries: 0 };
 
-  const pickingIds = Array.from(new Set(
-    rows.map((r: any) => r.picking_id?.[0]).filter(Boolean)));
-  if (!pickingIds.length) return [];
+  // 1. Des fiches portant le même nom que le client ont-elles reçu ce lot ?
+  try {
+    const rows = await odoo.searchRead(session, "stock.move.line",
+      [["state", "=", "done"], ["lot_id.name", "ilike", q],
+       ["picking_id.partner_id.name", "ilike", clientName]],
+      ["picking_id"], 100, "date desc");
+    const pids = Array.from(new Set(rows.map((r: any) => r.picking_id?.[0]).filter(Boolean)));
+    if (pids.length) {
+      const pickings = await odoo.searchRead(session, "stock.picking",
+        [["id", "in", pids]], ["partner_id"], pids.length);
+      const partnerIds = Array.from(new Set(
+        pickings.map((p: any) => p.partner_id?.[0]).filter(Boolean)));
+      if (partnerIds.length) {
+        const partners = await odoo.searchRead(session, "res.partner",
+          [["id", "in", partnerIds]], ["id", "name", "ref"], partnerIds.length);
+        out.sameName = partners.map((p: any) => ({
+          id: p.id, name: String(p.name || ""), ref: String(p.ref || ""),
+        }));
+      }
+    }
+  } catch { /* diagnostic best effort */ }
 
-  const pickings = await odoo.searchRead(session, "stock.picking",
-    [["id", "in", pickingIds]], ["partner_id"], pickingIds.length);
+  // 2. Le lot est-il sur une livraison de CE client encore non validée ? C'est le
+  //    cas le plus fréquent quand le commercial « le voit dans une commande ».
+  try {
+    const pending = await odoo.searchRead(session, "stock.move.line",
+      [["state", "!=", "done"], ["lot_id.name", "ilike", q],
+       ["picking_id.partner_id", "child_of", family]],
+      ["state"], 20);
+    out.pendingStates = Array.from(new Set(pending.map((p: any) => String(p.state))));
+  } catch { /* idem */ }
 
-  const partnerIds = Array.from(new Set(
-    pickings.map((p: any) => p.partner_id?.[0]).filter(Boolean)));
-  if (!partnerIds.length) return [];
+  // 3. Volume total, pour dire si le lot est largement diffusé.
+  try {
+    const all = await odoo.searchRead(session, "stock.move.line",
+      [["state", "=", "done"], ["lot_id.name", "ilike", q]], ["id"], 500);
+    out.totalDeliveries = all.length;
+  } catch { /* idem */ }
 
-  // Le code client départage deux fiches homonymes — sans lui, « BIO'ATTITUDE,
-  // BIO'ATTITUDE » n'apprend rien au commercial.
-  const partners = await odoo.searchRead(session, "res.partner",
-    [["id", "in", partnerIds]], ["id", "name", "ref"], partnerIds.length);
-
-  return partners.slice(0, limit).map((p: any) => ({
-    id: p.id, name: String(p.name || ""), ref: String(p.ref || ""),
-  }));
+  return out;
 }
 
 // Le lot existe-t-il dans Odoo, indépendamment du client ? Sert uniquement à
@@ -310,11 +381,13 @@ async function buildLotHits(
     .map(r => {
       const product = byProduct.get(r.product_id[0]);
       if (!product) return null;
+      const p = prices.get(r.move_id?.[0]);
       return {
         product,
         lot: String(r.lot_id[1]),
-        netUnit: prices.get(r.move_id?.[0]) ?? null,
+        netUnit: p ? p.netUnit : null,
         date: String(r.date || "").slice(0, 10),
+        orderName: p?.orderName || "",
       } as LotHit;
     })
     .filter((x): x is LotHit => x !== null);

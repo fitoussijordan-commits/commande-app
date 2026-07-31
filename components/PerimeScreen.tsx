@@ -85,12 +85,14 @@ export default function PerimeScreen({ session, client, priceItems, freeTypes, o
           // Aucun lot livré à ce client : ce lot existe-t-il seulement ?
           try {
             // Dire OÙ le lot est parti est bien plus utile que « pas trouvé ».
-            const dest = await perimes.findLotRecipients(session, text.trim());
-            if (dest.length) {
-              // Le code client est indispensable : deux fiches homonymes sans lui
-              // ne disent rien au commercial.
-              const labels = dest.map(d => d.ref ? `${d.name} (${d.ref})` : d.name);
-              setLotNote(`Ce lot a été livré à : ${labels.join(" · ")}. Si l'un de ces noms est ton client, c'est une fiche différente de celle sélectionnée — ouvre-la pour reprendre le produit.`);
+            const d = await perimes.diagnoseLot(session, text.trim(), client.name, family);
+            if (d.sameName.length) {
+              const labels = d.sameName.map(x => x.ref ? `${x.name} (${x.ref})` : x.name);
+              setLotNote(`Ce lot a bien été livré à ${labels.join(" · ")} — mais c'est une AUTRE fiche que celle sélectionnée. Ouvre-la pour reprendre le produit.`);
+            } else if (d.pendingStates.length) {
+              setLotNote(`Ce lot figure sur une livraison de ce client encore NON validée (état : ${d.pendingStates.join(", ")}). Il ne pourra être repris qu'une fois la livraison passée à « Fait ».`);
+            } else if (d.totalDeliveries > 0) {
+              setLotNote(`Ce lot existe et a été livré ${d.totalDeliveries} fois, mais aucune livraison validée ne concerne ${client.name}.`);
             } else {
               const exists = await perimes.lotExistsAnywhere(session, text.trim());
               setLotNote(exists
@@ -137,6 +139,8 @@ export default function PerimeScreen({ session, client, priceItems, freeTypes, o
           unitPrice: perimes.reprisePrice(hit.netUnit, bareme, "facture"),
           source: "facture" as const,
           invoiceDate: hit.date,
+          orderName: hit.orderName,
+          suspicious: perimes.isPaidPriceSuspicious(hit.netUnit, x.product.lst_price || 0),
         };
       }));
       if (!hit) onToast("Ce lot n'a pas été livré à ce client — prix catalogue appliqué", "info");
@@ -156,6 +160,8 @@ export default function PerimeScreen({ session, client, priceItems, freeTypes, o
       unitPrice: perimes.reprisePrice(base, bareme, known ? "facture" : "catalogue"),
       source: known ? "facture" as const : "catalogue" as const,
       invoiceDate: known ? h.date : undefined,
+      orderName: known ? h.orderName : undefined,
+      suspicious: known && perimes.isPaidPriceSuspicious(base, h.product.lst_price || 0),
     }]);
     setQ(""); setResults([]); setLotHits([]); setLotNote("");
   };
@@ -476,14 +482,27 @@ export default function PerimeScreen({ session, client, priceItems, freeTypes, o
                   return (
                     <div style={{ fontSize: 10.5, marginTop: 6, color: facture ? C.green : C.orange, display: "flex", gap: 6, flexWrap: "wrap" as const }}>
                       <span style={{ fontWeight: 700 }}>
-                        {facture ? `Prix payé ${fmt(r.basePrice)}` : `Prix catalogue ${fmt(r.basePrice)} — estimé`}
+                        {!facture ? `Prix catalogue ${fmt(r.basePrice)} — estimé`
+                          : r.basePrice === 0 ? "Produit offert à l'origine — reprise 0 €"
+                          : `Prix payé ${fmt(r.basePrice)}`}
                       </span>
                       {facture && r.invoiceDate && <span style={{ color: C.muted }}>livré le {r.invoiceDate}</span>}
+                      {facture && r.orderName && <span style={{ color: C.muted }}>· {r.orderName}</span>}
                       <span style={{ color: C.muted }}>· reprise {Math.round(bareme.taux * 100)} %{!facture && bareme.rsf > 0 ? ` (RSF ${(bareme.rsf * 100).toFixed(2).replace(/\.?0+$/, "")} %)` : ""}</span>
                       {!facture && <span style={{ color: C.muted }}>· saisis le n° de lot pour le prix réel</span>}
                     </div>
                   );
                 })()}
+
+                {/* Prix retrouvé anormalement élevé face au catalogue : ligne de
+                    vente mal rattachée, ou prix au carton. On alerte au lieu de
+                    laisser passer une reprise de 187 € sur un testeur. */}
+                {mode === "return" && (l as perimes.PerimeLine).suspicious && (
+                  <div style={{ fontSize: 11, marginTop: 6, padding: "7px 9px", background: C.redSoft, border: `1px solid ${C.red}44`, borderRadius: 8, color: C.red, lineHeight: 1.45 }}>
+                    Prix douteux : {fmt((l as perimes.PerimeLine).basePrice)} retrouvé alors que le catalogue est à {fmt(l.product.lst_price || 0)}.
+                    {(l as perimes.PerimeLine).orderName ? ` Vérifie ${(l as perimes.PerimeLine).orderName} dans Odoo` : " Vérifie la commande d'origine"} — corrige le prix à la main si besoin.
+                  </div>
+                )}
               </div>
             ))}
           </div>
