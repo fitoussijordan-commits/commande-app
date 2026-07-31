@@ -189,6 +189,34 @@ export async function searchDeliveredLots(
      ["lot_id.name", "ilike", q]],
     ["product_id", "lot_id", "move_id", "date"], 200, "date desc");
   if (!mls.length) return [];
+  return buildLotHits(session, mls, limit);
+}
+
+// Le lot existe-t-il dans Odoo, indépendamment du client ? Sert uniquement à
+// écrire un message utile : « inconnu dans Odoo » et « jamais livré à ce
+// client » appellent des réactions très différentes du commercial.
+export async function lotExistsAnywhere(
+  session: odoo.OdooSession,
+  query: string,
+): Promise<boolean> {
+  // Le modèle a été renommé stock.production.lot → stock.lot en Odoo 17.
+  for (const model of ["stock.lot", "stock.production.lot"]) {
+    try {
+      const r = await odoo.searchRead(session, model, [["name", "ilike", query.trim()]], ["id"], 1);
+      return r.length > 0;
+    } catch (e) {
+      if (odoo.isNetworkError(e)) throw e;
+      // Modèle inexistant sur cette version → on tente l'autre nom.
+    }
+  }
+  return false;
+}
+
+async function buildLotHits(
+  session: odoo.OdooSession,
+  mls: any[],
+  limit: number,
+): Promise<LotHit[]> {
 
   // Un même lot a pu partir en plusieurs livraisons : on garde la plus récente,
   // c'est elle qui porte le prix le plus représentatif.

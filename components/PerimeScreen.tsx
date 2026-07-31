@@ -37,6 +37,10 @@ export default function PerimeScreen({ session, client, priceItems, freeTypes, o
   const [submitting, setSubmitting] = useState(false);
   const [lotLoading, setLotLoading] = useState<number | null>(null);
   const [lotHits, setLotHits] = useState<perimes.LotHit[]>([]);
+  // "" = rien à dire. Sinon message explicite : lot inconnu, jamais livré ici,
+  // ou refus Odoo. Ne JAMAIS avaler l'erreur en silence — sans ça, impossible de
+  // distinguer « pas de résultat » de « la requête a planté ».
+  const [lotNote, setLotNote] = useState("");
 
   const bareme = perimes.baremeFor(client);
   const statut = perimes.statutLabel(client);
@@ -51,14 +55,31 @@ export default function PerimeScreen({ session, client, priceItems, freeTypes, o
 
   const search = async (text: string) => {
     setQ(text);
-    if (text.trim().length < 2) { setResults([]); setLotHits([]); return; }
+    if (text.trim().length < 2) { setResults([]); setLotHits([]); setLotNote(""); return; }
     setSearching(true);
     // En mode reprise, on cherche en parallèle par n° de lot livré à ce client :
     // le commercial lit le lot sur le pot, pas la référence produit.
     if (mode === "return") {
+      setLotNote("");
       perimes.searchDeliveredLots(session, client.id, text.trim())
-        .then(setLotHits).catch(() => setLotHits([]));
-    } else { setLotHits([]); }
+        .then(async hits => {
+          setLotHits(hits);
+          if (hits.length) return;
+          // Aucun lot livré à ce client : ce lot existe-t-il seulement ?
+          try {
+            const exists = await perimes.lotExistsAnywhere(session, text.trim());
+            setLotNote(exists
+              ? "Ce lot existe dans Odoo mais n'a jamais été livré à ce client."
+              : "Aucun lot ne correspond dans Odoo.");
+          } catch { setLotNote("Aucun lot livré à ce client ne correspond."); }
+        })
+        .catch(e => {
+          setLotHits([]);
+          setLotNote(odoo.isNetworkError(e)
+            ? "Recherche par lot indisponible hors ligne."
+            : `Recherche par lot refusée par Odoo : ${e?.message || "erreur inconnue"}`);
+        });
+    } else { setLotHits([]); setLotNote(""); }
     try {
       const r = await odoo.searchRead(session, "product.product",
         ["&", ["sale_ok", "=", true], "|",
@@ -110,7 +131,7 @@ export default function PerimeScreen({ session, client, priceItems, freeTypes, o
       source: known ? "facture" as const : "catalogue" as const,
       invoiceDate: known ? h.date : undefined,
     }]);
-    setQ(""); setResults([]); setLotHits([]);
+    setQ(""); setResults([]); setLotHits([]); setLotNote("");
   };
 
   const addProduct = (p: any) => {
@@ -125,7 +146,7 @@ export default function PerimeScreen({ session, client, priceItems, freeTypes, o
         ? prev.map(l => l.product.id === p.id ? { ...l, qty: l.qty + 1 } : l)
         : [...prev, { product: p, qty: 1, unitPrice: price }]);
     }
-    setQ(""); setResults([]); setLotHits([]);
+    setQ(""); setResults([]); setLotHits([]); setLotNote("");
   };
 
   const returnsTotal = perimes.returnsValue(returns);
@@ -204,7 +225,7 @@ export default function PerimeScreen({ session, client, priceItems, freeTypes, o
         {/* Bascule reprise / échange */}
         <div style={{ display: "flex", gap: 6, marginBottom: 14, background: C.bg, borderRadius: 12, padding: 4 }}>
           {([["return", `Périmés repris (${returns.length})`], ["exchange", `Échange (${exchanges.length})`]] as [Mode, string][]).map(([id, label]) => (
-            <button key={id} onClick={() => { setMode(id); setQ(""); setResults([]); setLotHits([]); }}
+            <button key={id} onClick={() => { setMode(id); setQ(""); setResults([]); setLotHits([]); setLotNote(""); }}
               style={{ flex: 1, padding: "9px 0", borderRadius: 9, border: "none", cursor: "pointer", fontFamily: "inherit", fontSize: 13, fontWeight: 700,
                 background: mode === id ? C.white : "transparent", color: mode === id ? C.tealDark : C.muted, boxShadow: mode === id ? C.shadow : "none" }}>
               {label}
@@ -218,6 +239,18 @@ export default function PerimeScreen({ session, client, priceItems, freeTypes, o
           style={{ width: "100%", boxSizing: "border-box" as const, padding: "12px 14px", border: `1.5px solid ${C.border}`, borderRadius: 12, fontSize: 15, fontFamily: "inherit", background: C.white, color: C.text, outline: "none", marginBottom: 8 }} />
 
         {searching && <div style={{ fontSize: 12, color: C.muted, padding: "4px 2px" }}>Recherche…</div>}
+
+        {lotNote && (
+          <div style={{ background: C.orangeSoft, border: `1px solid ${C.orange}44`, borderRadius: 10, padding: "9px 12px", marginBottom: 10, fontSize: 12, color: C.orange, lineHeight: 1.45 }}>
+            {lotNote}
+          </div>
+        )}
+
+        {!searching && q.trim().length >= 2 && results.length === 0 && lotHits.length === 0 && !lotNote && (
+          <div style={{ fontSize: 12, color: C.muted, padding: "6px 2px", marginBottom: 8 }}>
+            Aucun produit ne correspond à « {q.trim()} ».
+          </div>
+        )}
 
         {lotHits.length > 0 && (
           <div style={{ marginBottom: 12 }}>
