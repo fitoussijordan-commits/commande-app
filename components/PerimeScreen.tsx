@@ -140,6 +140,7 @@ export default function PerimeScreen({ session, client, priceItems, freeTypes, o
           source: "facture" as const,
           invoiceDate: hit.date,
           orderName: hit.orderName,
+          lotId: hit.lotId,
           suspicious: perimes.isPaidPriceSuspicious(hit.netUnit, x.product.lst_price || 0),
         };
       }));
@@ -155,7 +156,7 @@ export default function PerimeScreen({ session, client, priceItems, freeTypes, o
     const known = h.netUnit != null;
     const base = known ? h.netUnit! : (h.product.lst_price || 0);
     setReturns(prev => [...prev, {
-      product: h.product, qty: 1, lot: h.lot,
+      product: h.product, qty: 1, lot: h.lot, lotId: h.lotId,
       basePrice: base,
       unitPrice: perimes.reprisePrice(base, bareme, known ? "facture" : "catalogue"),
       source: known ? "facture" as const : "catalogue" as const,
@@ -461,7 +462,7 @@ export default function PerimeScreen({ session, client, priceItems, freeTypes, o
 
                   {mode === "return" && (
                     <input value={(l as perimes.PerimeLine).lot || ""}
-                      onChange={e => setReturns(p => p.map((x, j) => j === i ? { ...x, lot: e.target.value } : x))}
+                      onChange={e => setReturns(p => p.map((x, j) => j === i ? { ...x, lot: e.target.value, lotId: undefined } : x))}
                       onBlur={() => lookupLot(i)}
                       placeholder="N° de lot"
                       style={{ flex: 1, minWidth: 90, padding: "8px 10px", borderRadius: 8, border: `1px solid ${C.border}`, fontSize: 13, fontFamily: "inherit", color: C.text, outline: "none" }} />

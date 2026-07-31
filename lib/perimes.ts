@@ -27,6 +27,7 @@ export interface PerimeLine {
   orderName?: string;   // commande d'origine, pour vérifier un prix douteux
   suspicious?: boolean; // prix retrouvé incohérent avec le catalogue
   lot?: string;
+  lotId?: number;       // id du lot Odoo EXISTANT — à réutiliser, pas à recréer
 }
 
 // ── Barème par statut client ─────────────────────────────────────────────────
@@ -112,7 +113,7 @@ export async function findPaidPriceByLot(
   clientIds: number | number[],
   productId: number,
   lot: string,
-): Promise<{ netUnit: number; date: string; orderName: string } | null> {
+): Promise<{ netUnit: number; date: string; orderName: string; lotId: number } | null> {
   const wanted = normalizeLot(lot);
   if (!wanted) return null;
 
@@ -132,7 +133,7 @@ export async function findPaidPriceByLot(
   const prices = await resolveNetPrices(session, hits.map((h: any) => h.move_id?.[0]));
   for (const h of hits) {          // déjà triés du plus récent au plus ancien
     const p = prices.get(h.move_id?.[0]);
-    if (p) return { netUnit: p.netUnit, date: String(h.date || "").slice(0, 10), orderName: p.orderName };
+    if (p) return { netUnit: p.netUnit, date: String(h.date || "").slice(0, 10), orderName: p.orderName, lotId: h.lot_id?.[0] };
   }
   return null;
 }
@@ -234,6 +235,7 @@ export async function resolveClientFamily(
 export interface LotHit {
   product: any;
   lot: string;
+  lotId: number;
   netUnit: number | null;   // null = ligne de vente introuvable
   date: string;
   orderName: string;
@@ -385,6 +387,7 @@ async function buildLotHits(
       return {
         product,
         lot: String(r.lot_id[1]),
+        lotId: r.lot_id[0],
         netUnit: p ? p.netUnit : null,
         date: String(r.date || "").slice(0, 10),
         orderName: p?.orderName || "",
@@ -608,6 +611,34 @@ export async function recentReprises(
     limit, "id desc");
 }
 
+// Retrouve le lot EXISTANT d'un produit par son nom. Sans ça, passer lot_name à
+// Odoo aboutit à la création d'un lot en double, ce qui casse la traçabilité :
+// le même numéro se retrouve sur deux enregistrements distincts.
+async function findExistingLotId(
+  session: odoo.OdooSession,
+  productId: number,
+  lotName: string,
+): Promise<number | null> {
+  const wanted = normalizeLot(lotName);
+  if (!wanted) return null;
+  // stock.production.lot renommé stock.lot en Odoo 17 : on essaie les deux.
+  for (const model of ["stock.lot", "stock.production.lot"]) {
+    try {
+      const rows = await odoo.searchRead(session, model,
+        [["product_id", "=", productId], ["name", "ilike", lotName.trim()]],
+        ["id", "name"], 20);
+      const exact = rows.find((r: any) => normalizeLot(r.name) === wanted);
+      if (exact) return exact.id;
+      if (rows.length === 1) return rows[0].id;   // correspondance partielle unique
+      return null;
+    } catch (e) {
+      if (odoo.isNetworkError(e)) throw e;
+      // modèle inexistant sur cette version → on tente l'autre nom
+    }
+  }
+  return null;
+}
+
 // Confirme le transfert, renseigne les lots, puis valide. Renvoie "" si tout
 // s'est bien passé, sinon un avertissement lisible — le transfert existe alors
 // mais reste à finir à la main dans Odoo.
@@ -630,7 +661,7 @@ async function confirmAndValidate(
         await odoo.create(session, "stock.move.line", {
           move_id: moveId, picking_id: pickingId,
           product_id: l.product.id,
-          ...(l.lot ? { lot_name: l.lot } : {}),
+          ...(await lotVals(session, l)),
         });
       }
       mls = await odoo.searchRead(session, "stock.move.line",
@@ -640,9 +671,7 @@ async function confirmAndValidate(
     for (const ml of mls) {
       const l = lineByMove.get(ml.move_id?.[0]);
       if (!l) continue;
-      // lot_name (et non lot_id) : le lot vient de chez le client, il peut ne
-      // pas exister côté entrepôt — Odoo le crée à la volée.
-      const vals: any = { ...(l.lot ? { lot_name: l.lot } : {}) };
+      const vals: any = await lotVals(session, l);
       // Odoo 17 : `quantity`. Odoo 16 : `qty_done`. On tente, puis on replie.
       try {
         await odoo.write(session, "stock.move.line", [ml.id], { ...vals, quantity: l.qty });
@@ -661,6 +690,16 @@ async function confirmAndValidate(
   } catch (e: any) {
     return `transfert créé mais non validé : ${e?.message || "erreur inconnue"}`;
   }
+}
+
+// lot_id si le lot existe déjà dans Odoo (cas normal : il vient d'une livraison
+// à ce client), lot_name seulement en dernier recours. L'inverse créait un
+// doublon de lot à chaque reprise.
+async function lotVals(session: odoo.OdooSession, l: PerimeLine): Promise<any> {
+  if (!l.lot) return {};
+  if (l.lotId) return { lot_id: l.lotId };
+  const id = await findExistingLotId(session, l.product.id, l.lot);
+  return id ? { lot_id: id } : { lot_name: l.lot };
 }
 
 // Emplacement d'où vient la marchandise reprise : l'emplacement client propre à
