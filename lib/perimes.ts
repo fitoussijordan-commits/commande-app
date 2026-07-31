@@ -93,7 +93,10 @@ export function baremeFor(client: any): Bareme {
 // n'a pas retrouvé le lot et qu'on part du prix catalogue.
 export function reprisePrice(basePrice: number, b: Bareme, source: PriceSource): number {
   const paid = source === "facture" ? basePrice : basePrice * (1 - b.rsf);
-  return Math.max(0, paid * b.taux);
+  // Arrondi au centime : ce prix part tel quel dans price_unit d'une ligne de
+  // vente. Un 12,11136 € non arrondi produit des écarts de centimes à la facture
+  // et s'affiche mal partout.
+  return Math.max(0, Math.round(paid * b.taux * 100) / 100);
 }
 
 // ── Prix réellement payé par le client, retrouvé par le numéro de lot ────────
@@ -337,39 +340,74 @@ export async function resolveRebutLocation(
 export async function createRebutPicking(
   session: odoo.OdooSession,
   opts: {
-    clientId: number; clientName: string; repName: string;
+    clientId: number; clientName: string; clientRef?: string; repName: string;
     locationId: number; lines: PerimeLine[]; localRef: string;
+    orderName?: string;   // n° du BC d'échange, pour le lien croisé
   },
-): Promise<number | null> {
+): Promise<{ id: number; name: string } | null> {
   try {
+    // `ilike` et non `=` : origin contient aussi le n° de BC, mais la clé
+    // d'idempotence doit rester retrouvable dedans.
     const existing = await odoo.searchRead(session, "stock.picking",
-      [["origin", "=", opts.localRef]], ["id"], 1);
-    if (existing.length) return existing[0].id;
+      [["origin", "ilike", opts.localRef]], ["id", "name"], 1);
+    if (existing.length) return { id: existing[0].id, name: existing[0].name };
 
     const types = await odoo.searchRead(session, "stock.picking.type",
       [["code", "=", "incoming"]], ["id", "default_location_src_id"], 1);
     if (!types.length) return null;
 
+    const dateStr = new Date().toLocaleDateString("fr-FR");
+
+    // origin = « Document d'origine » d'Odoo : c'est LE champ qu'un gestionnaire
+    // regarde et qui est indexé dans la recherche. On y met le n° de BC, et la
+    // clé locale derrière pour l'anti-doublon.
+    const origin = [opts.orderName, `Retour périmés`, opts.localRef]
+      .filter(Boolean).join(" · ");
+
+    const note = [
+      `RETOUR PÉRIMÉS`,
+      `Client : ${opts.clientName}${opts.clientRef ? ` (${opts.clientRef})` : ""}`,
+      `Commercial : ${opts.repName}`,
+      `Date de reprise : ${dateStr}`,
+      opts.orderName ? `Échange : BC ${opts.orderName}` : `Échange : BC en attente`,
+      ``,
+      `Produits repris :`,
+      ...opts.lines.map(l =>
+        `• ${l.product.name}${l.lot ? ` — lot ${l.lot}` : ""} × ${l.qty}`
+        + ` — ${l.source === "facture" ? "payé" : "estimé"} ${l.basePrice.toFixed(2)} €`
+        + ` → reprise ${l.unitPrice.toFixed(2)} €`),
+    ].join("\n");
+
     const pickingId = await odoo.create(session, "stock.picking", {
       partner_id: opts.clientId,
       picking_type_id: types[0].id,
       location_dest_id: opts.locationId,
-      origin: opts.localRef,
-      note: `Retour périmés — ${opts.clientName} — ${opts.repName}`,
+      origin,
+      note,
     });
 
     // Mouvements créés séparément avec picking_id : évite le champ one2many du
     // picking, renommé move_lines → move_ids entre Odoo 16 et 17.
+    // Le libellé de ligne porte lot + BC + date : dans l'entrepôt, on lit la
+    // ligne du mouvement, pas la note du transfert.
     for (const l of opts.lines) {
+      const parts = [l.product.name];
+      if (l.lot) parts.push(`lot ${l.lot}`);
+      parts.push(`retour périmé ${opts.clientName}`);
+      if (opts.orderName) parts.push(`éch. ${opts.orderName}`);
+      parts.push(dateStr);
       await odoo.create(session, "stock.move", {
-        name: l.lot ? `${l.product.name} — lot ${l.lot}` : l.product.name,
+        name: parts.join(" — "),
         product_id: l.product.id,
         product_uom_qty: l.qty,
         picking_id: pickingId,
         location_dest_id: opts.locationId,
       });
     }
-    return pickingId;
+
+    const created = await odoo.searchRead(session, "stock.picking",
+      [["id", "=", pickingId]], ["name"], 1);
+    return { id: pickingId, name: created[0]?.name || String(pickingId) };
   } catch {
     return null;
   }

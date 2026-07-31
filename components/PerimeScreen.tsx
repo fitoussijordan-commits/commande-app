@@ -173,24 +173,41 @@ export default function PerimeScreen({ session, client, priceItems, freeTypes, o
       });
       const orderId = await odoo.create(session, "sale.order", payload);
 
+      // Le NUMÉRO du BC (S00123), pas son id technique : c'est lui qui sera lu
+      // sur le transfert de rebut et dans l'entrepôt.
+      let orderName = String(orderId);
+      try {
+        const rows = await odoo.searchRead(session, "sale.order", [["id", "=", orderId]], ["name"], 1);
+        if (rows[0]?.name) orderName = rows[0].name;
+      } catch {}
+
       // Mouvement de stock vers l'emplacement rebut du commercial. Sans droits
       // stock, Odoo refuse : on garde le BC et on le signale, plutôt que de
       // perdre toute la saisie.
       const locId = await perimes.resolveRebutLocation(session, repName);
-      let pickingOk = false;
+      let picking: { id: number; name: string } | null = null;
       if (locId) {
-        const pid = await perimes.createRebutPicking(session, {
-          clientId: client.id, clientName: client.name, repName,
-          locationId: locId, lines: returns, localRef,
+        picking = await perimes.createRebutPicking(session, {
+          clientId: client.id, clientName: client.name, clientRef: client.ref,
+          repName, locationId: locId, lines: returns, localRef, orderName,
         });
-        pickingOk = pid !== null;
+      }
+
+      // Lien croisé : le BC doit aussi pointer vers le transfert, sinon la
+      // traçabilité ne marche que dans un sens.
+      if (picking) {
+        try {
+          await odoo.write(session, "sale.order", [orderId], {
+            note: `${payload.note}\n\nTransfert de rebut : ${picking.name} → ${locationLabel}`,
+          });
+        } catch {}
       }
 
       onToast(
-        pickingOk
-          ? `✅ BC créé + retour vers « ${locationLabel} »`
-          : `✅ BC créé (n° ${orderId}) — mouvement rebut non créé, droits stock manquants`,
-        pickingOk ? "success" : "info",
+        picking
+          ? `✅ BC ${orderName} + transfert ${picking.name} vers « ${locationLabel} »`
+          : `✅ BC ${orderName} créé — transfert rebut non créé, droits stock manquants`,
+        picking ? "success" : "info",
       );
       onDone();
     } catch (e: any) {
