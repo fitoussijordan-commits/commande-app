@@ -4,6 +4,7 @@ import * as odoo from "@/lib/odoo";
 import AppointmentModal from "@/components/AppointmentModal";
 import ClientNoteModal from "@/components/ClientNoteModal";
 import OfflineBar from "@/components/OfflineBar";
+import PerimeScreen from "@/components/PerimeScreen";
 import * as sync from "@/lib/sync";
 import * as geo from "@/lib/geo";
 import { apiUrl } from "@/lib/apiBase";
@@ -371,7 +372,7 @@ function ProductImage({ id, networkUrl, style }: { id: number; networkUrl: strin
 
 // ═══════════════════════════════════════════════════════════════════════════
 export default function OrderScreen({ session, onBack, onToast, desktop }: Props) {
-  const [step, setStep] = useState<"home" | "client" | "hub" | "catalog" | "history">("client");
+  const [step, setStep] = useState<"home" | "client" | "hub" | "catalog" | "history" | "perime">("client");
   const [client, setClient] = useState<any>(null);
   const [priceItems, setPriceItems] = useState<PriceItem[]>([]); // items pricelist du client
   const [cart, setCart] = useState<Record<number, CartItem>>({});
@@ -704,7 +705,7 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
              accidentel en tournée = impossible de se reconnecter hors ligne). */}
         {step !== "client" && (
           <button onClick={() => {
-              if (step === "catalog" || step === "history") setStep("hub");
+              if (step === "catalog" || step === "history" || step === "perime") setStep("hub");
               else if (step === "hub") setStep(clientOrigin === "planning" ? "home" : "client");
               else setStep("client");
             }}
@@ -721,6 +722,7 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
           {step === "hub" && "Fiche client"}
           {step === "catalog" && "Prise de commande"}
           {step === "history" && "Historique des commandes"}
+          {step === "perime" && "Retour périmés"}
         </div>
 
         <div style={{ flex: 1 }} />
@@ -909,11 +911,17 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
           onHistory={() => setStep("history")}
           onAppointment={() => setShowAppointment(true)}
           onNote={() => setShowClientNote(true)}
+          onPerime={() => setStep("perime")}
         />
       )}
 
       {step === "history" && client && (
         <ClientHistory session={session} client={client} />
+      )}
+
+      {step === "perime" && client && (
+        <PerimeScreen session={session} client={client} priceItems={priceItems}
+          freeTypes={freeTypes} onToast={onToast} onDone={() => setStep("hub")} />
       )}
 
       {step === "catalog" && client && (
@@ -1599,9 +1607,10 @@ function ClientStep({ session, onSelect }: { session: odoo.OdooSession; onSelect
 // ═══════════════════════════════════════════════════════════════════════════
 // HUB CLIENT — écran d'accueil une fois le client sélectionné
 // ═══════════════════════════════════════════════════════════════════════════
-function ClientHub({ session, client, hasDraft, onOrder, onHistory, onAppointment, onNote }: {
+function ClientHub({ session, client, hasDraft, onOrder, onHistory, onAppointment, onNote, onPerime }: {
   session: odoo.OdooSession; client: any; hasDraft: boolean;
   onOrder: () => void; onHistory: () => void; onAppointment: () => void; onNote: () => void;
+  onPerime: () => void;
 }) {
   const [stats, setStats] = useState<{ ca: number; count: number; lastDate: string | null } | null>(null);
 
@@ -1652,6 +1661,7 @@ function ClientHub({ session, client, hasDraft, onOrder, onHistory, onAppointmen
     { key: "history", icon: "clock", title: "Historique", subtitle: "Commandes passées", primary: false, badge: false, onClick: onHistory },
     { key: "rdv", icon: "calendar", title: "Prendre un RDV", subtitle: "Agenda Odoo", primary: false, badge: false, onClick: onAppointment },
     { key: "note", icon: "note", title: "Note client", subtitle: "Compte rendu, vocal ou écrit", primary: false, badge: false, onClick: onNote },
+    { key: "perime", icon: "package", title: "Retour périmés", subtitle: "Reprise + échange", primary: false, badge: false, onClick: onPerime },
   ];
 
   return (
