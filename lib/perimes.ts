@@ -107,16 +107,16 @@ export function reprisePrice(basePrice: number, b: Bareme, source: PriceSource):
 // alors sur le prix catalogue, en le signalant.
 export async function findPaidPriceByLot(
   session: odoo.OdooSession,
-  clientId: number,
+  clientIds: number | number[],
   productId: number,
   lot: string,
 ): Promise<{ netUnit: number; date: string } | null> {
   const wanted = normalizeLot(lot);
   if (!wanted) return null;
 
-  // child_of : couvre la société ET ses adresses de livraison (voir searchDeliveredLots).
+  const family = Array.isArray(clientIds) ? clientIds : [clientIds];
   const mls = await odoo.searchRead(session, "stock.move.line",
-    [["picking_id.partner_id", "child_of", clientId],
+    [["picking_id.partner_id", "child_of", family],
      ["product_id", "=", productId],
      ["state", "=", "done"],
      ["lot_id", "!=", false]],
@@ -163,6 +163,31 @@ async function resolveNetPrices(
   return out;
 }
 
+// ── Périmètre client ─────────────────────────────────────────────────────────
+// Un même client existe souvent sous PLUSIEURS fiches res.partner : la société,
+// ses adresses de livraison, et parfois de vrais doublons créés par import (deux
+// fiches sœurs portant le même code). `child_of` seul ne couvre que la première
+// famille — une livraison partie sur la fiche jumelle reste invisible.
+//
+// On élargit donc au CODE CLIENT (`ref`), qui est la clé métier commune aux
+// doublons, puis on applique child_of sur toute la famille obtenue.
+export async function resolveClientFamily(
+  session: odoo.OdooSession,
+  client: any,
+): Promise<number[]> {
+  const ids = new Set<number>([client.id]);
+  if (client.parent_id?.[0]) ids.add(client.parent_id[0]);
+  const ref = String(client.ref || "").trim();
+  if (ref) {
+    try {
+      const twins = await odoo.searchRead(session, "res.partner",
+        [["ref", "=", ref], ["active", "=", true]], ["id"], 20);
+      for (const t of twins) ids.add(t.id);
+    } catch { /* on garde au moins la fiche courante */ }
+  }
+  return Array.from(ids);
+}
+
 // ── Recherche PAR NUMÉRO DE LOT ──────────────────────────────────────────────
 // Le geste terrain : le commercial lit le lot sur le pot périmé et le tape. On
 // remonte le produit ET le prix payé en une fois, sans qu'il ait à identifier la
@@ -179,18 +204,18 @@ export interface LotHit {
 
 export async function searchDeliveredLots(
   session: odoo.OdooSession,
-  clientId: number,
+  clientIds: number | number[],
   query: string,
   limit = 20,
 ): Promise<LotHit[]> {
   const q = query.trim();
   if (q.length < 2) return [];
 
-  // child_of et non "=" : une livraison part vers l'ADRESSE DE LIVRAISON, qui est
-  // une fiche enfant de la société. Chercher sur le seul ID de la société mère ne
-  // remonte donc rien, alors que le produit est bien parti chez ce client.
+  // child_of sur TOUTE la famille de fiches (société, adresses de livraison et
+  // doublons partageant le même code) — voir resolveClientFamily.
+  const family = Array.isArray(clientIds) ? clientIds : [clientIds];
   const mls = await odoo.searchRead(session, "stock.move.line",
-    [["picking_id.partner_id", "child_of", clientId],
+    [["picking_id.partner_id", "child_of", family],
      ["state", "=", "done"],
      ["lot_id", "!=", false],
      ["lot_id.name", "ilike", q]],
@@ -202,14 +227,16 @@ export async function searchDeliveredLots(
 // Où ce lot a-t-il été livré, tous clients confondus ? Sert au diagnostic quand
 // la recherche bornée au client ne donne rien : soit il est parti ailleurs, soit
 // il est chez une fiche voisine (autre adresse, autre société du groupe).
+export interface LotRecipient { id: number; name: string; ref: string }
+
 export async function findLotRecipients(
   session: odoo.OdooSession,
   query: string,
-  limit = 5,
-): Promise<string[]> {
+  limit = 6,
+): Promise<LotRecipient[]> {
   const rows = await odoo.searchRead(session, "stock.move.line",
     [["state", "=", "done"], ["lot_id", "!=", false], ["lot_id.name", "ilike", query.trim()]],
-    ["picking_id"], 50, "date desc");
+    ["picking_id"], 400, "date desc");
 
   const pickingIds = Array.from(new Set(
     rows.map((r: any) => r.picking_id?.[0]).filter(Boolean)));
@@ -218,13 +245,18 @@ export async function findLotRecipients(
   const pickings = await odoo.searchRead(session, "stock.picking",
     [["id", "in", pickingIds]], ["partner_id"], pickingIds.length);
 
-  const names = new Set<string>();
-  for (const p of pickings) {
-    const n = p.partner_id?.[1];
-    if (n) names.add(String(n));
-    if (names.size >= limit) break;
-  }
-  return Array.from(names);
+  const partnerIds = Array.from(new Set(
+    pickings.map((p: any) => p.partner_id?.[0]).filter(Boolean)));
+  if (!partnerIds.length) return [];
+
+  // Le code client départage deux fiches homonymes — sans lui, « BIO'ATTITUDE,
+  // BIO'ATTITUDE » n'apprend rien au commercial.
+  const partners = await odoo.searchRead(session, "res.partner",
+    [["id", "in", partnerIds]], ["id", "name", "ref"], partnerIds.length);
+
+  return partners.slice(0, limit).map((p: any) => ({
+    id: p.id, name: String(p.name || ""), ref: String(p.ref || ""),
+  }));
 }
 
 // Le lot existe-t-il dans Odoo, indépendamment du client ? Sert uniquement à

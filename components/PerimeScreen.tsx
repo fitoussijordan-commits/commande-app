@@ -44,6 +44,13 @@ export default function PerimeScreen({ session, client, priceItems, freeTypes, o
   const [lotNote, setLotNote] = useState("");
   const [lastResult, setLastResult] = useState<{ orderName: string; pickingName: string | null; stockError: string } | null>(null);
   const [recent, setRecent] = useState<any[]>([]);
+  // Toutes les fiches res.partner du même client (société, adresses, doublons de
+  // même code). Résolu une fois à l'ouverture, réutilisé par chaque recherche.
+  const [family, setFamily] = useState<number[]>([client.id]);
+  useEffect(() => {
+    perimes.resolveClientFamily(session, client)
+      .then(setFamily).catch(() => setFamily([client.id]));
+  }, [client.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // « Où est passé mon BC ? » — on liste les reprises déjà créées pour ce client
   // en cherchant la référence PERIM- portée par le bon de commande.
@@ -71,7 +78,7 @@ export default function PerimeScreen({ session, client, priceItems, freeTypes, o
     // le commercial lit le lot sur le pot, pas la référence produit.
     if (mode === "return") {
       setLotNote("");
-      perimes.searchDeliveredLots(session, client.id, text.trim())
+      perimes.searchDeliveredLots(session, family, text.trim())
         .then(async hits => {
           setLotHits(hits);
           if (hits.length) return;
@@ -80,7 +87,10 @@ export default function PerimeScreen({ session, client, priceItems, freeTypes, o
             // Dire OÙ le lot est parti est bien plus utile que « pas trouvé ».
             const dest = await perimes.findLotRecipients(session, text.trim());
             if (dest.length) {
-              setLotNote(`Ce lot a été livré à : ${dest.join(", ")}. Sélectionne cette fiche client pour le reprendre.`);
+              // Le code client est indispensable : deux fiches homonymes sans lui
+              // ne disent rien au commercial.
+              const labels = dest.map(d => d.ref ? `${d.name} (${d.ref})` : d.name);
+              setLotNote(`Ce lot a été livré à : ${labels.join(" · ")}. Si l'un de ces noms est ton client, c'est une fiche différente de celle sélectionnée — ouvre-la pour reprendre le produit.`);
             } else {
               const exists = await perimes.lotExistsAnywhere(session, text.trim());
               setLotNote(exists
@@ -117,7 +127,7 @@ export default function PerimeScreen({ session, client, priceItems, freeTypes, o
     if (!line || !line.lot) return;
     setLotLoading(line.product.id);
     try {
-      const hit = await perimes.findPaidPriceByLot(session, client.id, line.product.id, line.lot);
+      const hit = await perimes.findPaidPriceByLot(session, family, line.product.id, line.lot);
       setReturns(prev => prev.map((x, j) => {
         if (j !== index) return x;
         if (!hit) return { ...x, source: "catalogue" as const, unitPrice: perimes.reprisePrice(x.basePrice, bareme, "catalogue") };
