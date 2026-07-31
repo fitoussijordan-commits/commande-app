@@ -341,27 +341,54 @@ export function rebutLocationName(repName: string, d = new Date()): string {
 // commercial n'a pas les droits stock (AccessError) — le flux continue sans.
 // Renvoie l'id, ou une erreur EXPLICITE. Ne jamais renvoyer null muet : attribuer
 // à tort un échec aux « droits manquants » envoie sur une fausse piste.
+// Type de l'emplacement rebut. NE PAS mettre "internal" :
+//
+//   internal  → compte dans le stock disponible ET dans la valorisation au bilan.
+//               Les périmés deviendraient du stock vendable, réservables sur une
+//               commande, et gonfleraient l'inventaire comptable.
+//   inventory → « perte d'inventaire ». Emplacement virtuel : sort de la
+//               valorisation et du stock disponible, tout en gardant la traçabilité
+//               complète (produit, lot, date, client d'origine, commercial).
+//
+// C'est la sémantique correcte d'une mise au rebut. Si la comptabilité préfère
+// tenir physiquement les périmés avant destruction, repasser à "internal" et
+// prévoir un stock.scrap derrière — mais c'est un arbitrage à valider avec eux.
+const REBUT_USAGE = "inventory";
+
 export async function resolveRebutLocation(
   session: odoo.OdooSession,
   repName: string,
 ): Promise<{ id: number } | { error: string }> {
   const name = rebutLocationName(repName);
   try {
+    // Sans filtre sur usage : si l'emplacement a été créé en "internal" par une
+    // version précédente, on le retrouve quand même pour ne pas en faire un second.
     const found = await odoo.searchRead(session, "stock.location",
-      [["name", "=", name], ["usage", "=", "internal"]], ["id"], 1);
+      [["name", "=", name]], ["id", "usage"], 1);
     if (found.length) return { id: found[0].id };
 
     // Parent : la branche « Rebut » si elle existe, sinon on crée à la racine.
     let parentId: number | null = null;
     const rebut = await odoo.searchRead(session, "stock.location",
-      [["name", "=", "Rebut"], ["usage", "=", "internal"]], ["id"], 1);
+      [["name", "=", "Rebut"]], ["id"], 1);
     if (rebut.length) parentId = rebut[0].id;
 
-    const id = await odoo.create(session, "stock.location", {
+    const base = {
       name,
-      usage: "internal",
+      usage: REBUT_USAGE,
       ...(parentId ? { location_id: parentId } : {}),
-    });
+    };
+    // scrap_location : la case « Est un emplacement de rebut ? » d'Odoo. Elle
+    // marque l'emplacement comme destination de mise au rebut, ce qui le sort des
+    // flux de réapprovisionnement et le rend explicite en inventaire.
+    let id: number;
+    try {
+      id = await odoo.create(session, "stock.location", { ...base, scrap_location: true });
+    } catch (e) {
+      if (odoo.isNetworkError(e)) throw e;
+      // Champ absent sur cette version : l'emplacement reste valable sans.
+      id = await odoo.create(session, "stock.location", base);
+    }
     return { id };
   } catch (e: any) {
     return { error: `emplacement « ${name} » : ${e?.message || "erreur inconnue"}` };
@@ -378,7 +405,7 @@ export async function createRebutPicking(
     locationId: number; lines: PerimeLine[]; localRef: string;
     orderName?: string;   // n° du BC d'échange, pour le lien croisé
   },
-): Promise<{ id: number; name: string } | { error: string }> {
+): Promise<{ id: number; name: string; warning?: string } | { error: string }> {
   try {
     // `ilike` et non `=` : origin contient aussi le n° de BC, mais la clé
     // d'idempotence doit rester retrouvable dedans.
@@ -439,6 +466,8 @@ export async function createRebutPicking(
     // picking, renommé move_lines → move_ids entre Odoo 16 et 17.
     // Le libellé de ligne porte lot + BC + date : dans l'entrepôt, on lit la
     // ligne du mouvement, pas la note du transfert.
+    // Un stock.move par ligne de reprise → correspondance 1:1 avec son lot.
+    const lineByMove = new Map<number, PerimeLine>();
     for (const l of opts.lines) {
       const parts = [l.product.name];
       if (l.lot) parts.push(`lot ${l.lot}`);
@@ -446,7 +475,7 @@ export async function createRebutPicking(
       if (opts.orderName) parts.push(`éch. ${opts.orderName}`);
       parts.push(dateStr);
       const uom = uomByProduct.get(l.product.id);
-      await odoo.create(session, "stock.move", {
+      const moveId = await odoo.create(session, "stock.move", {
         name: parts.join(" — "),
         product_id: l.product.id,
         product_uom_qty: l.qty,
@@ -455,11 +484,19 @@ export async function createRebutPicking(
         location_id: srcId,
         location_dest_id: opts.locationId,
       });
+      lineByMove.set(moveId, l);
     }
 
     const created = await odoo.searchRead(session, "stock.picking",
       [["id", "=", pickingId]], ["name"], 1);
-    return { id: pickingId, name: created[0]?.name || String(pickingId) };
+    const name = created[0]?.name || String(pickingId);
+
+    // Sans cette séquence, le transfert reste en BROUILLON et rien n'arrive dans
+    // l'emplacement rebut. Et sans lot_name, Odoo refuse la validation d'un
+    // produit tracé (« Vous devez fournir un lot/numéro de série »).
+    const done = await confirmAndValidate(session, pickingId, lineByMove);
+    if (done) return { id: pickingId, name, warning: done };
+    return { id: pickingId, name };
   } catch (e: any) {
     return { error: `transfert : ${e?.message || "erreur inconnue"}` };
   }
@@ -477,6 +514,61 @@ export async function recentReprises(
   return odoo.searchRead(session, "sale.order", domain,
     ["id", "name", "date_order", "amount_total", "state", "partner_id", "client_order_ref"],
     limit, "id desc");
+}
+
+// Confirme le transfert, renseigne les lots, puis valide. Renvoie "" si tout
+// s'est bien passé, sinon un avertissement lisible — le transfert existe alors
+// mais reste à finir à la main dans Odoo.
+async function confirmAndValidate(
+  session: odoo.OdooSession,
+  pickingId: number,
+  lineByMove: Map<number, PerimeLine>,
+): Promise<string> {
+  try {
+    await odoo.callMethod(session, "stock.picking", "action_confirm", [[pickingId]]);
+    try { await odoo.callMethod(session, "stock.picking", "action_assign", [[pickingId]]); } catch {}
+
+    let mls = await odoo.searchRead(session, "stock.move.line",
+      [["picking_id", "=", pickingId]], ["id", "move_id", "product_id"], 0);
+
+    // Selon la configuration, la confirmation ne crée pas toujours les lignes
+    // d'opération : on les crée alors nous-mêmes.
+    if (!mls.length) {
+      for (const [moveId, l] of Array.from(lineByMove.entries())) {
+        await odoo.create(session, "stock.move.line", {
+          move_id: moveId, picking_id: pickingId,
+          product_id: l.product.id,
+          ...(l.lot ? { lot_name: l.lot } : {}),
+        });
+      }
+      mls = await odoo.searchRead(session, "stock.move.line",
+        [["picking_id", "=", pickingId]], ["id", "move_id", "product_id"], 0);
+    }
+
+    for (const ml of mls) {
+      const l = lineByMove.get(ml.move_id?.[0]);
+      if (!l) continue;
+      // lot_name (et non lot_id) : le lot vient de chez le client, il peut ne
+      // pas exister côté entrepôt — Odoo le crée à la volée.
+      const vals: any = { ...(l.lot ? { lot_name: l.lot } : {}) };
+      // Odoo 17 : `quantity`. Odoo 16 : `qty_done`. On tente, puis on replie.
+      try {
+        await odoo.write(session, "stock.move.line", [ml.id], { ...vals, quantity: l.qty });
+      } catch {
+        await odoo.write(session, "stock.move.line", [ml.id], { ...vals, qty_done: l.qty });
+      }
+    }
+
+    const res: any = await odoo.callMethod(session, "stock.picking", "button_validate", [[pickingId]]);
+    // Un retour de type dict avec res_model = assistant (backorder, lots…) :
+    // Odoo n'a PAS validé, il attend une réponse humaine.
+    if (res && typeof res === "object" && res.res_model) {
+      return `transfert créé mais non validé — Odoo demande une confirmation (${res.res_model})`;
+    }
+    return "";
+  } catch (e: any) {
+    return `transfert créé mais non validé : ${e?.message || "erreur inconnue"}`;
+  }
 }
 
 // Emplacement d'où vient la marchandise reprise : l'emplacement client propre à

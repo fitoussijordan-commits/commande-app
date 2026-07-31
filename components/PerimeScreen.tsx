@@ -224,7 +224,8 @@ export default function PerimeScreen({ session, client, priceItems, freeTypes, o
           clientId: client.id, clientName: client.name, clientRef: client.ref,
           repName, locationId: loc.id, lines: returns, localRef, orderName,
         });
-        if ("error" in r) stockError = r.error; else picking = r;
+        if ("error" in r) stockError = r.error;
+        else { picking = r; if (r.warning) stockError = r.warning; }
       }
 
       // Lien croisé : le BC doit aussi pointer vers le transfert, sinon la
@@ -312,9 +313,17 @@ export default function PerimeScreen({ session, client, priceItems, freeTypes, o
               la référence <strong>{lastResult.orderName}</strong>.
             </div>
             {lastResult.pickingName ? (
-              <div style={{ fontSize: 11.5, color: C.textSec, marginTop: 5 }}>
-                Transfert de rebut <strong>{lastResult.pickingName}</strong> → {locationLabel}
-              </div>
+              <>
+                <div style={{ fontSize: 11.5, color: C.textSec, marginTop: 5 }}>
+                  Transfert de rebut <strong>{lastResult.pickingName}</strong> → {locationLabel}
+                  {!lastResult.stockError && " — validé"}
+                </div>
+                {lastResult.stockError && (
+                  <div style={{ fontSize: 11.5, color: C.orange, marginTop: 4, lineHeight: 1.5 }}>
+                    À terminer dans Odoo : {lastResult.stockError}
+                  </div>
+                )}
+              </>
             ) : (
               <div style={{ fontSize: 11.5, color: C.red, marginTop: 5, lineHeight: 1.5 }}>
                 Transfert de rebut NON créé. Erreur Odoo : {lastResult.stockError || "non renseignée"}
