@@ -610,14 +610,27 @@ export async function createRebutPicking(
         + ` → reprise ${l.unitPrice.toFixed(2)} €`),
     ].join("\n");
 
-    const pickingId = await odoo.create(session, "stock.picking", {
+    // user_id = le commercial connecté. Sans ce champ, le seul moyen de savoir qui
+    // a fait la reprise serait de lire le NOM de l'emplacement — impossible à
+    // exploiter proprement dans un tableau croisé. Avec lui, « regrouper par
+    // Responsable » fonctionne nativement dans Odoo.
+    const pickingVals: any = {
       partner_id: opts.clientId,
       picking_type_id: types[0].id,
       location_id: srcId,
       location_dest_id: opts.locationId,
+      user_id: session.uid,
       origin,
       note,
-    });
+    };
+    let pickingId: number;
+    try {
+      pickingId = await odoo.create(session, "stock.picking", pickingVals);
+    } catch (e) {
+      if (odoo.isNetworkError(e)) throw e;
+      delete pickingVals.user_id;   // champ absent sur cette version
+      pickingId = await odoo.create(session, "stock.picking", pickingVals);
+    }
 
     // Mouvements créés séparément avec picking_id : évite le champ one2many du
     // picking, renommé move_lines → move_ids entre Odoo 16 et 17.
