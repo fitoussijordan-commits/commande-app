@@ -3,9 +3,10 @@
 //
 // PRINCIPES DE SÉCURITÉ — ne pas assouplir sans y réfléchir à deux fois :
 //
-//  1. LECTURE SEULE. Le seul outil exposé est `search_read`. Aucune méthode
-//     d'écriture, aucun `call_kw` générique. Un `write` déclenché par une phrase
-//     mal interprétée serait irréparable.
+//  1. AUCUNE ÉCRITURE PILOTÉE PAR LE MODÈLE. Ses outils de lecture sont bornés à
+//     search_read et read_group. Les deux seules écritures — pièce jointe et mail
+//     d'export — sont faites par CE fichier, avec un modèle, une méthode et un
+//     destinataire qu'il fixe lui-même. Le modèle fournit des lignes, rien d'autre.
 //  2. SESSION DU COMMERCIAL. Les requêtes s'exécutent avec SA session Odoo, donc
 //     ses droits. Le modèle ne peut pas faire lire à quelqu'un ce qu'il n'a pas
 //     le droit de voir, même s'il compose un domaine trop large.
@@ -33,7 +34,7 @@ export const maxDuration = 60;
 const MODEL = "claude-sonnet-5";
 const MAX_TOOL_ROUNDS = 4;   // borne les allers-retours, donc le temps et le coût
 const MAX_ROWS = 200;        // borne le volume renvoyé au modèle
-const AI_TIMEOUT = 25_000;   // laisse de la marge pour rester sous maxDuration
+const AI_TIMEOUT = 45_000;   // laisse de la marge pour rester sous maxDuration
 
 // Modèles Odoo interrogeables. Tout le reste est refusé.
 const ALLOWED_MODELS = new Set([
@@ -49,14 +50,14 @@ const ALLOWED_MODELS = new Set([
 ]);
 
 const SYSTEM = `Tu es l'assistant de données des commerciaux terrain Dr. Hauschka.
-Tu réponds en français, brièvement, à partir des SEULES données que tu obtiens via
-l'outil odoo_search_read.
+Tu réponds en français, brièvement, à partir des SEULES données obtenues par tes
+outils.
 
-Deux outils : odoo_search_read pour lire, generer_tableur pour produire un
-fichier tableur envoyé par mail à l'utilisateur connecté.
+Trois outils : odoo_read_group pour agréger, odoo_search_read pour lire le détail,
+generer_tableur pour produire un fichier envoyé par mail à l'utilisateur connecté.
 
 Quand on te demande un export, un Excel, un CSV ou « un tableau à récupérer » :
-récupère d'abord les données, AGRÈGE-LES toi-même, puis appelle generer_tableur.
+fais agréger par odoo_read_group, puis appelle generer_tableur avec le résultat.
 Ne recopie jamais le tableau complet dans ta réponse — écris seulement une phrase
 de synthèse ; c'est le fichier qui porte le détail.
 
@@ -64,8 +65,11 @@ Ce que tu ne peux pas faire : modifier ou créer quoi que ce soit d'autre dans
 Odoo, ni choisir le destinataire du mail (c'est toujours l'utilisateur connecté).
 
 Règles :
-- Reste économe : n'appelle l'outil que si nécessaire, et limite les champs
-  demandés au strict utile. Tu disposes de 4 appels au maximum.
+- Reste économe : 4 appels d'outil au maximum, champs limités au strict utile.
+- Pour tout TOTAL, PALMARÈS ou COMPARAISON, utilise odoo_read_group et non
+  odoo_search_read : Odoo agrège lui-même et renvoie quelques dizaines de lignes
+  au lieu de plusieurs centaines. Charger le détail pour l'additionner soi-même
+  est lent et source d'erreurs de recopie.
 - N'invente jamais un chiffre. Si une donnée manque, dis-le.
 - N'explique jamais les CAUSES d'une évolution commerciale : tu peux constater
   qu'une référence baisse, tu ne peux pas savoir pourquoi.
@@ -91,7 +95,7 @@ const TOOLS: any[] = [{
     "Génère un fichier tableur (CSV lisible par Excel) à partir de données DÉJÀ "
     + "récupérées, l'envoie par mail à l'utilisateur connecté et le met à "
     + "disposition en téléchargement. N'invente aucune ligne : n'utilise que des "
-    + "valeurs issues de odoo_search_read.",
+    + "valeurs issues des outils de lecture.",
   input_schema: {
     type: "object",
     properties: {
@@ -104,6 +108,28 @@ const TOOLS: any[] = [{
       },
     },
     required: ["titre", "colonnes", "lignes"],
+  },
+}, {
+  name: "odoo_read_group",
+  description:
+    "Agrège des enregistrements côté Odoo (SQL GROUP BY). À PRIVILÉGIER sur "
+    + "odoo_search_read dès qu'il s'agit de totaux, de palmarès ou de comparaisons : "
+    + "renvoie quelques dizaines de lignes au lieu de plusieurs centaines. "
+    + "Ex. total commandé par produit sur une année.",
+  input_schema: {
+    type: "object",
+    properties: {
+      model: { type: "string" },
+      domain: { type: "array" },
+      fields: {
+        type: "array", items: { type: "string" },
+        description: "Champs à agréger, ex. [\"product_uom_qty:sum\",\"price_subtotal:sum\"]",
+      },
+      groupby: { type: "array", items: { type: "string" }, description: "Ex. [\"product_id\"]" },
+      limit: { type: "number" },
+      orderby: { type: "string", description: "Ex. \"price_subtotal desc\"" },
+    },
+    required: ["model", "domain", "fields", "groupby"],
   },
 }, {
   name: "odoo_search_read",
@@ -163,6 +189,24 @@ async function odooSearchRead(
     return { ok: false, error: data.error?.data?.message || data.error?.message || "Erreur Odoo" };
   }
   return { ok: true, rows: data.result || [] };
+}
+
+async function odooReadGroup(
+  odooUrl: string, sessionId: string, args: any,
+): Promise<{ ok: boolean; rows?: any[]; error?: string }> {
+  if (!ALLOWED_MODELS.has(args.model)) {
+    return { ok: false, error: `Modèle non autorisé : ${args.model}` };
+  }
+  try {
+    const base = requireHttpUrl(odooUrl, "Odoo");
+    const rows = await odooCall(base, sessionId, args.model, "read_group",
+      [args.domain || [], args.fields || [], args.groupby || []],
+      { lazy: false, limit: Math.min(Number(args.limit) || MAX_ROWS, MAX_ROWS),
+        orderby: args.orderby || "", context: { lang: "fr_FR" } });
+    return { ok: true, rows: rows || [] };
+  } catch (e: any) {
+    return { ok: false, error: e?.message || "Erreur Odoo" };
+  }
 }
 
 // Excel francophone attend le point-virgule comme séparateur, et une BOM pour
@@ -338,7 +382,9 @@ export async function POST(req: NextRequest) {
           });
           continue;
         }
-        const r = await odooSearchRead(odooUrl, sessionId, tu.input);
+        const r = tu.name === "odoo_read_group"
+          ? await odooReadGroup(odooUrl, sessionId, tu.input)
+          : await odooSearchRead(odooUrl, sessionId, tu.input);
         queries.push({
           model: tu.input?.model, domain: tu.input?.domain,
           fields: tu.input?.fields, rows: r.rows?.length ?? 0, error: r.error,
