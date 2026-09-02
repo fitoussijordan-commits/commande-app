@@ -22,6 +22,7 @@ const SUGGESTIONS = [
 ];
 
 interface Query { model: string; domain: any; fields: string[]; rows: number; error?: string }
+interface ExportFile { filename: string; base64: string; rows: number; sentTo?: string; mailError?: string }
 
 export default function AssistantScreen({ session, client }: {
   session: odoo.OdooSession;
@@ -33,15 +34,16 @@ export default function AssistantScreen({ session, client }: {
   const [error, setError] = useState("");
   const [queries, setQueries] = useState<Query[]>([]);
   const [showQueries, setShowQueries] = useState(false);
+  const [file, setFile] = useState<ExportFile | null>(null);
 
   const reset = () => {
-    setQ(""); setAnswer(""); setError(""); setQueries([]); setShowQueries(false);
+    setQ(""); setAnswer(""); setError(""); setQueries([]); setShowQueries(false); setFile(null);
   };
 
   const ask = async (text: string) => {
     const question = text.trim();
     if (!question || loading) return;
-    setLoading(true); setAnswer(""); setError(""); setQueries([]);
+    setLoading(true); setAnswer(""); setError(""); setQueries([]); setFile(null);
     // Délai côté client : sans lui, une fonction serveur tuée laisse le bouton
     // tourner indéfiniment sans le moindre message.
     const ctrl = new AbortController();
@@ -63,6 +65,7 @@ export default function AssistantScreen({ session, client }: {
       if (data.error) setError(data.error);
       if (data.answer) setAnswer(data.answer + (data.truncated ? "\n\n— réponse tronquée —" : ""));
       setQueries(data.queries || []);
+      setFile(data.exportFile || null);
     } catch (e: any) {
       setError(e?.name === "AbortError"
         ? "Question trop longue à traiter. Reformule-la plus précisément, ou restreins la période."
@@ -126,6 +129,28 @@ export default function AssistantScreen({ session, client }: {
         {answer && (
           <div style={{ marginTop: 14, padding: "14px 16px", background: C.white, border: `1px solid ${C.border}`, borderRadius: 14, boxShadow: C.shadow, fontSize: 14, color: C.text, lineHeight: 1.6, whiteSpace: "pre-wrap" as const }}>
             {answer}
+          </div>
+        )}
+
+        {/* Fichier généré : téléchargement direct + rappel de l'envoi mail.
+            Sur iPad la WebView gère mal les téléchargements, d'où le mail comme
+            canal principal et le bouton comme confort au bureau. */}
+        {file && (
+          <div style={{ marginTop: 12, padding: "12px 14px", background: C.tealSoft, border: `1px solid ${C.teal}44`, borderRadius: 12 }}>
+            <div style={{ fontSize: 13, fontWeight: 800, color: C.tealDark }}>
+              {file.filename} · {file.rows} ligne{file.rows > 1 ? "s" : ""}
+            </div>
+            <div style={{ fontSize: 11.5, color: file.mailError ? C.orange : C.textSec, marginTop: 3, lineHeight: 1.5 }}>
+              {file.sentTo
+                ? `Envoyé par mail à ${file.sentTo}`
+                : `Envoi mail impossible : ${file.mailError || "raison inconnue"}`}
+            </div>
+            <a
+              href={`data:text/csv;base64,${file.base64}`}
+              download={file.filename}
+              style={{ display: "inline-block", marginTop: 8, padding: "8px 14px", borderRadius: 999, background: C.teal, color: "#fff", fontSize: 12.5, fontWeight: 700, textDecoration: "none" }}>
+              Télécharger
+            </a>
           </div>
         )}
 

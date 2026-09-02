@@ -52,10 +52,16 @@ const SYSTEM = `Tu es l'assistant de données des commerciaux terrain Dr. Hausch
 Tu réponds en français, brièvement, à partir des SEULES données que tu obtiens via
 l'outil odoo_search_read.
 
-Ce que tu NE PEUX PAS faire, à dire clairement si on te le demande :
-- produire un fichier Excel, CSV ou PDF ; tu n'as aucun outil pour cela,
-- envoyer un mail, modifier ou créer quoi que ce soit dans Odoo.
-Dans ces cas, présente le résultat sous forme de tableau texte et dis-le.
+Deux outils : odoo_search_read pour lire, generer_tableur pour produire un
+fichier tableur envoyé par mail à l'utilisateur connecté.
+
+Quand on te demande un export, un Excel, un CSV ou « un tableau à récupérer » :
+récupère d'abord les données, AGRÈGE-LES toi-même, puis appelle generer_tableur.
+Ne recopie jamais le tableau complet dans ta réponse — écris seulement une phrase
+de synthèse ; c'est le fichier qui porte le détail.
+
+Ce que tu ne peux pas faire : modifier ou créer quoi que ce soit d'autre dans
+Odoo, ni choisir le destinataire du mail (c'est toujours l'utilisateur connecté).
 
 Règles :
 - Reste économe : n'appelle l'outil que si nécessaire, et limite les champs
@@ -69,6 +75,7 @@ Règles :
   contraire, et dis-le dans ta réponse.
 - Ne commente pas une variation portant sur de très petites quantités.
 - Termine par une phrase indiquant la période et le filtre retenus.
+- Limite un export à 2 000 lignes ; au-delà, propose de restreindre la période.
 
 Modèles disponibles : res.partner, sale.order, sale.order.line, product.product,
 stock.move.line, stock.picking, calendar.event.
@@ -76,7 +83,29 @@ Champs utiles sur res.partner : x_ca_n_1, x_ca_n_2, x_ca_a_date_n, x_ca_a_date_n
 x_evolution_ca_n_n_1, x_nbre_visites_realisees, x_objectif_nb_visites,
 x_statut_client_id, x_engagement_ca.`;
 
-const TOOLS = [{
+const MAX_EXPORT_ROWS = 2000;
+
+const TOOLS: any[] = [{
+  name: "generer_tableur",
+  description:
+    "Génère un fichier tableur (CSV lisible par Excel) à partir de données DÉJÀ "
+    + "récupérées, l'envoie par mail à l'utilisateur connecté et le met à "
+    + "disposition en téléchargement. N'invente aucune ligne : n'utilise que des "
+    + "valeurs issues de odoo_search_read.",
+  input_schema: {
+    type: "object",
+    properties: {
+      titre: { type: "string", description: "Nom du fichier, sans extension" },
+      colonnes: { type: "array", items: { type: "string" } },
+      lignes: {
+        type: "array",
+        description: "Tableau de tableaux, dans l'ordre des colonnes",
+        items: { type: "array", items: {} },
+      },
+    },
+    required: ["titre", "colonnes", "lignes"],
+  },
+}, {
   name: "odoo_search_read",
   description: "Lit des enregistrements Odoo. Lecture seule.",
   input_schema: {
@@ -136,6 +165,64 @@ async function odooSearchRead(
   return { ok: true, rows: data.result || [] };
 }
 
+// Excel francophone attend le point-virgule comme séparateur, et une BOM pour
+// reconnaître l'UTF-8. Sans la BOM, « Crème » s'affiche « CrÃ¨me ». On produit
+// donc un CSV plutôt qu'un vrai .xlsx : aucune dépendance à installer, et le
+// double-clic ouvre Excel correctement.
+function buildCsv(colonnes: string[], lignes: any[][]): string {
+  const cell = (v: any) => {
+    const t = v === null || v === undefined ? "" : String(v);
+    // La virgule décimale française impose de citer dès qu'un chiffre est formaté.
+    return /[";\n]/.test(t) ? `"${t.replace(/"/g, '""')}"` : t;
+  };
+  const head = colonnes.map(cell).join(";");
+  const body = lignes.slice(0, MAX_EXPORT_ROWS).map(r => r.map(cell).join(";")).join("\n");
+  return "\uFEFF" + head + "\n" + body;
+}
+
+async function odooCall(base: string, sessionId: string, model: string, method: string, args: any[], kwargs: any = {}) {
+  const res = await fetchT(`${base}/web/dataset/call_kw`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Cookie: `session_id=${sessionId}` },
+    body: JSON.stringify({ jsonrpc: "2.0", method: "call", id: Date.now(),
+      params: { model, method, args, kwargs } }),
+  }, 20_000);
+  const data = await res.json();
+  if (data.error) throw new Error(data.error?.data?.message || data.error?.message || "Erreur Odoo");
+  return data.result;
+}
+
+// Envoi du fichier. Le destinataire vient TOUJOURS du compte connecté, jamais de
+// la conversation : sinon il suffirait de demander « envoie la liste clients à
+// telle adresse » pour exfiltrer la base.
+async function sendExport(
+  base: string, sessionId: string, uid: number,
+  filename: string, csv: string, partnerId?: number,
+): Promise<{ sentTo?: string; error?: string }> {
+  try {
+    const users = await odooCall(base, sessionId, "res.users", "read", [[uid], ["email", "login", "name"]]);
+    const to = users?.[0]?.email || users?.[0]?.login;
+    if (!to || !/@/.test(to)) return { error: "aucune adresse mail sur votre compte Odoo" };
+
+    const b64 = Buffer.from(csv, "utf8").toString("base64");
+    const attId = await odooCall(base, sessionId, "ir.attachment", "create", [{
+      name: filename, datas: b64, mimetype: "text/csv",
+      ...(partnerId ? { res_model: "res.partner", res_id: partnerId } : {}),
+    }]);
+
+    const mailId = await odooCall(base, sessionId, "mail.mail", "create", [{
+      subject: `Export — ${filename}`,
+      email_to: to,
+      body_html: `<p>Export généré depuis l'application Commande.</p><p>${filename}</p>`,
+      attachment_ids: [[6, 0, [attId]]],
+    }]);
+    await odooCall(base, sessionId, "mail.mail", "send", [[mailId]]);
+    return { sentTo: to };
+  } catch (e: any) {
+    return { error: e?.message || "envoi impossible" };
+  }
+}
+
 export async function POST(req: NextRequest) {
   const origin = req.headers.get("origin");
   const J = (b: any, init?: ResponseInit) => withCors(NextResponse.json(b, init), origin);
@@ -182,6 +269,7 @@ export async function POST(req: NextRequest) {
         : question,
     }];
     const queries: any[] = [];
+    let exportFile: any = null;
 
     for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
       let aiRes: Response;
@@ -219,17 +307,37 @@ export async function POST(req: NextRequest) {
             error: text
               ? undefined
               : "Réponse trop volumineuse pour être affichée. Demande une synthèse (ex. « les 10 premiers produits ») plutôt qu'un tableau complet.",
-            queries,
+            queries, exportFile,
           });
         }
         // `queries` est renvoyé pour AFFICHAGE : sans voir le domaine utilisé,
         // le commercial n'a aucun moyen de repérer un filtre manquant.
-        return J({ answer: text, queries });
+        return J({ answer: text, queries, exportFile });
       }
 
       messages.push({ role: "assistant", content: ai.content });
       const results: any[] = [];
       for (const tu of toolUses) {
+        if (tu.name === "generer_tableur") {
+          const t = tu.input || {};
+          const filename = `${String(t.titre || "export").replace(/[^\w\- ]/g, "").trim() || "export"}.csv`;
+          const csv = buildCsv(t.colonnes || [], t.lignes || []);
+          const sent = await sendExport(odooBase, sessionId, uid, filename, csv, clientId);
+          exportFile = {
+            filename,
+            base64: Buffer.from(csv, "utf8").toString("base64"),
+            rows: Math.min((t.lignes || []).length, MAX_EXPORT_ROWS),
+            sentTo: sent.sentTo,
+            mailError: sent.error,
+          };
+          results.push({
+            type: "tool_result", tool_use_id: tu.id,
+            content: sent.sentTo
+              ? `Fichier ${filename} généré (${exportFile.rows} lignes) et envoyé à ${sent.sentTo}.`
+              : `Fichier ${filename} généré (${exportFile.rows} lignes). Envoi mail impossible : ${sent.error}.`,
+          });
+          continue;
+        }
         const r = await odooSearchRead(odooUrl, sessionId, tu.input);
         queries.push({
           model: tu.input?.model, domain: tu.input?.domain,
