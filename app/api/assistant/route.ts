@@ -79,13 +79,27 @@ const TOOLS = [{
   },
 }];
 
+// Valide l'URL AVANT de fetcher. Une URL vide ou tronquée produit un
+// « connect ECONNREFUSED 0.0.0.0:443 » incompréhensible : Node tente de joindre
+// un hôte vide. Autant refuser tout de suite avec un message clair.
+function requireHttpUrl(raw: string, label: string): string {
+  let u: URL;
+  try { u = new URL(String(raw || "").trim()); }
+  catch { throw new Error(`${label} : URL invalide (« ${raw} »)`); }
+  if (!u.hostname || !/^https?:$/.test(u.protocol)) {
+    throw new Error(`${label} : URL invalide (« ${raw} »)`);
+  }
+  return u.origin;
+}
+
 async function odooSearchRead(
   odooUrl: string, sessionId: string, args: any,
 ): Promise<{ ok: boolean; rows?: any[]; error?: string }> {
   if (!ALLOWED_MODELS.has(args.model)) {
     return { ok: false, error: `Modèle non autorisé : ${args.model}` };
   }
-  const res = await fetchT(`${odooUrl.replace(/\/$/, "")}/web/dataset/call_kw`, {
+  const base = requireHttpUrl(odooUrl, "Odoo");
+  const res = await fetchT(`${base}/web/dataset/call_kw`, {
     method: "POST",
     headers: { "Content-Type": "application/json", Cookie: `session_id=${sessionId}` },
     body: JSON.stringify({
@@ -125,12 +139,13 @@ export async function POST(req: NextRequest) {
     // 1. Authentifier le commercial. Sans cette étape, la route serait un accès
     //    anonyme à l'IA ET aux données — le dépôt étant public, elle serait
     //    trouvée et exploitée.
-    const infoRes = await fetchT(`${odooUrl.replace(/\/$/, "")}/web/session/get_session_info`, {
+    const odooBase = requireHttpUrl(odooUrl, "Odoo");
+    const infoRes = await fetchT(`${odooBase}/web/session/get_session_info`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Cookie: `session_id=${sessionId}` },
       body: JSON.stringify({ jsonrpc: "2.0", method: "call", id: Date.now(), params: {} }),
     }, 15_000);
-    const info = await infoRes.json();
+    const info = await infoRes.json().catch(() => ({}));
     const uid = info?.result?.uid;
     if (!uid) return J({ error: "Session Odoo invalide" }, { status: 401 });
 
@@ -149,7 +164,9 @@ export async function POST(req: NextRequest) {
     const queries: any[] = [];
 
     for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
-      const aiRes = await fetchT("https://api.anthropic.com/v1/messages", {
+      let aiRes: Response;
+      try {
+        aiRes = await fetchT("https://api.anthropic.com/v1/messages", {
         method: "POST",
         headers: {
           "content-type": "application/json",
@@ -159,9 +176,13 @@ export async function POST(req: NextRequest) {
         body: JSON.stringify({
           model: MODEL, max_tokens: 2000, system: SYSTEM, messages, tools: TOOLS,
         }),
-      }, 60_000);
+        }, 60_000);
+      } catch (e: any) {
+        // Sortie réseau bloquée, DNS, timeout… on nomme la cible.
+        return J({ error: `Appel à api.anthropic.com impossible : ${e?.message || e}` }, { status: 502 });
+      }
 
-      const ai = await aiRes.json();
+      const ai = await aiRes.json().catch(() => ({ error: { message: `Réponse non JSON (${aiRes.status})` } }));
       if (ai.error) return J({ error: ai.error?.message || "Erreur API" }, { status: 502 });
 
       const toolUses = (ai.content || []).filter((c: any) => c.type === "tool_use");
@@ -193,6 +214,9 @@ export async function POST(req: NextRequest) {
     return J({ error: "Trop d'étapes — reformule la question plus précisément", queries }, { status: 400 });
   } catch (e: any) {
     console.error("Assistant error:", e);
-    return J({ error: "Erreur serveur" }, { status: 500 });
+    // On remonte la cause réelle : un « Erreur serveur » générique oblige à
+    // fouiller les logs Vercel pour la moindre faute de frappe dans une URL.
+    const cause = e?.cause?.code ? ` (${e.cause.code} ${e.cause.address || ""}:${e.cause.port || ""})` : "";
+    return J({ error: `${e?.message || "Erreur serveur"}${cause}` }, { status: 500 });
   }
 }
