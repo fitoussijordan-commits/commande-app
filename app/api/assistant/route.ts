@@ -140,11 +140,18 @@ export async function POST(req: NextRequest) {
     //    anonyme à l'IA ET aux données — le dépôt étant public, elle serait
     //    trouvée et exploitée.
     const odooBase = requireHttpUrl(odooUrl, "Odoo");
-    const infoRes = await fetchT(`${odooBase}/web/session/get_session_info`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Cookie: `session_id=${sessionId}` },
-      body: JSON.stringify({ jsonrpc: "2.0", method: "call", id: Date.now(), params: {} }),
-    }, 15_000);
+    let infoRes: Response;
+    try {
+      infoRes = await fetchT(`${odooBase}/web/session/get_session_info`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Cookie: `session_id=${sessionId}` },
+        body: JSON.stringify({ jsonrpc: "2.0", method: "call", id: Date.now(), params: {} }),
+      }, 15_000);
+    } catch (e: any) {
+      // On renvoie l'URL EXACTE tentée : c'est la seule information qui permet
+      // de distinguer une faute de frappe d'un blocage réseau.
+      return J({ error: `Odoo injoignable sur ${odooBase} : ${e?.message || e}` }, { status: 502 });
+    }
     const info = await infoRes.json().catch(() => ({}));
     const uid = info?.result?.uid;
     if (!uid) return J({ error: "Session Odoo invalide" }, { status: 401 });
