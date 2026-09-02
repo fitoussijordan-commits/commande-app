@@ -25,9 +25,15 @@ export async function OPTIONS(req: NextRequest) {
   return preflight(req.headers.get("origin"));
 }
 
+// Une fonction Vercel est tuée à l'expiration de son délai. Sans cette ligne,
+// une question demandant plusieurs requêtes dépassait la limite par défaut et le
+// client restait bloqué sur « Recherche dans Odoo… », sans erreur.
+export const maxDuration = 60;
+
 const MODEL = "claude-sonnet-5";
-const MAX_TOOL_ROUNDS = 6;   // borne le nombre d'allers-retours, donc le coût
-const MAX_ROWS = 300;        // borne le volume renvoyé au modèle
+const MAX_TOOL_ROUNDS = 4;   // borne les allers-retours, donc le temps et le coût
+const MAX_ROWS = 200;        // borne le volume renvoyé au modèle
+const AI_TIMEOUT = 25_000;   // laisse de la marge pour rester sous maxDuration
 
 // Modèles Odoo interrogeables. Tout le reste est refusé.
 const ALLOWED_MODELS = new Set([
@@ -46,7 +52,14 @@ const SYSTEM = `Tu es l'assistant de données des commerciaux terrain Dr. Hausch
 Tu réponds en français, brièvement, à partir des SEULES données que tu obtiens via
 l'outil odoo_search_read.
 
+Ce que tu NE PEUX PAS faire, à dire clairement si on te le demande :
+- produire un fichier Excel, CSV ou PDF ; tu n'as aucun outil pour cela,
+- envoyer un mail, modifier ou créer quoi que ce soit dans Odoo.
+Dans ces cas, présente le résultat sous forme de tableau texte et dis-le.
+
 Règles :
+- Reste économe : n'appelle l'outil que si nécessaire, et limite les champs
+  demandés au strict utile. Tu disposes de 4 appels au maximum.
 - N'invente jamais un chiffre. Si une donnée manque, dis-le.
 - N'explique jamais les CAUSES d'une évolution commerciale : tu peux constater
   qu'une référence baisse, tu ne peux pas savoir pourquoi.
@@ -181,9 +194,9 @@ export async function POST(req: NextRequest) {
           "anthropic-version": "2023-06-01",
         },
         body: JSON.stringify({
-          model: MODEL, max_tokens: 2000, system: SYSTEM, messages, tools: TOOLS,
+          model: MODEL, max_tokens: 4000, system: SYSTEM, messages, tools: TOOLS,
         }),
-        }, 60_000);
+        }, AI_TIMEOUT);
       } catch (e: any) {
         // Sortie réseau bloquée, DNS, timeout… on nomme la cible.
         return J({ error: `Appel à api.anthropic.com impossible : ${e?.message || e}` }, { status: 502 });
@@ -196,6 +209,19 @@ export async function POST(req: NextRequest) {
       if (!toolUses.length) {
         const text = (ai.content || []).filter((c: any) => c.type === "text")
           .map((c: any) => c.text).join("\n").trim();
+        // Réponse tronquée : le modèle a atteint sa limite de sortie, souvent en
+        // essayant de recracher un grand tableau. Le dire plutôt que d'afficher
+        // « (réponse vide) », qui laisse croire à une panne.
+        if (!text || ai.stop_reason === "max_tokens") {
+          return J({
+            answer: text || "",
+            truncated: true,
+            error: text
+              ? undefined
+              : "Réponse trop volumineuse pour être affichée. Demande une synthèse (ex. « les 10 premiers produits ») plutôt qu'un tableau complet.",
+            queries,
+          });
+        }
         // `queries` est renvoyé pour AFFICHAGE : sans voir le domaine utilisé,
         // le commercial n'a aucun moyen de repérer un filtre manquant.
         return J({ answer: text, queries });

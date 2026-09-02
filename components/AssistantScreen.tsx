@@ -42,9 +42,14 @@ export default function AssistantScreen({ session, client }: {
     const question = text.trim();
     if (!question || loading) return;
     setLoading(true); setAnswer(""); setError(""); setQueries([]);
+    // Délai côté client : sans lui, une fonction serveur tuée laisse le bouton
+    // tourner indéfiniment sans le moindre message.
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 65_000);
     try {
       const res = await fetch(apiUrl("/api/assistant"), {
         method: "POST",
+        signal: ctrl.signal,
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           question,
@@ -56,10 +61,14 @@ export default function AssistantScreen({ session, client }: {
       });
       const data = await res.json();
       if (data.error) setError(data.error);
-      else setAnswer(data.answer || "(réponse vide)");
+      if (data.answer) setAnswer(data.answer + (data.truncated ? "\n\n— réponse tronquée —" : ""));
       setQueries(data.queries || []);
-    } catch {
-      setError("Réseau indisponible — l'assistant ne fonctionne pas hors ligne.");
+    } catch (e: any) {
+      setError(e?.name === "AbortError"
+        ? "Question trop longue à traiter. Reformule-la plus précisément, ou restreins la période."
+        : "Réseau indisponible — l'assistant ne fonctionne pas hors ligne.");
+    } finally {
+      clearTimeout(timer);
     }
     setLoading(false);
   };
