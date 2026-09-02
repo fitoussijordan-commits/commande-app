@@ -34,6 +34,10 @@ export default function AssistantScreen({ session, client }: {
   const [queries, setQueries] = useState<Query[]>([]);
   const [showQueries, setShowQueries] = useState(false);
 
+  const reset = () => {
+    setQ(""); setAnswer(""); setError(""); setQueries([]); setShowQueries(false);
+  };
+
   const ask = async (text: string) => {
     const question = text.trim();
     if (!question || loading) return;
@@ -65,7 +69,7 @@ export default function AssistantScreen({ session, client }: {
       <div style={{ maxWidth: 640, margin: "0 auto" }}>
         <div style={{ fontSize: 22, fontWeight: 800, color: C.text }}>Assistant</div>
         <div style={{ fontSize: 12, color: C.muted, marginTop: 3, marginBottom: 16 }}>
-          Questions sur les données Odoo{client ? ` — ${client.name}` : ""}. Lecture seule.
+          {client ? client.name : "Données Odoo"} · lecture seule
         </div>
 
         <textarea value={q} onChange={e => setQ(e.target.value)}
@@ -73,12 +77,22 @@ export default function AssistantScreen({ session, client }: {
           rows={3} placeholder="Pose ta question…"
           style={{ width: "100%", boxSizing: "border-box" as const, padding: "12px 14px", border: `1.5px solid ${C.border}`, borderRadius: 12, fontSize: 15, fontFamily: "inherit", resize: "none" as const, color: C.text, outline: "none" }} />
 
-        <button onClick={() => ask(q)} disabled={loading || !q.trim()}
-          style={{ width: "100%", marginTop: 8, padding: "12px 0", borderRadius: 999, border: "none", fontFamily: "inherit", fontSize: 14, fontWeight: 800,
-            background: !q.trim() ? C.border : C.teal, color: !q.trim() ? C.muted : "#fff",
-            cursor: !q.trim() || loading ? "default" : "pointer" }}>
-          {loading ? "Recherche dans Odoo…" : "Demander"}
-        </button>
+        <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+          <button onClick={() => ask(q)} disabled={loading || !q.trim()}
+            style={{ flex: 1, padding: "12px 0", borderRadius: 999, border: "none", fontFamily: "inherit", fontSize: 14, fontWeight: 800,
+              background: !q.trim() ? C.border : C.teal, color: !q.trim() ? C.muted : "#fff",
+              cursor: !q.trim() || loading ? "default" : "pointer" }}>
+            {loading ? "Recherche dans Odoo…" : "Demander"}
+          </button>
+          {/* Sans ce bouton, il fallait quitter l'écran et y revenir pour
+              repartir d'une question vierge. */}
+          {(answer || error) && (
+            <button onClick={reset}
+              style={{ flexShrink: 0, padding: "12px 16px", borderRadius: 999, border: `1.5px solid ${C.border}`, background: C.white, fontFamily: "inherit", fontSize: 13, fontWeight: 700, color: C.textSec, cursor: "pointer" }}>
+              Nouvelle question
+            </button>
+          )}
+        </div>
 
         {!answer && !loading && (
           <div style={{ marginTop: 16 }}>
@@ -123,6 +137,9 @@ export default function AssistantScreen({ session, client }: {
                       {qu.model} — {qu.error ? `erreur : ${qu.error}` : `${qu.rows} ligne${qu.rows > 1 ? "s" : ""}`}
                     </div>
                     <div style={{ marginTop: 2 }}>{JSON.stringify(qu.domain)}</div>
+                    {qu.fields?.length > 0 && (
+                      <div style={{ marginTop: 2, color: C.muted }}>champs : {qu.fields.join(", ")}</div>
+                    )}
                   </div>
                 ))}
               </div>
@@ -130,10 +147,11 @@ export default function AssistantScreen({ session, client }: {
           </div>
         )}
 
-        <div style={{ marginTop: 18, fontSize: 11, color: C.muted, lineHeight: 1.5 }}>
-          L&apos;assistant lit vos données Odoo avec VOS droits et ne peut rien modifier.
-          Vérifiez les chiffres avant de les transmettre à un client.
-        </div>
+        {!answer && !error && (
+          <div style={{ marginTop: 18, fontSize: 11, color: C.muted, lineHeight: 1.5 }}>
+            Lecture seule, avec vos droits Odoo. Vérifiez un chiffre avant de le transmettre à un client.
+          </div>
+        )}
       </div>
     </div>
   );
