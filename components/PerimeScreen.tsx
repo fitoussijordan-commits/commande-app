@@ -52,6 +52,13 @@ export default function PerimeScreen({ session, client, priceItems, freeTypes, o
       .then(setFamily).catch(() => setFamily([client.id]));
   }, [client.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Préchargement des lots de ce client pour la recherche hors ligne. Best
+  // effort : hors ligne, on garde simplement ce qui avait été mis en cache.
+  useEffect(() => {
+    if (!family.length) return;
+    perimes.cacheClientLots(session, client.id, family).catch(() => {});
+  }, [client.id, family]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // « Où est passé mon BC ? » — on liste les reprises déjà créées pour ce client
   // en cherchant la référence PERIM- portée par le bon de commande.
   const loadRecent = () => {
@@ -101,11 +108,23 @@ export default function PerimeScreen({ session, client, priceItems, freeTypes, o
             }
           } catch { setLotNote("Aucun lot livré à ce client ne correspond."); }
         })
-        .catch(e => {
-          setLotHits([]);
-          setLotNote(odoo.isNetworkError(e)
-            ? "Recherche par lot indisponible hors ligne."
-            : `Recherche par lot refusée par Odoo : ${e?.message || "erreur inconnue"}`);
+        .catch(async e => {
+          if (!odoo.isNetworkError(e)) {
+            setLotHits([]);
+            setLotNote(`Recherche par lot refusée par Odoo : ${e?.message || "erreur inconnue"}`);
+            return;
+          }
+          // Hors ligne : lots préchargés pour ce client.
+          try {
+            const cached = await perimes.searchCachedLots(client.id, text.trim());
+            setLotHits(cached);
+            setLotNote(cached.length
+              ? "Hors ligne — lots issus du dernier préchargement de cette fiche."
+              : "Hors ligne — aucun lot en cache pour ce client. Ouvre sa fiche une fois connecté pour les précharger.");
+          } catch {
+            setLotHits([]);
+            setLotNote("Recherche par lot indisponible hors ligne.");
+          }
         });
     } else { setLotHits([]); setLotNote(""); }
     try {
@@ -197,79 +216,47 @@ export default function PerimeScreen({ session, client, priceItems, freeTypes, o
     if (!returns.length) { onToast("Aucun produit périmé saisi", "error"); return; }
     setSubmitting(true);
     const localRef = perimes.newLocalRef();
+    // Hors du try : le bloc catch doit pouvoir mettre CETTE saisie en file.
+    const input: perimes.RepriseInput = {
+      clientId: client.id, clientName: client.name, clientRef: client.ref,
+      pricelistId: client.property_product_pricelist?.[0] || false,
+      repName, localRef, returns, exchanges, freeType: perimeType,
+    };
     try {
       const service = await perimes.findRepriseService(session);
       if (!service) {
         onToast("Article de service « Reprise périmés » introuvable — Odoo créera un second mouvement de stock à la confirmation du BC", "info");
       }
-      const tags = await perimes.getPerimeTagIds(session);
-      if (tags.missing.length) {
-        onToast(`Étiquette(s) introuvable(s) dans Odoo : ${tags.missing.join(", ")}`, "info");
-      }
-      const payload = perimes.buildExchangeOrderPayload({
-        clientId: client.id,
-        pricelistId: client.property_product_pricelist?.[0] || false,
-        returns, exchanges, repName, localRef,
-        freeType: perimeType,
-        tagIds: tags.ids,
-        serviceProductId: service?.id,
-      });
-      const orderId = await odoo.create(session, "sale.order", payload);
 
-      // Le NUMÉRO du BC (S00123), pas son id technique : c'est lui qui sera lu
-      // sur le transfert de rebut et dans l'entrepôt.
-      let orderName = String(orderId);
-      try {
-        const rows = await odoo.searchRead(session, "sale.order", [["id", "=", orderId]], ["name"], 1);
-        if (rows[0]?.name) orderName = rows[0].name;
-      } catch {}
+      // Chemin UNIQUE, partagé avec le rejeu de la file hors ligne.
+      const res = await perimes.submitReprise(session, input);
 
-      // Mouvement de stock vers l'emplacement rebut du commercial. Sans droits
-      // stock, Odoo refuse : on garde le BC et on le signale, plutôt que de
-      // perdre toute la saisie.
-      const loc = await perimes.resolveRebutLocation(session, repName);
-      let picking: { id: number; name: string } | null = null;
-      let stockError = "";
-      if ("error" in loc) {
-        stockError = loc.error;
-      } else {
-        const r = await perimes.createRebutPicking(session, {
-          clientId: client.id, clientName: client.name, clientRef: client.ref,
-          repName, locationId: loc.id, lines: returns, localRef, orderName,
-        });
-        if ("error" in r) stockError = r.error;
-        else { picking = r; if (r.warning) stockError = r.warning; }
-      }
-
-      // Lien croisé : le BC doit aussi pointer vers le transfert, sinon la
-      // traçabilité ne marche que dans un sens.
-      if (picking) {
-        try {
-          await odoo.write(session, "sale.order", [orderId], {
-            note: `${payload.note}\n\nTransfert de rebut : ${picking.name} → ${locationLabel}`,
-          });
-        } catch {}
-      }
-
-      // Le n° du BC reste affiché à l'écran : un toast disparaît, et il faut
-      // pouvoir retrouver le document ensuite.
-      setLastResult({ orderName, pickingName: picking?.name || null, stockError });
+      setLastResult({ orderName: res.orderName, pickingName: res.pickingName, stockError: res.stockError });
       setReturns([]); setExchanges([]);
       onToast(
-        picking
-          ? `BC ${orderName} + transfert ${picking.name}`
-          : `BC ${orderName} créé — transfert rebut en échec`,
-        picking ? "success" : "info",
+        res.pickingName
+          ? `BC ${res.orderName} + transfert ${res.pickingName}`
+          : `BC ${res.orderName} créé — transfert rebut en échec`,
+        res.pickingName ? "success" : "info",
       );
       loadRecent();
     } catch (e: any) {
-      // Erreur réseau → la saisie reste à l'écran pour être rejouée.
-      onToast(
-        odoo.isNetworkError(e)
-          ? "Réseau indisponible — saisie conservée, réessaie au retour du réseau"
-          : `Refus Odoo : ${e?.message || "erreur inconnue"}`,
-        "error",
-      );
+      // Erreur RÉSEAU → mise en file, rejouée au retour du réseau.
+      // Erreur MÉTIER → surtout PAS de mise en file : Odoo a refusé, la rejouer
+      // échouerait en boucle. La saisie reste à l'écran pour être corrigée.
+      if (odoo.isNetworkError(e)) {
+        try {
+          await perimes.queueReprise(input);
+          setReturns([]); setExchanges([]);
+          setLastResult({ orderName: "en attente d'envoi", pickingName: null,
+            stockError: "Hors ligne — la reprise partira automatiquement au retour du réseau." });
+          onToast("Hors ligne — reprise enregistrée, envoi automatique au retour du réseau", "info");
+        } catch {
+          onToast("Hors ligne et mise en file impossible — ne quitte pas cet écran", "error");
+        }
+      } else {
+        onToast(`Refus Odoo : ${e?.message || "erreur inconnue"}`, "error");
+      }
     }
     setSubmitting(false);
   };

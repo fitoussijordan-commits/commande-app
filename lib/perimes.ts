@@ -9,6 +9,7 @@
 // qui compte, le rangement physique peut être fait par l'entrepôt.
 
 import * as odoo from "@/lib/odoo";
+import * as db from "@/lib/localdb";
 
 const MONTHS_FR = ["Janvier", "Février", "Mars", "Avril", "Mai", "Juin",
   "Juillet", "Août", "Septembre", "Octobre", "Novembre", "Décembre"];
@@ -200,6 +201,36 @@ async function resolveNetPrices(
 export function isPaidPriceSuspicious(netUnit: number, lstPrice: number): boolean {
   if (!lstPrice || lstPrice <= 0) return false;
   return netUnit > lstPrice * 2.5;
+}
+
+// ── Cache des lots livrés, pour la recherche hors ligne ──────────────────────
+// Rempli à l'ouverture de l'écran quand le réseau est là. Un client jamais ouvert
+// en ligne n'aura donc pas ses lots — même limite que les favoris et le CA, et
+// l'écran le dit plutôt que de laisser croire que le lot n'existe pas.
+const LOTS_LIMIT = 400;
+
+export async function cacheClientLots(
+  session: odoo.OdooSession,
+  clientId: number,
+  family: number[],
+): Promise<number> {
+  const mls = await readMoveLines(session,
+    [["picking_id.partner_id", "child_of", family],
+     ["picking_id.picking_type_id.code", "=", "outgoing"],
+     ["state", "=", "done"],
+     ["lot_id", "!=", false]]);
+  if (!mls.length) { await db.kvSet(db.STORES.favorites, `lots-${clientId}`, []); return 0; }
+  const returned = await alreadyReturned(session, family, "");
+  const hits = await buildLotHits(session, mls, LOTS_LIMIT, returned);
+  await db.kvSet(db.STORES.favorites, `lots-${clientId}`, hits);
+  return hits.length;
+}
+
+export async function searchCachedLots(clientId: number, query: string): Promise<LotHit[]> {
+  const all = (await db.kvGet<LotHit[]>(db.STORES.favorites, `lots-${clientId}`)) || [];
+  const q = normalizeLot(query);
+  if (!q) return [];
+  return all.filter(h => normalizeLot(h.lot).includes(q));
 }
 
 // ── Périmètre client ─────────────────────────────────────────────────────────
@@ -891,6 +922,96 @@ export function exchangesValue(lines: ExchangeLine[]): number {
   return lines.reduce((s, l) => s + l.qty * l.unitPrice, 0);
 }
 
+// ── Soumission d'une reprise ─────────────────────────────────────────────────
+// UNE seule fonction pour le chemin en ligne ET pour le rejeu de la file hors
+// ligne. Deux implémentations parallèles finiraient forcément par diverger, et
+// c'est précisément sur le rejeu — rarement testé — que ça se paierait.
+export interface RepriseInput {
+  clientId: number;
+  clientName: string;
+  clientRef?: string;
+  pricelistId: number | false;
+  repName: string;
+  localRef: string;          // clé d'idempotence, générée UNE fois à la saisie
+  returns: PerimeLine[];
+  exchanges: ExchangeLine[];
+  freeType?: string;
+}
+
+export interface RepriseResult {
+  orderId: number;
+  orderName: string;
+  pickingName: string | null;
+  stockError: string;
+}
+
+export async function submitReprise(
+  session: odoo.OdooSession,
+  input: RepriseInput,
+): Promise<RepriseResult> {
+  // Idempotence : si ce localRef a déjà produit un BC, on ne recrée rien. C'est
+  // ce qui rend le rejeu sûr après une coupure réseau en plein envoi.
+  const existing = await odoo.searchRead(session, "sale.order",
+    [["client_order_ref", "=", input.localRef]], ["id", "name"], 1);
+
+  let orderId: number;
+  let orderName: string;
+
+  if (existing.length) {
+    orderId = existing[0].id;
+    orderName = String(existing[0].name);
+  } else {
+    const service = await findRepriseService(session);
+    const tags = await getPerimeTagIds(session);
+    const payload = buildExchangeOrderPayload({
+      clientId: input.clientId,
+      pricelistId: input.pricelistId,
+      returns: input.returns,
+      exchanges: input.exchanges,
+      repName: input.repName,
+      localRef: input.localRef,
+      freeType: input.freeType,
+      tagIds: tags.ids,
+      serviceProductId: service?.id,
+    });
+    orderId = await odoo.create(session, "sale.order", payload);
+    orderName = String(orderId);
+    try {
+      const rows = await odoo.searchRead(session, "sale.order",
+        [["id", "=", orderId]], ["name"], 1);
+      if (rows[0]?.name) orderName = rows[0].name;
+    } catch {}
+  }
+
+  // Volet stock. Un échec ici ne doit pas faire perdre le BC : il est déjà créé,
+  // et le rejeu retombera sur le court-circuit d'idempotence ci-dessus.
+  const loc = await resolveRebutLocation(session, input.repName);
+  if ("error" in loc) {
+    return { orderId, orderName, pickingName: null, stockError: loc.error };
+  }
+  const r = await createRebutPicking(session, {
+    clientId: input.clientId, clientName: input.clientName, clientRef: input.clientRef,
+    repName: input.repName, locationId: loc.id, lines: input.returns,
+    localRef: input.localRef, orderName,
+  });
+  if ("error" in r) {
+    return { orderId, orderName, pickingName: null, stockError: r.error };
+  }
+
+  // Lien croisé BC → transfert.
+  try {
+    const cur = await odoo.searchRead(session, "sale.order", [["id", "=", orderId]], ["note"], 1);
+    const note = String(cur[0]?.note || "");
+    if (!note.includes(r.name)) {
+      await odoo.write(session, "sale.order", [orderId], {
+        note: `${note}\n\nTransfert de rebut : ${r.name} → ${rebutLocationName(input.repName)}`,
+      });
+    }
+  } catch {}
+
+  return { orderId, orderName, pickingName: r.name, stockError: r.warning || "" };
+}
+
 // ── Article de service portant la reprise ────────────────────────────────────
 // Une ligne de vente sur un produit STOCKABLE en quantité négative déclenche
 // tout le circuit logistique d'Odoo à la confirmation du BC : WH/RET, WH/OUT,
@@ -942,6 +1063,12 @@ export async function findRepriseService(
   } catch {
     return null;
   }
+}
+
+// Mise en file d'une reprise saisie hors ligne. Le localRef est déjà fixé, donc
+// le rejeu ne peut pas produire de doublon.
+export async function queueReprise(input: RepriseInput): Promise<void> {
+  await db.enqueuePerime(`Périmés — ${input.clientName}`, input);
 }
 
 export function newLocalRef(): string {

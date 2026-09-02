@@ -8,6 +8,7 @@
 import * as odoo from "@/lib/odoo";
 import * as db from "@/lib/localdb";
 import * as loyalty from "@/lib/loyalty";
+import * as perimes from "@/lib/perimes";
 
 // Champs produits — identiques à ceux consommés dans OrderScreen (favoris, MEA, recherche).
 // x_type_de_produit_id : type de produit Odoo (échantillon, testeur, travel size…).
@@ -461,6 +462,12 @@ export async function flushQueue(
       await db.updateQueuedOrder(order.id, { status: "syncing" });
       try {
         const resultIds: number[] = [];
+        // Reprise de périmés : rejeu par la MÊME fonction que le chemin en ligne,
+        // protégée par le localRef contre tout doublon.
+        if (order.kind === "perime" && order.perime) {
+          const res = await perimes.submitReprise(session, order.perime);
+          resultIds.push(res.orderId);
+        }
         // Nouveau format générique : liste d'actions Odoo.
         if (order.actions && order.actions.length) {
           for (const a of order.actions) {

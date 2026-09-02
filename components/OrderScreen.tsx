@@ -5,6 +5,7 @@ import AppointmentModal from "@/components/AppointmentModal";
 import ClientNoteModal from "@/components/ClientNoteModal";
 import OfflineBar from "@/components/OfflineBar";
 import PerimeScreen from "@/components/PerimeScreen";
+import AssistantScreen from "@/components/AssistantScreen";
 import * as sync from "@/lib/sync";
 import * as geo from "@/lib/geo";
 import { apiUrl } from "@/lib/apiBase";
@@ -321,7 +322,7 @@ function ProductImage({ id, networkUrl, style }: { id: number; networkUrl: strin
 
 // ═══════════════════════════════════════════════════════════════════════════
 export default function OrderScreen({ session, onBack, onToast, desktop }: Props) {
-  const [step, setStep] = useState<"home" | "client" | "hub" | "catalog" | "history" | "perime">("client");
+  const [step, setStep] = useState<"home" | "client" | "hub" | "catalog" | "history" | "perime" | "assistant">("client");
   const [client, setClient] = useState<any>(null);
   const [priceItems, setPriceItems] = useState<PriceItem[]>([]); // items pricelist du client
   const [cart, setCart] = useState<Record<number, CartItem>>({});
@@ -654,7 +655,7 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
              accidentel en tournée = impossible de se reconnecter hors ligne). */}
         {step !== "client" && (
           <button onClick={() => {
-              if (step === "catalog" || step === "history" || step === "perime") setStep("hub");
+              if (step === "catalog" || step === "history" || step === "perime" || step === "assistant") setStep("hub");
               else if (step === "hub") setStep(clientOrigin === "planning" ? "home" : "client");
               else setStep("client");
             }}
@@ -672,6 +673,7 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
           {step === "catalog" && "Prise de commande"}
           {step === "history" && "Historique des commandes"}
           {step === "perime" && "Retour périmés"}
+          {step === "assistant" && "Assistant"}
         </div>
 
         <div style={{ flex: 1 }} />
@@ -861,11 +863,16 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
           onAppointment={() => setShowAppointment(true)}
           onNote={() => setShowClientNote(true)}
           onPerime={() => setStep("perime")}
+          onAssistant={() => setStep("assistant")}
         />
       )}
 
       {step === "history" && client && (
         <ClientHistory session={session} client={client} />
+      )}
+
+      {step === "assistant" && (
+        <AssistantScreen session={session} client={client} />
       )}
 
       {step === "perime" && client && (
@@ -1556,10 +1563,11 @@ function ClientStep({ session, onSelect }: { session: odoo.OdooSession; onSelect
 // ═══════════════════════════════════════════════════════════════════════════
 // HUB CLIENT — écran d'accueil une fois le client sélectionné
 // ═══════════════════════════════════════════════════════════════════════════
-function ClientHub({ session, client, hasDraft, onOrder, onHistory, onAppointment, onNote, onPerime }: {
+function ClientHub({ session, client, hasDraft, onOrder, onHistory, onAppointment, onNote, onPerime, onAssistant }: {
   session: odoo.OdooSession; client: any; hasDraft: boolean;
   onOrder: () => void; onHistory: () => void; onAppointment: () => void; onNote: () => void;
   onPerime: () => void;
+  onAssistant: () => void;
 }) {
   const [stats, setStats] = useState<{ ca: number; count: number; lastDate: string | null } | null>(null);
 
@@ -1611,6 +1619,7 @@ function ClientHub({ session, client, hasDraft, onOrder, onHistory, onAppointmen
     { key: "rdv", icon: "calendar", title: "Prendre un RDV", subtitle: "Agenda Odoo", primary: false, badge: false, onClick: onAppointment },
     { key: "note", icon: "note", title: "Note client", subtitle: "Compte rendu, vocal ou écrit", primary: false, badge: false, onClick: onNote },
     { key: "perime", icon: "package", title: "Retour périmés", subtitle: "Reprise + échange", primary: false, badge: false, onClick: onPerime },
+    { key: "assistant", icon: "search", title: "Assistant", subtitle: "Questions sur les données", primary: false, badge: false, onClick: onAssistant },
   ];
 
   return (

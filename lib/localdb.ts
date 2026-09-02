@@ -128,7 +128,7 @@ export async function kvGetUpdatedAt(store: string, key: string): Promise<number
 export type QueuedOrderStatus = "pending" | "syncing" | "synced" | "error";
 
 // Type d'élément en file : commande, note client, ou RDV.
-export type QueuedKind = "order" | "note" | "appointment";
+export type QueuedKind = "order" | "note" | "appointment" | "perime";
 
 // Une action Odoo à rejouer : create, write (modif), ou appel de méthode.
 export interface QueuedAction {
@@ -158,6 +158,10 @@ export interface QueuedOrder {
   payloads?: any[];
   // Nouveau format générique : liste d'actions Odoo à rejouer en séquence.
   actions?: QueuedAction[];
+  // Reprise de périmés : la séquence (BC → emplacement → transfert → validation)
+  // comporte des dépendances entre étapes, impossible à exprimer en QueuedAction.
+  // On stocke la saisie brute et on rejoue via perimes.submitReprise().
+  perime?: any;
 }
 
 export async function enqueueOrder(order: Omit<QueuedOrder, "id" | "status" | "attempts" | "createdAt">): Promise<number> {
@@ -174,6 +178,19 @@ export async function enqueueAction(item: {
   const db = await openDB();
   const localRef = `LOCAL-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   const rec: QueuedOrder = { localRef, ...item, status: "pending", attempts: 0, createdAt: Date.now() };
+  const id = await reqToPromise(tx(db, STORES.syncQueue, "readwrite").add(rec));
+  return id as number;
+}
+
+// Enfile une reprise de périmés. Enregistrement écrit en UNE fois : patcher
+// « le dernier » après coup exposait à une course entre deux mises en file.
+export async function enqueuePerime(label: string, perime: any): Promise<number> {
+  const db = await openDB();
+  const localRef = perime?.localRef || `LOCAL-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const rec: QueuedOrder = {
+    localRef, kind: "perime", label, perime,
+    status: "pending", attempts: 0, createdAt: Date.now(),
+  };
   const id = await reqToPromise(tx(db, STORES.syncQueue, "readwrite").add(rec));
   return id as number;
 }
