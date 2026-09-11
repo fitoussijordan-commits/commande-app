@@ -1099,9 +1099,20 @@ function HomeScreen({ session, onNewOrder, onOpenClient, onToast }: {
         // (active = false) pour sortir du calendrier Odoo. Sans ce clause, le
         // domaine par défaut masquerait les archivés et le commercial perdrait
         // la trace de ses annulations dans l'app.
-        const rows = await odoo.searchRead(session, "calendar.event",
-          [["user_id", "=", session.uid], ["start", "<", toOdooDateStr(sunday)], ["stop", ">=", toOdooDateStr(monday)], ["active", "in", [true, false]]],
-          ["id", "name", "start", "stop", "location", "description", "x_studio_code_client_cli_calendar", "x_studio_annul", "active"], 200, "start asc");
+        const domain = [["user_id", "=", session.uid], ["start", "<", toOdooDateStr(sunday)], ["stop", ">=", toOdooDateStr(monday)], ["active", "in", [true, false]]];
+        // res_model / res_id = « document lié » natif d'Odoo sur calendar.event.
+        // C'est là qu'on enregistre la fiche client EXACTE au moment de la prise
+        // de RDV (cf. AppointmentModal) : plus besoin de la retrouver au code,
+        // qui n'est pas unique. Repli sans ces champs s'ils n'existent pas sur
+        // l'instance — sinon la semaine entière s'afficherait vide.
+        const BASE_FIELDS = ["id", "name", "start", "stop", "location", "description", "x_studio_code_client_cli_calendar", "x_studio_annul", "active"];
+        let rows: any[];
+        try {
+          rows = await odoo.searchRead(session, "calendar.event", domain, [...BASE_FIELDS, "res_model", "res_id"], 200, "start asc");
+        } catch (e) {
+          if (odoo.isNetworkError(e)) throw e;
+          rows = await odoo.searchRead(session, "calendar.event", domain, BASE_FIELDS, 200, "start asc");
+        }
         setEvents(rows);
       } catch {
         setEvents([]);
@@ -1167,7 +1178,31 @@ function HomeScreen({ session, onNewOrder, onOpenClient, onToast }: {
   // (le champ partner_ids n'est volontairement pas utilisé, cf. AppointmentModal — anti-invitation Outlook).
   // On retrouve donc le client en relisant cette description plutôt que via un lien structuré.
   const openEventClient = async (e: any) => {
-    // 1) Source FIABLE : le code client stocké dans le champ Odoo dédié.
+    setOpeningClient(true);
+    try {
+      // 0) Source EXACTE : la fiche liée au RDV (res_model/res_id), enregistrée
+      //    au moment de la prise de rendez-vous. C'est l'identifiant, pas un code
+      //    à re-chercher : aucune ambiguïté possible, même si 160 fiches
+      //    partagent le même ref. Les RDV créés avant ce correctif n'ont pas ce
+      //    lien et retombent sur la recherche par code, plus bas.
+      if (e.res_model === "res.partner" && Number(e.res_id) > 0) {
+        const id = Number(e.res_id);
+        try {
+          const cached = await sync.getCachedClients();
+          const hit = cached.find((c: any) => Number(c.id) === id);
+          if (hit) { onOpenClient(hit); return; }
+        } catch {}
+        const rows = await odoo.searchRead(session, "res.partner", [["id", "=", id]], CLIENT_FIELDS, 1);
+        if (rows.length) { onOpenClient(rows[0]); return; }
+        // La fiche liée a été supprimée depuis : on continue en recherche par code.
+      }
+    } catch (err) {
+      if (!odoo.isNetworkError(err)) { /* on tente quand même la recherche par code */ }
+    } finally {
+      setOpeningClient(false);
+    }
+
+    // 1) Repli : le code client stocké dans le champ Odoo dédié.
     const fieldCode = (typeof e.x_studio_code_client_cli_calendar === "string"
       ? e.x_studio_code_client_cli_calendar : "").trim();
 
@@ -1188,6 +1223,24 @@ function HomeScreen({ session, onNewOrder, onOpenClient, onToast }: {
     // livraison/facturation héritant du ref.
     const pickClient = (rows: any[]) => pickClientAmong(rows, name);
 
+    // Au-delà de ce seuil, un ref partagé n'identifie plus rien (cas réel : 160
+    // fiches pour 75-004421). Ouvrir « la plus ancienne » afficherait alors une
+    // fiche d'apparence normale mais probablement fausse — pire qu'un refus. On
+    // le dit. Les RDV pris depuis ce correctif portent res_id et ne passent
+    // jamais ici.
+    const MAX_AMBIGU = 5;
+
+    const openOrExplain = (hit: { row: any; ambiguous: boolean }, total: number): boolean => {
+      if (!hit.row) return false;
+      if (hit.ambiguous && total > MAX_AMBIGU) {
+        onToast(`Le code ${code || name} désigne ${total} fiches dans Odoo — impossible de savoir laquelle. Ouvre-la via la recherche.`, "info");
+        return true;
+      }
+      if (hit.ambiguous) onToast(`${total} fiches identiques pour ${code || name} — ouverture de la plus ancienne`, "info");
+      onOpenClient(hit.row);
+      return true;
+    };
+
     setOpeningClient(true);
     try {
       // Cache local d'abord (offline + instantané). Le CODE prime ; le nom n'est
@@ -1197,12 +1250,7 @@ function HomeScreen({ session, onNewOrder, onOpenClient, onToast }: {
         let matches: any[] = [];
         if (code) matches = cached.filter((c: any) => c.ref && norm(c.ref) === norm(code));
         else if (name) matches = cached.filter((c: any) => (c.name || "").trim().toLowerCase() === name.toLowerCase());
-        const hit = pickClient(matches);
-        if (hit.row) {
-          if (hit.ambiguous) onToast(`${matches.length} fiches identiques pour ${code || name} — ouverture de la plus ancienne`, "info");
-          onOpenClient(hit.row);
-          return;
-        }
+        if (openOrExplain(pickClient(matches), matches.length)) return;
       } catch {}
 
       // Sinon Odoo : par CODE exact d'abord — les CLIENTS (customer_rank > 0) en
@@ -1225,11 +1273,7 @@ function HomeScreen({ session, onNewOrder, onOpenClient, onToast }: {
         rows = await odoo.searchRead(session, "res.partner",
           [["name", "=", name], ["active", "=", true]], CLIENT_FIELDS, 50);
       }
-      const hit = pickClient(rows);
-      if (hit.row) {
-        if (hit.ambiguous) onToast(`${rows.length} fiches identiques pour ${code || name} — ouverture de la plus ancienne`, "info");
-        onOpenClient(hit.row);
-      } else onToast("Client introuvable pour ce RDV", "info");
+      if (!openOrExplain(pickClient(rows), rows.length)) onToast("Client introuvable pour ce RDV", "info");
     } catch {
       onToast("Erreur lors de l'ouverture du client", "error");
     } finally {

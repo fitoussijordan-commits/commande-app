@@ -164,6 +164,19 @@ export default function AppointmentModal({ session, client, event, adminMode, on
         ...(!isEdit && client?.ref ? { x_studio_code_client_cli_calendar: client.ref } : {}),
       };
 
+      // Lien vers la fiche client EXACTE, via le « document lié » natif d'Odoo.
+      //
+      // Avant, on n'enregistrait que le ref du client. Or le ref n'est pas unique
+      // dans Odoo : un cas réel remonte 160 fiches pour 75-004421. Rouvrir la
+      // fiche depuis le RDV revenait donc à deviner, alors que l'app connaît
+      // l'identifiant au moment même de la prise de rendez-vous. On le garde.
+      //
+      // Isolé de baseValues pour pouvoir réessayer sans, si l'instance refuse ces
+      // champs : mieux vaut un RDV sans lien qu'un RDV non créé.
+      const clientLink: any = client?.id
+        ? { res_model: "res.partner", res_id: Number(client.id) }
+        : {};
+
       // Type de RDV choisi (étiquette) prioritaire ; sinon étiquette dérivée du titre.
       const resolveCategId = async (): Promise<number | null> =>
         (typeof rdvTypeId === "number" ? rdvTypeId : await getOrCreateTagForTitle(session, title));
@@ -172,10 +185,16 @@ export default function AppointmentModal({ session, client, event, adminMode, on
       if (isEdit) {
         try {
           const categId = await resolveCategId();
-          await odoo.write(session, "calendar.event", [event.id], {
+          const values = {
             ...baseValues,
             ...(categId ? { categ_ids: [[6, 0, [categId]]] } : {}),
-          });
+          };
+          try {
+            await odoo.write(session, "calendar.event", [event.id], { ...values, ...clientLink });
+          } catch (linkErr: any) {
+            if (odoo.isNetworkError(linkErr) || !Object.keys(clientLink).length) throw linkErr;
+            await odoo.write(session, "calendar.event", [event.id], values);   // sans le lien
+          }
           onToast("RDV modifié", "success");
         } catch (err: any) {
           // Seul le RÉSEAU justifie la file de synchro : une erreur métier Odoo
@@ -186,7 +205,7 @@ export default function AppointmentModal({ session, client, event, adminMode, on
             setSaving(false);
             return;
           }
-          await sync.queueAppointmentEdit(event.id, title.trim(), baseValues);
+          await sync.queueAppointmentEdit(event.id, title.trim(), { ...baseValues, ...clientLink });
           onToast("Modification enregistrée hors ligne — sera envoyée au retour du réseau", "info");
         }
         onClose();
@@ -201,11 +220,17 @@ export default function AppointmentModal({ session, client, event, adminMode, on
           resolveCategId(),
         ]);
         // Important : le CLIENT n'est volontairement PAS ajouté comme participant.
-        await odoo.create(session, "calendar.event", {
+        const values = {
           ...baseValues,
           ...(organizerPartnerId ? { partner_ids: [[6, 0, [organizerPartnerId]]] } : {}),
           ...(categId ? { categ_ids: [[6, 0, [categId]]] } : {}),
-        });
+        };
+        try {
+          await odoo.create(session, "calendar.event", { ...values, ...clientLink });
+        } catch (linkErr: any) {
+          if (odoo.isNetworkError(linkErr) || !Object.keys(clientLink).length) throw linkErr;
+          await odoo.create(session, "calendar.event", values);   // sans le lien
+        }
         onToast("RDV créé dans le calendrier Odoo", "success");
       } catch (err: any) {
         // Idem : une erreur métier ne part PAS en file (elle rejouerait en boucle),
@@ -216,7 +241,7 @@ export default function AppointmentModal({ session, client, event, adminMode, on
           return;
         }
         // Hors ligne → mise en file (version simplifiée, sans tag/organisateur résolus).
-        await sync.queueAppointment(client?.name || title.trim(), baseValues);
+        await sync.queueAppointment(client?.name || title.trim(), { ...baseValues, ...clientLink });
         onToast("RDV enregistré hors ligne — sera créé au retour du réseau", "info");
       }
       onClose();
