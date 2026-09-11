@@ -171,7 +171,15 @@ export default function AppointmentModal({ session, client, event, adminMode, on
             ...(categId ? { categ_ids: [[6, 0, [categId]]] } : {}),
           });
           onToast("RDV modifié", "success");
-        } catch {
+        } catch (err: any) {
+          // Seul le RÉSEAU justifie la file de synchro : une erreur métier Odoo
+          // rejouée échouerait en boucle, et le message « hors ligne » masquerait
+          // la vraie cause. (cf. lib/odoo.ts)
+          if (!odoo.isNetworkError(err)) {
+            setError("Odoo a refusé la modification : " + (err?.message || err));
+            setSaving(false);
+            return;
+          }
           await sync.queueAppointmentEdit(event.id, title.trim(), baseValues);
           onToast("Modification enregistrée hors ligne — sera envoyée au retour du réseau", "info");
         }
@@ -193,7 +201,14 @@ export default function AppointmentModal({ session, client, event, adminMode, on
           ...(categId ? { categ_ids: [[6, 0, [categId]]] } : {}),
         });
         onToast("RDV créé dans le calendrier Odoo", "success");
-      } catch {
+      } catch (err: any) {
+        // Idem : une erreur métier ne part PAS en file (elle rejouerait en boucle),
+        // on affiche la cause pour que le RDV puisse être corrigé et resoumis.
+        if (!odoo.isNetworkError(err)) {
+          setError("Odoo a refusé la création : " + (err?.message || err));
+          setSaving(false);
+          return;
+        }
         // Hors ligne → mise en file (version simplifiée, sans tag/organisateur résolus).
         await sync.queueAppointment(client?.name || title.trim(), baseValues);
         onToast("RDV enregistré hors ligne — sera créé au retour du réseau", "info");

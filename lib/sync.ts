@@ -402,12 +402,15 @@ export async function queueAppointmentEdit(eventId: number, label: string, value
   });
 }
 
-// Annulation d'un RDV (marque le champ Odoo x_studio_annul = true).
+// Annulation d'un RDV rejouée au retour du réseau.
+// Mêmes valeurs que le chemin en ligne (cf. cancelEvent dans OrderScreen) :
+// active = false archive l'événement — c'est ce qui le retire réellement du
+// calendrier Odoo — et x_studio_annul garde la trace de l'annulation.
 export async function queueAppointmentCancel(eventId: number, label: string): Promise<number> {
   return db.enqueueAction({
     kind: "appointment",
     label: `Annulation RDV — ${label}`,
-    actions: [{ op: "write", model: "calendar.event", ids: [eventId], values: { x_studio_annul: true } }],
+    actions: [{ op: "write", model: "calendar.event", ids: [eventId], values: { x_studio_annul: true, active: false } }],
   });
 }
 

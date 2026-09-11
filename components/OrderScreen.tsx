@@ -1088,9 +1088,13 @@ function HomeScreen({ session, onNewOrder, onOpenClient, onToast }: {
       try {
         const sunday = new Date(monday);
         sunday.setDate(monday.getDate() + 7);
+        // ["active", "in", [true, false]] : un RDV annulé est ARCHIVÉ dans Odoo
+        // (active = false) pour sortir du calendrier Odoo. Sans ce clause, le
+        // domaine par défaut masquerait les archivés et le commercial perdrait
+        // la trace de ses annulations dans l'app.
         const rows = await odoo.searchRead(session, "calendar.event",
-          [["user_id", "=", session.uid], ["start", "<", toOdooDateStr(sunday)], ["stop", ">=", toOdooDateStr(monday)]],
-          ["id", "name", "start", "stop", "location", "description", "x_studio_code_client_cli_calendar", "x_studio_annul"], 200, "start asc");
+          [["user_id", "=", session.uid], ["start", "<", toOdooDateStr(sunday)], ["stop", ">=", toOdooDateStr(monday)], ["active", "in", [true, false]]],
+          ["id", "name", "start", "stop", "location", "description", "x_studio_code_client_cli_calendar", "x_studio_annul", "active"], 200, "start asc");
         setEvents(rows);
       } catch {
         setEvents([]);
@@ -1100,14 +1104,45 @@ function HomeScreen({ session, onNewOrder, onOpenClient, onToast }: {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session, monday, reloadKey]);
 
-  // Annule un RDV : marque le champ Odoo x_studio_annul = true (garde la trace).
+  // Un RDV est annulé s'il porte le flag Studio OU s'il est archivé dans Odoo.
+  // Les deux, parce qu'il existe des RDV annulés AVANT l'archivage (l'app ne
+  // posait alors que x_studio_annul) et des RDV archivés directement dans Odoo.
+  const isCancelled = (e: any) => Boolean(e?.x_studio_annul) || e?.active === false;
+
+  // Annule un RDV.
+  //
+  // active = false  → ARCHIVE l'événement : il sort des vues calendrier d'Odoo.
+  //                   C'est le seul champ qu'Odoo regarde réellement.
+  // x_studio_annul  → garde la raison, et reste lisible par l'app (qui, elle,
+  //                   continue d'afficher les annulés, barrés).
+  //
+  // Avant, seul x_studio_annul était écrit : champ Studio qu'aucune vue Odoo ne
+  // connaît, donc le RDV restait affiché tel quel dans le calendrier Odoo.
   const cancelEvent = async (e: any) => {
     setCancelling(true);
     try {
       try {
-        await odoo.write(session, "calendar.event", [e.id], { x_studio_annul: true });
-        onToast("RDV annulé", "success");
-      } catch {
+        try {
+          await odoo.write(session, "calendar.event", [e.id], { x_studio_annul: true, active: false });
+        } catch (inner: any) {
+          if (odoo.isNetworkError(inner)) throw inner;
+          // Repli si `active` n'est pas inscriptible sur cette instance (même
+          // logique que le repli date_start/date_end du préchargement) : on pose
+          // au moins le flag, et on dit clairement que le RDV reste dans Odoo.
+          await odoo.write(session, "calendar.event", [e.id], { x_studio_annul: true });
+          onToast("RDV marqué annulé, mais Odoo a refusé de l'archiver : " + (inner?.message || inner), "error");
+          setSelectedEvent(null);
+          setReloadKey(k => k + 1);
+          return;
+        }
+        onToast("RDV annulé et retiré du calendrier Odoo", "success");
+      } catch (err: any) {
+        // Seul le RÉSEAU justifie la file de synchro. Une erreur métier rejouée
+        // échouerait en boucle — on affiche la cause. (cf. lib/odoo.ts)
+        if (!odoo.isNetworkError(err)) {
+          onToast("Odoo a refusé l'annulation : " + (err?.message || err), "error");
+          return;
+        }
         await sync.queueAppointmentCancel(e.id, e.name || "RDV");
         onToast("Annulation enregistrée hors ligne — sera envoyée au retour du réseau", "info");
       }
@@ -1282,12 +1317,12 @@ function HomeScreen({ session, onNewOrder, onOpenClient, onToast }: {
                   const col = EVENT_COLORS[idx % EVENT_COLORS.length];
                   return (
                     <button key={e.id} onClick={() => setSelectedEvent(e)} title="Voir le rendez-vous"
-                      style={{ background: e.x_studio_annul ? "#f8fafc" : col.bg, border: "none", borderRadius: 10, padding: "8px 10px", cursor: "pointer", fontFamily: "inherit", textAlign: "left" as const, width: "100%", boxShadow: isToday ? "0 4px 10px rgba(15,23,42,0.12)" : "none", opacity: e.x_studio_annul ? 0.6 : 1 }}>
-                      <div style={{ fontSize: 10, fontWeight: 800, color: e.x_studio_annul ? C.muted : col.text }}>
+                      style={{ background: isCancelled(e) ? "#f8fafc" : col.bg, border: "none", borderRadius: 10, padding: "8px 10px", cursor: "pointer", fontFamily: "inherit", textAlign: "left" as const, width: "100%", boxShadow: isToday ? "0 4px 10px rgba(15,23,42,0.12)" : "none", opacity: isCancelled(e) ? 0.6 : 1 }}>
+                      <div style={{ fontSize: 10, fontWeight: 800, color: isCancelled(e) ? C.muted : col.text }}>
                         {odooToLocalDate(e.start).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}
-                        {e.x_studio_annul && " · Annulé"}
+                        {isCancelled(e) && " · Annulé"}
                       </div>
-                      <div style={{ fontSize: 11, fontWeight: 700, color: C.text, marginTop: 2, lineHeight: 1.3, overflow: "hidden", display: "-webkit-box" as const, WebkitLineClamp: 2, WebkitBoxOrient: "vertical" as const, textDecoration: e.x_studio_annul ? "line-through" : "none" }}>{e.name}</div>
+                      <div style={{ fontSize: 11, fontWeight: 700, color: C.text, marginTop: 2, lineHeight: 1.3, overflow: "hidden", display: "-webkit-box" as const, WebkitLineClamp: 2, WebkitBoxOrient: "vertical" as const, textDecoration: isCancelled(e) ? "line-through" : "none" }}>{e.name}</div>
                     </button>
                   );
                 })}
@@ -1342,7 +1377,7 @@ function HomeScreen({ session, onNewOrder, onOpenClient, onToast }: {
                     style={{ flex: 1, padding: "12px", background: C.white, color: C.tealDark, border: `1.5px solid ${C.tealMid}`, borderRadius: 12, fontSize: 14, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
                     Modifier
                   </button>
-                  {e.x_studio_annul ? (
+                  {isCancelled(e) ? (
                     <div style={{ flex: 1, padding: "12px", textAlign: "center" as const, color: C.muted, fontSize: 13, fontWeight: 600 }}>Déjà annulé</div>
                   ) : (
                     <button onClick={() => cancelEvent(e)} disabled={cancelling}
