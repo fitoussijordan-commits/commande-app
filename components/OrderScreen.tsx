@@ -11,6 +11,7 @@ import * as geo from "@/lib/geo";
 import { apiUrl } from "@/lib/apiBase";
 import * as loyalty from "@/lib/loyalty";
 import { PriceItem, sortPriceItems, applyPricelist } from "@/lib/pricing";
+import { descToText } from "@/lib/text";
 
 // ── Palette ───────────────────────────────────────────────────────────────────
 const C = {
@@ -211,6 +212,9 @@ function fmtDate(ts: number) {
   const d = new Date(ts);
   return `${d.toLocaleDateString("fr-FR")} à ${d.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}`;
 }
+
+// descToText vit dans lib/text.ts — la description Odoo est du HTML, elle est
+// aussi relue par AppointmentModal.
 
 // Le calcul de prix vit dans lib/pricing.ts — réutilisé par le module périmés.
 
@@ -1165,7 +1169,7 @@ function HomeScreen({ session, onNewOrder, onOpenClient, onToast }: {
       ? e.x_studio_code_client_cli_calendar : "").trim();
 
     // 2) Repli sur la description "Client : NOM (CODE) — téléphone" (anciens RDV).
-    const desc: string = e.description || "";
+    const desc: string = descToText(e.description || "");
     const line = (desc.match(/Client\s*:\s*(.+)/i)?.[1]) || "";
     const descCode = line.match(/\(([^)]+)\)/)?.[1]?.trim() || "";
     const name = line.replace(/\(.*$/, "").replace(/—.*$/, "").trim();
@@ -1337,7 +1341,7 @@ function HomeScreen({ session, onNewOrder, onOpenClient, onToast }: {
         const e = selectedEvent;
         const start = odooToLocalDate(e.start);
         const stop = e.stop ? odooToLocalDate(e.stop) : null;
-        const desc: string = e.description || "";
+        const desc: string = descToText(e.description || "");
         const clientLine = (desc.match(/Client\s*:\s*(.+)/i)?.[1]) || "";
         const clientName = clientLine.replace(/\(.*$/, "").replace(/—.*$/, "").trim();
         const clientRef = clientLine.match(/\(([^)]+)\)/)?.[1]?.trim() || "";

@@ -2,6 +2,7 @@
 import { useState, useEffect } from "react";
 import * as odoo from "@/lib/odoo";
 import * as sync from "@/lib/sync";
+import { descToText } from "@/lib/text";
 
 const C = {
   bg: "#f8fafc", white: "#fff", text: "#0f172a", textSec: "#334155",
@@ -95,8 +96,11 @@ export default function AppointmentModal({ session, client, event, adminMode, on
   const initDuration = (event?.start && event?.stop)
     ? Math.max(0.25, (new Date(event.stop.replace(" ", "T") + "Z").getTime() - new Date(event.start.replace(" ", "T") + "Z").getTime()) / 3600000)
     : 1;
+  // descToText : la description Odoo est du HTML sur une seule ligne dès que le
+  // RDV a été touché côté Odoo. Sans conversion, split(/\n\n/) ne trouvait aucun
+  // séparateur → la note existante passait pour vide et disparaissait à l'édition.
   const initNote = (() => {
-    const d: string = event?.description || "";
+    const d: string = descToText(event?.description || "");
     const parts = d.split(/\n\n/);
     return parts.length > 1 ? parts.slice(1).join("\n\n").trim() : "";
   })();
@@ -136,7 +140,9 @@ export default function AppointmentModal({ session, client, event, adminMode, on
       // on conserve la 1ère ligne "Client : ..." d'origine et on remplace la note.
       let description: string;
       if (isEdit) {
-        const orig: string = event?.description || "";
+        // Idem : sans descToText, clientLine valait TOUT le bloc HTML, qui était
+        // alors réécrit tel quel dans la description à chaque modification.
+        const orig: string = descToText(event?.description || "");
         const clientLine = orig.split(/\n\n/)[0] || "";
         description = clientLine + (note ? `\n\n${note}` : "");
       } else {
