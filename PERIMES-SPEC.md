@@ -1,11 +1,11 @@
 # Module Périmés — spécification technique et fonctionnelle
 
 Reprise de produits périmés avec décote et compensation par produits neufs.
-Cible : `commande-app` (Next.js 14 + Capacitor iOS), branche `capacitor`, Odoo online.
+Cible : `commande-app` (Next.js 14 + Capacitor iOS), branche `main`, Odoo online.
 
 > **À lire avec `CONTEXT.md`.** Ce document suppose connues les règles absolues du
-> projet (branche `capacitor`, l'assistant n'exécute ni git ni build, `npx tsc --noEmit`
-> avant tout déploiement).
+> projet (branche unique `main`, l'assistant ne builde pas l'app iOS,
+> `npx tsc --noEmit` avant tout déploiement).
 
 ---
 

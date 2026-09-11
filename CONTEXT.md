@@ -19,15 +19,25 @@ Vercel. Objectif principal : **fonctionner hors ligne** (vraie app iPad native).
 
 ## RÈGLES ABSOLUES
 
-1. **`main` et `capacitor` sont alignées — les garder identiques.**
-   Depuis le 11/09/2026, `main` a été remise à niveau sur `capacitor` (fast-forward)
-   et sert la **production** : `commande-app-tan.vercel.app`.
-   `capacitor` reste la branche de travail et alimente la préview
-   `commande-app-git-capacitor-fitoussis-projects.vercel.app`, qui est l'URL appelée
-   par l'app iOS (`NEXT_PUBLIC_API_BASE` dans `.env.local`).
-   Après un lot de commits : pousser `capacitor`, puis aligner `main` dessus et la
-   pousser aussi. Ne jamais laisser les deux diverger.
-   *(Ancienne règle, désormais caduque : « `main` = démo figée, ne jamais y toucher ».)*
+1. **Une seule base : `main`.** Une seule branche, une seule URL.
+   `main` sert la **production** `https://commande-app-tan.vercel.app`, et c'est
+   cette même URL qu'appelle l'app iPad (`NEXT_PUBLIC_API_BASE` dans `.env.local`).
+   Un push sur `main` met donc à jour d'un coup ce que Jordan vérifie sur PC **et**
+   le proxy Odoo utilisé par les iPad.
+   *(Règles précédentes, caduques : « travailler sur `capacitor`, jamais `main` »,
+   puis « garder les deux branches alignées ».)*
+
+   ⚠️ **`capacitor` existe encore, le temps de la migration.** Les iPad déjà
+   déployés ont l'ancienne URL de préview figée dans leur binaire — l'URL est
+   injectée au moment du `build:ios`, pas au lancement. Tant qu'un iPad n'a pas
+   été rebuildé sur la prod, il faut continuer à pousser `capacitor` aussi :
+   ```bash
+   git push origin main:main main:capacitor && git branch -f capacitor main
+   ```
+   Une fois **tous** les iPad à jour, supprimer la branche :
+   ```bash
+   git push origin --delete capacitor && git branch -d capacitor
+   ```
 2. **L'assistant peut pousser lui-même** quand il tourne dans Claude Code sur le Mac
    de Jordan (accès git + CLI `vercel`). En revanche il ne peut **pas** builder l'app
    iOS : `npm run build:ios`, `npx cap sync ios` et le Run Xcode restent à faire par
@@ -43,15 +53,25 @@ cd ~/Downloads/wms-scanner/commande-app
 rm -f .git/index.lock          # au cas où un verrou traîne
 git add -A
 git commit -m "..."
-git push origin capacitor       # déploie la préview Vercel (URL utilisée par l'app iOS)
-git branch -f main capacitor && git push origin main   # aligne la prod sur le même commit
+git push origin main           # déploie la prod → vérifiable sur PC en ~30 s
+```
+
+Puis, **seulement quand il faut mettre l'iPad à jour** :
+
+```bash
 npm run build:ios               # export statique du front dans ./out
 npx cap sync ios                # copie le front dans le projet iOS
 npx cap open ios                # ouvre Xcode → bouton ▶ Run sur l'iPad
 ```
 
-Après changement de code front, il faut **rebuild:ios + cap sync + Run** — la mise
-à jour n'est PAS automatique en natif (contrairement au web).
+Deux rythmes distincts, et c'est voulu :
+
+- **Vérifier sur PC** = un `git push origin main`, rien d'autre. Vercel redéploie
+  `commande-app-tan.vercel.app` tout seul.
+- **Mettre à jour l'iPad** = rebuild + cap sync + Run dans Xcode. Ce n'est **pas**
+  automatique en natif : le front est embarqué dans le binaire. Les routes API,
+  elles, sont appelées en direct sur Vercel — donc un correctif côté `app/api/`
+  atteint les iPad dès le push, **sans** rebuild.
 
 ---
 
@@ -94,11 +114,13 @@ en masse au bouton « Télécharger les données ».)
 - **`sequence` n'existe PAS** sur `product.pricelist.item` dans cet Odoo. Ne jamais
   trier une requête pricelist par `sequence` → ça fait planter toute la requête.
 - **Proxy sur Vercel** : `.env.local` doit contenir
-  `NEXT_PUBLIC_API_BASE=https://commande-app-git-capacitor-fitoussis-projects.vercel.app`
-  (URL de la branche capacitor). Sans ça, l'app native ne joint pas Odoo (« Load failed »).
-- **Protection Vercel Preview** : les déploiements de branche ont une auth Vercel qui
-  bloque les requêtes externes (HTTP 401). À désactiver dans Vercel → Settings →
-  Deployment Protection → Vercel Authentication → Disabled.
+  `NEXT_PUBLIC_API_BASE=https://commande-app-tan.vercel.app` (URL de production).
+  Sans ça, l'app native ne joint pas Odoo (« Load failed »). Cette valeur est figée
+  dans le binaire **au moment du `build:ios`** — la changer impose un rebuild.
+- **Protection Vercel Preview** : si on repasse un jour par une URL de préview, les
+  déploiements de branche ont une auth Vercel qui bloque les requêtes externes
+  (HTTP 401). À désactiver dans Vercel → Settings → Deployment Protection →
+  Vercel Authentication → Disabled. Sans objet sur l'URL de production.
 - **CORS** : déjà géré dans `lib/cors.ts` + `OPTIONS` sur les routes. Ne pas casser.
 - **Session Odoo** : gardée en localStorage, persiste (natif). Ne JAMAIS déconnecter
   sur une erreur réseau (sinon le commercial est bloqué hors ligne). Le bouton

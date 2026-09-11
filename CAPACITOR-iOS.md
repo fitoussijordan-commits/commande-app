@@ -1,6 +1,6 @@
 # App iPad native (Capacitor) — guide de build
 
-Cette branche `capacitor` transforme l'app web en **vraie app iOS** qui s'ouvre
+Le wrap **Capacitor** transforme l'app web en **vraie app iOS** qui s'ouvre
 **hors ligne** (les fichiers du front sont embarqués dans l'app, plus de page
 « pas de connexion »). Le proxy Odoo reste hébergé sur Vercel et est appelé en
 absolu quand il y a du réseau.
@@ -39,10 +39,10 @@ absolu quand il y a du réseau.
 
 ## Build initial (une seule fois)
 
-Depuis `~/Downloads/wms-scanner/commande-app`, sur la branche `capacitor` :
+Depuis `~/Downloads/wms-scanner/commande-app`, sur `main` :
 
 ```bash
-git checkout capacitor
+git checkout main
 npm install
 ```
 
