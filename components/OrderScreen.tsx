@@ -12,6 +12,7 @@ import { apiUrl } from "@/lib/apiBase";
 import * as loyalty from "@/lib/loyalty";
 import { PriceItem, sortPriceItems, applyPricelist } from "@/lib/pricing";
 import { descToText } from "@/lib/text";
+import { pickClientAmong } from "@/lib/clients";
 
 // ── Palette ───────────────────────────────────────────────────────────────────
 const C = {
@@ -919,7 +920,9 @@ const LOC_RADIUS_KM = 1;
 
 // is_company sert au départage quand plusieurs fiches partagent le même code (ref).
 // parent_id / type servent à écarter les adresses enfants (voir dedupeClients).
-const CLIENT_FIELDS = ["id", "name", "ref", "city", "country_id", "property_product_pricelist", "email", "phone", "is_company", "x_nbre_visites_realisees", "parent_id", "type", "x_evolution_ca_n_n_1", "x_ca_n_1", "x_statut_client_id"];
+// customer_rank : sert à départager plusieurs fiches partageant le même ref
+// (cf. pickClient) — c'est la fiche qui reçoit réellement les commandes.
+const CLIENT_FIELDS = ["id", "name", "ref", "city", "country_id", "property_product_pricelist", "email", "phone", "is_company", "x_nbre_visites_realisees", "parent_id", "type", "customer_rank", "x_evolution_ca_n_n_1", "x_ca_n_1", "x_statut_client_id"];
 
 // Évolution du CA année N vs N-1 (onglet « Conditions commerciales » de la fiche
 // client Odoo, champ x_evolution_ca_n_n_1).
@@ -1180,25 +1183,10 @@ function HomeScreen({ session, onNewOrder, onOpenClient, onToast }: {
     // Compare deux codes de façon stricte (insensible casse/espaces).
     const norm = (s: string) => s.replace(/\s+/g, "").toLowerCase();
 
-    // Départage quand PLUSIEURS fiches partagent le même code (cas réel : société
-    // + contact de livraison/facturation au même ref, ou doublon de fiche) :
-    //  1. une seule fiche → elle ;
-    //  2. sinon, celle dont le nom correspond EXACTEMENT au nom du RDV ;
-    //  3. sinon, l'unique fiche « société » du lot (les contacts rattachés sont écartés).
-    // Toujours en correspondance stricte — on n'ouvre jamais une fiche au hasard.
-    const pickClient = (rows: any[]): any | null => {
-      if (rows.length === 1) return rows[0];
-      if (rows.length > 1) {
-        if (name) {
-          const exact = rows.filter((r: any) => (r.name || "").trim().toLowerCase() === name.toLowerCase());
-          if (exact.length === 1) return exact[0];
-          if (exact.length > 1) rows = exact;
-        }
-        const companies = rows.filter((r: any) => r.is_company);
-        if (companies.length === 1) return companies[0];
-      }
-      return null;
-    };
+    // Le départage vit dans lib/clients.ts (fonction pure, testable) : plusieurs
+    // fiches au même ref est le cas NORMAL dans Odoo — société + adresses de
+    // livraison/facturation héritant du ref.
+    const pickClient = (rows: any[]) => pickClientAmong(rows, name);
 
     setOpeningClient(true);
     try {
@@ -1210,28 +1198,38 @@ function HomeScreen({ session, onNewOrder, onOpenClient, onToast }: {
         if (code) matches = cached.filter((c: any) => c.ref && norm(c.ref) === norm(code));
         else if (name) matches = cached.filter((c: any) => (c.name || "").trim().toLowerCase() === name.toLowerCase());
         const hit = pickClient(matches);
-        if (hit) { onOpenClient(hit); return; }
+        if (hit.row) {
+          if (hit.ambiguous) onToast(`${matches.length} fiches identiques pour ${code || name} — ouverture de la plus ancienne`, "info");
+          onOpenClient(hit.row);
+          return;
+        }
       } catch {}
 
       // Sinon Odoo : par CODE exact d'abord — les CLIENTS (customer_rank > 0) en
       // priorité, ce qui écarte fournisseurs/contacts au même ref ; repli sans ce
       // filtre si aucun résultat. Jamais de "ilike" approximatif.
+      //
+      // Limite 50 et non 5 : une société avec ses adresses de livraison dépasse
+      // vite 5 fiches, et tronquer à 5 faussait le départage (on choisissait dans
+      // un lot arbitrairement coupé). Le message « 5 fiches ont le code … »
+      // affichait d'ailleurs la limite, pas le nombre réel.
       let rows: any[] = [];
       if (code) {
         rows = await odoo.searchRead(session, "res.partner",
-          [["ref", "=", code], ["active", "=", true], ["customer_rank", ">", 0]], CLIENT_FIELDS, 5);
+          [["ref", "=", code], ["active", "=", true], ["customer_rank", ">", 0]], CLIENT_FIELDS, 50);
         if (!rows.length) {
           rows = await odoo.searchRead(session, "res.partner",
-            [["ref", "=", code], ["active", "=", true]], CLIENT_FIELDS, 5);
+            [["ref", "=", code], ["active", "=", true]], CLIENT_FIELDS, 50);
         }
       } else if (name) {
         rows = await odoo.searchRead(session, "res.partner",
-          [["name", "=", name], ["active", "=", true]], CLIENT_FIELDS, 5);
+          [["name", "=", name], ["active", "=", true]], CLIENT_FIELDS, 50);
       }
       const hit = pickClient(rows);
-      if (hit) onOpenClient(hit);
-      else if (rows.length > 1) onToast(`${rows.length} fiches ont le code ${code || name} dans Odoo (mêmes noms) — ouvre-le via la recherche`, "info");
-      else onToast("Client introuvable pour ce RDV", "info");
+      if (hit.row) {
+        if (hit.ambiguous) onToast(`${rows.length} fiches identiques pour ${code || name} — ouverture de la plus ancienne`, "info");
+        onOpenClient(hit.row);
+      } else onToast("Client introuvable pour ce RDV", "info");
     } catch {
       onToast("Erreur lors de l'ouverture du client", "error");
     } finally {
