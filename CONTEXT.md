@@ -38,30 +38,40 @@ Vercel. Objectif principal : **fonctionner hors ligne** (vraie app iPad native).
    ```bash
    git push origin --delete capacitor && git branch -d capacitor
    ```
-2. **L'assistant peut pousser lui-même** quand il tourne dans Claude Code sur le Mac
-   de Jordan (accès git + CLI `vercel`). En revanche il ne peut **pas** builder l'app
-   iOS : `npm run build:ios`, `npx cap sync ios` et le Run Xcode restent à faire par
-   Jordan. Toujours lui fournir les commandes.
+2. **L'assistant fait tout jusqu'à Xcode.** Quand il tourne dans Claude Code sur le
+   Mac de Jordan, il a git, le CLI `vercel`, `npm run build:ios` et
+   `npx cap sync ios`. Il commite, pousse, vérifie le déploiement et prépare le
+   projet iOS lui-même — inutile de lui demander de « fournir les commandes ».
+   Seule limite réelle : **ouvrir Xcode et appuyer sur ▶** (GUI, signature,
+   iPad branché). C'est la seule étape qui revient à Jordan.
+   *(Ancienne règle, caduque : « l'assistant ne peut PAS pousser ni builder ».)*
 3. **Toujours vérifier `npx tsc --noEmit` compile avant de proposer un déploiement.**
 
 ---
 
-## Workflow de déploiement (commandes pour Jordan, sur son Mac)
+## Workflow de déploiement
+
+**Côté assistant** (il enchaîne ça tout seul) :
 
 ```bash
 cd ~/Downloads/wms-scanner/commande-app
 rm -f .git/index.lock          # au cas où un verrou traîne
-git add -A
-git commit -m "..."
+npx tsc --noEmit               # règle 3
+git add -A && git commit -m "..."
 git push origin main           # déploie la prod → vérifiable sur PC en ~30 s
 ```
 
 Puis, **seulement quand il faut mettre l'iPad à jour** :
 
 ```bash
-npm run build:ios               # export statique du front dans ./out
-npx cap sync ios                # copie le front dans le projet iOS
-npx cap open ios                # ouvre Xcode → bouton ▶ Run sur l'iPad
+npm run build:ios                                        # export statique dans ./out
+LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8 npx cap sync ios     # copie dans le projet iOS
+```
+
+**Côté Jordan**, une seule étape — ouvrir Xcode et lancer sur l'iPad :
+
+```bash
+npx cap open ios                # puis bouton ▶ Run
 ```
 
 Deux rythmes distincts, et c'est voulu :
@@ -121,6 +131,16 @@ en masse au bouton « Télécharger les données ».)
   déploiements de branche ont une auth Vercel qui bloque les requêtes externes
   (HTTP 401). À désactiver dans Vercel → Settings → Deployment Protection →
   Vercel Authentication → Disabled. Sans objet sur l'URL de production.
+- **`cap sync` et le locale** : `npx cap sync ios` échoue au `pod install` avec
+  `Unicode Normalization not appropriate for ASCII-8BIT` quand `LANG` n'est pas
+  défini (cas d'un shell non interactif). Trompeur : la copie des assets web
+  réussit quand même, seul `pod install` casse — on croit la synchro faite.
+  Toujours préfixer : `LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8 npx cap sync ios`.
+- **Ordre `.env.local` → `build:ios`** : l'URL d'API est figée dans `out/` au
+  moment du build. Changer `.env.local` **après** un `build:ios` ne sert à rien —
+  le `cap sync` qui suit recopie l'ancien bundle. Toujours rebuilder avant de
+  synchroniser. Vérif rapide :
+  `grep -rhoE "https://commande-app[a-zA-Z0-9.-]*" ios/App/App/public/ | sort -u`
 - **CORS** : déjà géré dans `lib/cors.ts` + `OPTIONS` sur les routes. Ne pas casser.
 - **Session Odoo** : gardée en localStorage, persiste (natif). Ne JAMAIS déconnecter
   sur une erreur réseau (sinon le commercial est bloqué hors ligne). Le bouton
