@@ -19,11 +19,19 @@ Vercel. Objectif principal : **fonctionner hors ligne** (vraie app iPad native).
 
 ## RÈGLES ABSOLUES
 
-1. **Travailler sur la branche `capacitor`, JAMAIS `main`.**
-   `main` = version web de démo qui ne doit pas bouger. Pousser vers `origin capacitor`.
-2. **L'assistant ne peut PAS pousser ni builder lui-même** (pas d'accès GitHub/Xcode
-   depuis son environnement). Il ÉCRIT les fichiers ; c'est **l'utilisateur (Jordan)**
-   qui lance git/build/Run sur son Mac. Toujours lui fournir les commandes.
+1. **`main` et `capacitor` sont alignées — les garder identiques.**
+   Depuis le 11/09/2026, `main` a été remise à niveau sur `capacitor` (fast-forward)
+   et sert la **production** : `commande-app-tan.vercel.app`.
+   `capacitor` reste la branche de travail et alimente la préview
+   `commande-app-git-capacitor-fitoussis-projects.vercel.app`, qui est l'URL appelée
+   par l'app iOS (`NEXT_PUBLIC_API_BASE` dans `.env.local`).
+   Après un lot de commits : pousser `capacitor`, puis aligner `main` dessus et la
+   pousser aussi. Ne jamais laisser les deux diverger.
+   *(Ancienne règle, désormais caduque : « `main` = démo figée, ne jamais y toucher ».)*
+2. **L'assistant peut pousser lui-même** quand il tourne dans Claude Code sur le Mac
+   de Jordan (accès git + CLI `vercel`). En revanche il ne peut **pas** builder l'app
+   iOS : `npm run build:ios`, `npx cap sync ios` et le Run Xcode restent à faire par
+   Jordan. Toujours lui fournir les commandes.
 3. **Toujours vérifier `npx tsc --noEmit` compile avant de proposer un déploiement.**
 
 ---
@@ -35,7 +43,8 @@ cd ~/Downloads/wms-scanner/commande-app
 rm -f .git/index.lock          # au cas où un verrou traîne
 git add -A
 git commit -m "..."
-git push origin capacitor       # déclenche un déploiement Vercel de la branche
+git push origin capacitor       # déploie la préview Vercel (URL utilisée par l'app iOS)
+git branch -f main capacitor && git push origin main   # aligne la prod sur le même commit
 npm run build:ios               # export statique du front dans ./out
 npx cap sync ios                # copie le front dans le projet iOS
 npx cap open ios                # ouvre Xcode → bouton ▶ Run sur l'iPad

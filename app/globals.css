@@ -1,2 +1,19 @@
-/* Fichier volontairement vide — le CSS safe-area est injecté au runtime
-   dans app/layout.tsx (ce projet n'a pas de pipeline CSS/PostCSS configuré). */
+/* Styles globaux de l'application.
+   Importé par app/layout.tsx — Next 14 (App Router) gère le CSS global
+   nativement, sans PostCSS ni Tailwind à configurer. */
+
+html,
+body {
+  margin: 0;
+}
+
+body {
+  /* viewport-fit=cover est déclaré dans layout.tsx : sans ces paddings, la barre
+     de statut de l'iPad chevauche le contenu en natif. */
+  padding-top: env(safe-area-inset-top);
+  padding-bottom: env(safe-area-inset-bottom);
+  padding-left: env(safe-area-inset-left);
+  padding-right: env(safe-area-inset-right);
+  box-sizing: border-box;
+  background: #f8fafc;
+}
