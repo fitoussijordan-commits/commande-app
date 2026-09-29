@@ -13,7 +13,7 @@ import * as sync from "@/lib/sync";
 import * as geo from "@/lib/geo";
 import { apiUrl } from "@/lib/apiBase";
 import * as loyalty from "@/lib/loyalty";
-import { PriceItem, sortPriceItems, applyPricelist } from "@/lib/pricing";
+import { PriceItem, sortPriceItems, applyPricelist, resolveBaseLists } from "@/lib/pricing";
 import { descToText } from "@/lib/text";
 import { pickClientAmong } from "@/lib/clients";
 
@@ -226,34 +226,22 @@ function fmtDate(ts: number) {
 
 // Le calcul de prix vit dans lib/pricing.ts — réutilisé par le module périmés.
 
-const PRICELIST_ITEM_FIELDS = [
-  "applied_on", "compute_price", "product_id", "product_tmpl_id", "categ_id",
-  "fixed_price", "percent_price", "price_discount", "price_surcharge", "min_quantity",
-];
-
 async function fetchPricelistItems(session: odoo.OdooSession, pricelistId: number): Promise<PriceItem[]> {
   // Pas de tri "sequence asc" : ce champ n'existe pas sur product.pricelist.item
   // dans cette instance Odoo et faisait échouer la requête (prix → catalogue).
   // Limite 0 = TOUTES les règles (avant : 500 → grille tronquée = prix faux).
   // Pas de filtre "active" non plus : ce champ n'existe pas sur product.pricelist.item
   // ici (« Invalid field ») — la requête échouait, et les prix retombaient au catalogue.
-  const domain = [["pricelist_id", "=", pricelistId]];
+  // Les règles « X % de remise sur <autre liste> » reçoivent les règles de cette
+  // liste de base (resolveBaseLists), sinon la remise partirait du prix catalogue.
+  const readList = (id: number) => sync.readPricelistItems(session, [["pricelist_id", "=", id]]) as Promise<PriceItem[]>;
   try {
-    let items: PriceItem[];
-    try {
-      items = await odoo.searchRead(session, "product.pricelist.item", domain,
-        [...PRICELIST_ITEM_FIELDS, "date_start", "date_end"], 0);
-    } catch (e) {
-      if (odoo.isNetworkError(e)) throw e;
-      // Repli si date_start/date_end n'existent pas sur cette instance.
-      items = await odoo.searchRead(session, "product.pricelist.item", domain, PRICELIST_ITEM_FIELDS, 0);
-    }
-    return sortPriceItems(items);
+    return await resolveBaseLists(sortPriceItems(await readList(pricelistId)), readList);
   } catch {
     // Hors ligne → règles préchargées par « Télécharger les données ».
     // (Avant : ce cache existait mais n'était JAMAIS lu → prix catalogue hors ligne.)
-    const cached = await sync.getCachedPricelistItems(pricelistId);
-    return sortPriceItems(cached as PriceItem[]);
+    const readCached = (id: number) => sync.getCachedPricelistItems(id) as Promise<PriceItem[]>;
+    return resolveBaseLists(sortPriceItems(await readCached(pricelistId)), readCached);
   }
 }
 

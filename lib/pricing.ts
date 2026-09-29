@@ -17,6 +17,34 @@ export interface PriceItem {
   min_quantity: number;
   date_start?: string | false; // dates de validité (absentes sur certaines instances)
   date_end?: string | false;
+  // « 17 % de remise sur Tarif 2026 » : la remise porte sur le prix d'une AUTRE
+  // liste (base = "pricelist"), pas sur le prix catalogue.
+  base?: string;               // 'list_price' | 'standard_price' | 'pricelist'
+  base_pricelist_id?: any;     // [id, nom] quand base = 'pricelist'
+  baseItems?: PriceItem[];     // règles de cette liste de base, rattachées au chargement
+}
+
+// Rattache à chaque règle « sur une autre liste » les règles de cette liste
+// (récursif, profondeur bornée contre les boucles). `loadList` lit une liste —
+// en ligne depuis Odoo, hors ligne depuis le cache.
+export async function resolveBaseLists(
+  items: PriceItem[],
+  loadList: (pricelistId: number) => Promise<PriceItem[]>,
+  depth = 0,
+  cache = new Map<number, Promise<PriceItem[]>>(),
+): Promise<PriceItem[]> {
+  if (depth > 3) return items;
+  for (const it of items) {
+    const baseId = it.base === "pricelist" && Array.isArray(it.base_pricelist_id) ? it.base_pricelist_id[0] : null;
+    if (!baseId) continue;
+    if (!cache.has(baseId)) {
+      cache.set(baseId, loadList(baseId)
+        .then(list => resolveBaseLists(sortPriceItems(list), loadList, depth + 1, cache))
+        .catch(() => []));
+    }
+    it.baseItems = await cache.get(baseId)!;
+  }
+  return items;
 }
 
 // Tri par spécificité : variante > produit > catégorie > global, puis palier de
@@ -57,14 +85,19 @@ export function applyPricelist(
 
     if (!appliesToProduct) continue;
 
+    // Prix de départ de la remise : celui de la liste de base si la règle en a une.
+    const basePrice = item.base === "pricelist" && item.baseItems
+      ? applyPricelist(lstPrice, productId, productTmplId, item.baseItems, qty)
+      : lstPrice;
+
     if (item.compute_price === "fixed")    return item.fixed_price;
     // Règle « Remise » d'Odoo : la VALEUR technique est "percentage" ("Discount"
     // n'est que son libellé). Avant, seul "discount" était testé : les listes du
     // type « Tarif 2026 17% » retombaient au prix catalogue (27,59 au lieu de 22,90).
     if (item.compute_price === "percentage" || item.compute_price === "discount") {
-      return lstPrice * (1 - item.percent_price / 100);
+      return basePrice * (1 - item.percent_price / 100);
     }
-    if (item.compute_price === "formula")  return Math.max(0, lstPrice * (1 - item.price_discount / 100) + item.price_surcharge);
+    if (item.compute_price === "formula")  return Math.max(0, basePrice * (1 - item.price_discount / 100) + item.price_surcharge);
   }
   return lstPrice; // aucune règle → prix catalogue
 }

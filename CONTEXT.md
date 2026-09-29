@@ -126,6 +126,10 @@ en masse au bouton « Télécharger les données ».)
 - **Règle « Remise » d'une liste de prix = `compute_price: "percentage"`**, pas
   `"discount"` (ce n'est que le libellé). Tester `"discount"` seul faisait retomber
   les listes « Tarif 2026 17% » au prix catalogue (voir `lib/pricing.ts`).
+- **Remise « sur une autre liste »** (« 17 % de remise sur Tarif 2026 ») :
+  `base = "pricelist"` + `base_pricelist_id`. `resolveBaseLists` rattache les règles
+  de la liste de base ; sans ça la remise partirait du prix catalogue. Le
+  préchargement garde TOUTES les listes pour que ça marche hors ligne.
 - **Import de bons (`/api/bon-commande`)** : Claude ne fait que LIRE le document ;
   produits et client sont rapprochés par l'app (EAN, référence, puis suggestions à
   confirmer). Coût ≈ 3 à 6 c par bon (Opus 5.5, effort bas).

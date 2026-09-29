@@ -78,30 +78,9 @@ export async function preloadCatalog(
   // dans toutes les versions d'Odoo (il faisait planter le préchargement).
   // Pas de filtre "active" non plus : absent de product.pricelist.item sur cette
   // instance (« Invalid field product.pricelist.item.active »).
-  const PRICELIST_FIELDS = [
-    "pricelist_id", "applied_on", "compute_price", "product_id", "product_tmpl_id",
-    "categ_id", "fixed_price", "percent_price", "price_discount", "price_surcharge",
-    "min_quantity",
-  ];
-  let pricelistItems: any[];
-  try {
-    // Avec les dates de validité (une règle expirée ne doit plus s'appliquer).
-    pricelistItems = await odoo.searchRead(
-      session, "product.pricelist.item",
-      [],
-      [...PRICELIST_FIELDS, "date_start", "date_end"],
-      0
-    );
-  } catch (e) {
-    if (odoo.isNetworkError(e)) throw e;
-    // Repli si date_start/date_end n'existent pas sur cette instance (comme "sequence").
-    pricelistItems = await odoo.searchRead(
-      session, "product.pricelist.item",
-      [],
-      PRICELIST_FIELDS,
-      0
-    );
-  }
+  // TOUTES les listes : une liste client peut s'appuyer sur une autre (« 17 % de
+  // remise sur Tarif 2026 »), qu'il faut aussi avoir hors ligne.
+  const pricelistItems = await readPricelistItems(session, [], ["pricelist_id"]);
   await db.kvSet(db.STORES.pricelist, KEY, pricelistItems);
 
   // 4. MEA (modèles d'offre) — partagés, préchargés une fois pour tous.
@@ -325,6 +304,29 @@ export async function getCachedProducts(): Promise<any[]> {
 
 export async function getCachedClients(): Promise<any[]> {
   return (await db.kvGet<any[]>(db.STORES.clients, KEY)) || [];
+}
+
+// Règles de liste de prix, avec repli si un champ optionnel manque sur
+// l'instance (un champ absent fait échouer TOUTE la requête, cf. `sequence`) :
+// dates de validité et liste de base sont testées, puis abandonnées si besoin.
+const PRICELIST_ITEM_FIELDS = [
+  "applied_on", "compute_price", "product_id", "product_tmpl_id", "categ_id",
+  "fixed_price", "percent_price", "price_discount", "price_surcharge", "min_quantity",
+];
+export async function readPricelistItems(session: odoo.OdooSession, domain: any[], extra: string[] = []): Promise<any[]> {
+  const dates = ["date_start", "date_end"], base = ["base", "base_pricelist_id"];
+  const attempts = [[...dates, ...base], base, dates, []];
+  let lastError: any;
+  for (const opt of attempts) {
+    try {
+      return await odoo.searchRead(session, "product.pricelist.item", domain,
+        [...PRICELIST_ITEM_FIELDS, ...extra, ...opt], 0);
+    } catch (e) {
+      if (odoo.isNetworkError(e)) throw e;
+      lastError = e;
+    }
+  }
+  throw lastError;
 }
 
 export async function getCachedPricelistItems(pricelistId?: number): Promise<any[]> {
