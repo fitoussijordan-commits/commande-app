@@ -30,7 +30,9 @@ const C = {
   shadow: "0 1px 3px rgba(0,0,0,0.08), 0 1px 2px rgba(0,0,0,0.05)",
 };
 
-const PRODUCT_FIELDS = ["id", "name", "display_name", "default_code", "barcode", "lst_price", "product_tmpl_id", "virtual_available"];
+// sale_ok : le rapprochement par EAN/référence trouve aussi les produits dont
+// « Peut être vendu » est décoché (absents du catalogue de l'app) → signalés.
+const PRODUCT_FIELDS = ["id", "name", "display_name", "default_code", "barcode", "lst_price", "product_tmpl_id", "virtual_available", "sale_ok"];
 // Photo iPad : 3 à 6 Mo en JPEG. Réduite à 2000 px de côté, elle reste très
 // lisible pour la lecture et passe sous la limite de taille des requêtes Vercel.
 const MAX_IMAGE_SIDE = 2000;
@@ -471,7 +473,8 @@ export default function BonCommandeScreen({ session, client, priceItems, onApply
   const retenues = lignes.filter(l => l.include && l.product && l.qty > 0);
   const nonTrouvees = lignes.filter(l => !l.product).length;
   const avecEcart = lignes.filter(l => ecartPct(l) != null).length;
-  const aVerifier = (l: Ligne) => !l.product || ecartPct(l) != null;
+  const nonVendable = (l: Ligne) => !!l.product && l.product.sale_ok === false;
+  const aVerifier = (l: Ligne) => !l.product || ecartPct(l) != null || nonVendable(l);
   const nbAVerifier = lignes.filter(aVerifier).length;
   const visibles = onlyToCheck ? lignes.filter(aVerifier) : lignes;
   const total = retenues.reduce((s, l) => s + l.qty * linePrice(l), 0);
@@ -621,7 +624,7 @@ export default function BonCommandeScreen({ session, client, priceItems, onApply
               const ecart = ecartPct(l);
               const manualInvalid = l.priceMode === "manuel" && manualValue(l) == null;
               const actif = !!l.product && l.include;
-              const stripe = !l.product ? C.orange : !l.include ? C.border : ecart != null && l.priceMode === "odoo" ? C.orange : C.green;
+              const stripe = !l.product || nonVendable(l) ? C.orange : !l.include ? C.border : ecart != null && l.priceMode === "odoo" ? C.orange : C.green;
               return (
                 <div key={l.key} style={{
                   display: "flex", background: C.white, borderRadius: 14, boxShadow: C.shadow,
@@ -656,6 +659,11 @@ export default function BonCommandeScreen({ session, client, priceItems, onApply
                         ) : (
                           <div style={{ fontSize: 14, fontWeight: 700, color: C.orange, marginTop: 2 }}>
                             {l.suggestions.length ? "Code absent — choisis le bon produit :" : "Produit non trouvé dans le catalogue"}
+                          </div>
+                        )}
+                        {nonVendable(l) && (
+                          <div style={{ fontSize: 12.5, fontWeight: 700, color: C.orange, marginTop: 2 }}>
+                            « Peut être vendu » est décoché dans Odoo pour ce produit — vérifie avant de l'ajouter.
                           </div>
                         )}
                         {!l.product && l.suggestions.length > 0 && (
