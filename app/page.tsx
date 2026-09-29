@@ -3,6 +3,7 @@ import { useState, useEffect, useCallback, useRef, Component, type ReactNode } f
 import * as odoo from "@/lib/odoo";
 import LoginScreen from "@/components/LoginScreen";
 import OrderScreen from "@/components/OrderScreen";
+import { initIncomingFiles } from "@/lib/incomingFile";
 
 const LS_SESSION = "commande_session";
 
@@ -131,6 +132,10 @@ export default function HomePage() {
     setTimeout(() => setToasts(prev => prev.filter(t => t.id !== id)), type === "error" ? 6000 : 3500);
   }, []);
   const dismissToast = useCallback((id: number) => setToasts(prev => prev.filter(t => t.id !== id)), []);
+
+  // Écoute dès le lancement les PDF / photos ouverts depuis Mail (partager → Commande),
+  // même si le commercial n'est pas encore connecté.
+  useEffect(() => { initIncomingFiles(); }, []);
 
   // Restaure la session au chargement (évite de se reconnecter à chaque ouverture)
   useEffect(() => {

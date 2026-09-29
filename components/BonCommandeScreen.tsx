@@ -267,12 +267,14 @@ function chipBtn(active: boolean): React.CSSProperties {
 
 function fmtPrice(n: number) { return new Intl.NumberFormat("fr-FR", { style: "currency", currency: "EUR" }).format(n); }
 
-export default function BonCommandeScreen({ session, client, priceItems, onApply, onToast, onSelectClient }: {
+export default function BonCommandeScreen({ session, client, priceItems, onApply, onToast, onSelectClient, initialFile }: {
   session: odoo.OdooSession;
   // null = import lancé depuis l'accueil : le client est retrouvé d'après le bon.
   client: any | null;
   // Fourni seulement quand le client peut être choisi ici (import depuis l'accueil).
   onSelectClient?: (c: any) => void;
+  // Fichier reçu depuis une autre app (Mail → partager → Commande) : analysé d'office.
+  initialFile?: File | null;
   priceItems: PriceItem[];
   onApply: (lines: ImportedLine[], note: string) => void;
   onToast: (msg: string, type?: "success" | "error" | "info") => void;
@@ -350,6 +352,11 @@ export default function BonCommandeScreen({ session, client, priceItems, onApply
       setLoading("");
     }
   };
+
+  useEffect(() => {
+    if (initialFile) void analyse(initialFile);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialFile]);
 
   const update = (key: number, patch: Partial<Ligne>) =>
     setLignes(prev => prev.map(l => l.key === key ? { ...l, ...patch } : l));

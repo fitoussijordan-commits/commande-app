@@ -8,6 +8,7 @@ import PerimeScreen from "@/components/PerimeScreen";
 import AssistantScreen from "@/components/AssistantScreen";
 import BonCommandeScreen, { ImportedLine } from "@/components/BonCommandeScreen";
 import QtyPad from "@/components/QtyPad";
+import { onIncomingFile } from "@/lib/incomingFile";
 import * as sync from "@/lib/sync";
 import * as geo from "@/lib/geo";
 import { apiUrl } from "@/lib/apiBase";
@@ -383,14 +384,22 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
   // Import d'un bon : depuis la fiche client (client connu) ou depuis l'accueil /
   // la recherche client (client retrouvé d'après le bon, puis confirmé).
   const [bonOrigin, setBonOrigin] = useState<"hub" | "home" | "client">("hub");
+  // PDF ou photo ouvert dans l'app depuis Mail (partager → Commande).
+  const [incomingFile, setIncomingFile] = useState<File | null>(null);
   const openImportBon = (origin: "hub" | "home" | "client") => {
     setBonOrigin(origin);
+    setIncomingFile(null);
     if (origin !== "hub") {
       setClient(null); setCart({}); setAppliedPromos({}); setPriceItems([]);
       setClientOrigin(origin === "home" ? "planning" : "search");
     }
     setStep("bon");
   };
+  useEffect(() => onIncomingFile(f => {
+    openImportBon("home");
+    setIncomingFile(f);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }), []);
   const selectClientForImport = useCallback((c: any) => {
     setClient(c);
     loadClientPricelist(c);
@@ -925,7 +934,8 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
       {step === "bon" && (bonOrigin !== "hub" || client) && (
         <BonCommandeScreen session={session} client={client} priceItems={priceItems}
           onApply={enterOrderModeWithLines} onToast={onToast}
-          onSelectClient={bonOrigin !== "hub" ? selectClientForImport : undefined} />
+          onSelectClient={bonOrigin !== "hub" ? selectClientForImport : undefined}
+          initialFile={incomingFile} />
       )}
 
       {step === "perime" && client && (
@@ -1633,15 +1643,14 @@ function ClientStep({ session, onSelect, onImportBon }: { session: odoo.OdooSess
             style={{ flexShrink: 0, width: 50, display: "flex", alignItems: "center", justifyContent: "center", background: locMode ? C.teal : C.white, border: `1.5px solid ${locMode ? C.teal : C.border}`, borderRadius: 14, cursor: locLoading ? "default" : "pointer", boxShadow: C.shadowMd, color: locMode ? "#fff" : C.textSec }}>
             {locLoading ? "…" : <Icon name="pin" size={20} />}
           </button>
-        </div>
-
-        {/* Bon reçu du client : le client est retrouvé d'après le document */}
-        {!q && !locMode && (
+          {/* Bon reçu du client : le client est retrouvé d'après le document */}
           <button onClick={onImportBon}
-            style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6, margin: "-4px auto 12px", minHeight: 44, padding: "0 12px", border: "none", background: "transparent", color: C.teal, fontSize: 13.5, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>
-            <Icon name="file" size={15} /> ou importer un bon de commande
+            title="Importer un bon de commande (PDF ou photo)"
+            aria-label="Importer un bon de commande"
+            style={{ flexShrink: 0, width: 50, display: "flex", alignItems: "center", justifyContent: "center", background: C.white, border: `1.5px solid ${C.border}`, borderRadius: 14, cursor: "pointer", boxShadow: C.shadowMd, color: C.textSec }}>
+            <Icon name="file" size={20} />
           </button>
-        )}
+        </div>
 
         {locMode && !locLoading && !locError && (
           <div style={{ fontSize: 12, color: C.teal, fontWeight: 600, marginBottom: 10, textAlign: "center" as const }}>
