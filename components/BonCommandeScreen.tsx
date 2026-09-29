@@ -16,6 +16,7 @@ import * as odoo from "@/lib/odoo";
 import * as sync from "@/lib/sync";
 import { apiUrl } from "@/lib/apiBase";
 import QtyPad from "@/components/QtyPad";
+import BonLoader from "@/components/BonLoader";
 import { PriceItem, applyPricelist } from "@/lib/pricing";
 import { pickClientAmong } from "@/lib/clients";
 
@@ -489,7 +490,17 @@ export default function BonCommandeScreen({ session, client, priceItems, onApply
   const padLine = padFor != null ? lignes.find(l => l.key === padFor) : null;
 
   // ── Avant analyse : grande zone de dépôt centrée ──────────────────────────
-  if (!bon || loading) {
+  if (loading) {
+    return (
+      <div style={{ flex: 1, overflowY: "auto" as const, display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}>
+        <div style={{ width: "100%", maxWidth: 560 }}>
+          <BonLoader step={loading} fileName={fileName} withClient={!!onSelectClient} />
+        </div>
+      </div>
+    );
+  }
+
+  if (!bon) {
     return (
       <div style={{ flex: 1, overflowY: "auto" as const, display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}>
         <div style={{ width: "100%", maxWidth: 560, textAlign: "center" as const }}>
@@ -501,14 +512,13 @@ export default function BonCommandeScreen({ session, client, priceItems, onApply
             display: "flex", flexDirection: "column" as const, alignItems: "center", justifyContent: "center", gap: 10,
             minHeight: 180, padding: 24, borderRadius: 20, border: `2px dashed ${C.teal}`,
             background: C.tealSoft, color: C.tealDark, fontWeight: 800, fontSize: 17,
-            cursor: loading ? "wait" : "pointer",
+            cursor: "pointer",
           }}>
             {fileInput}
             <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
               <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><path d="M14 2v6h6M12 18v-6M9 15l3-3 3 3"/>
             </svg>
-            {loading === "lecture" ? "Lecture du bon…" : loading === "catalogue" ? "Recherche des produits…" : loading === "client" ? "Recherche du client…" : "Choisir un PDF ou prendre une photo"}
-            {loading && <span style={{ fontSize: 13, fontWeight: 600, color: C.muted }}>{fileName} · 10 à 30 secondes</span>}
+            Choisir un PDF ou prendre une photo
           </label>
           {error && (
             <div style={{ marginTop: 16, padding: "12px 14px", borderRadius: 12, background: C.redSoft, color: C.red, fontSize: 14, fontWeight: 600, textAlign: "left" as const }}>
