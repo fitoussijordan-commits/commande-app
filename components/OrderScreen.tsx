@@ -365,16 +365,36 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
   // Sert au bouton retour pour revenir au bon écran.
   const [clientOrigin, setClientOrigin] = useState<"search" | "planning">("search");
 
+  // 1 seul appel pricelist par client, réutilisé plus tard par la prise de commande.
+  const loadClientPricelist = useCallback((c: any) => {
+    const plId = c.property_product_pricelist?.[0];
+    if (plId) fetchPricelistItems(session, plId).then(setPriceItems).catch(() => setPriceItems([]));
+    else setPriceItems([]);
+  }, [session]);
+
   // Sélectionne un client (depuis la recherche ou depuis un RDV du planning) et ouvre sa fiche.
   const selectClient = useCallback((c: any, origin: "search" | "planning" = "search") => {
     setClient(c);
     setClientOrigin(origin);
     setStep("hub");
-    // 1 seul appel pricelist, réutilisé plus tard par la prise de commande
-    const plId = c.property_product_pricelist?.[0];
-    if (plId) fetchPricelistItems(session, plId).then(setPriceItems).catch(() => setPriceItems([]));
-    else setPriceItems([]);
-  }, [session]);
+    loadClientPricelist(c);
+  }, [loadClientPricelist]);
+
+  // Import d'un bon : depuis la fiche client (client connu) ou depuis l'accueil /
+  // la recherche client (client retrouvé d'après le bon, puis confirmé).
+  const [bonOrigin, setBonOrigin] = useState<"hub" | "home" | "client">("hub");
+  const openImportBon = (origin: "hub" | "home" | "client") => {
+    setBonOrigin(origin);
+    if (origin !== "hub") {
+      setClient(null); setCart({}); setAppliedPromos({}); setPriceItems([]);
+      setClientOrigin(origin === "home" ? "planning" : "search");
+    }
+    setStep("bon");
+  };
+  const selectClientForImport = useCallback((c: any) => {
+    setClient(c);
+    loadClientPricelist(c);
+  }, [loadClientPricelist]);
 
   // Chargement initial : règles + migration de l'ancien format de brouillon unique + remises Odoo
   useEffect(() => {
@@ -678,7 +698,8 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
              accidentel en tournée = impossible de se reconnecter hors ligne). */}
         {step !== "client" && (
           <button onClick={() => {
-              if (step === "catalog" || step === "history" || step === "perime" || step === "assistant" || step === "bon") setStep("hub");
+              if (step === "bon") setStep(bonOrigin);
+              else if (step === "catalog" || step === "history" || step === "perime" || step === "assistant") setStep("hub");
               else if (step === "hub") setStep(clientOrigin === "planning" ? "home" : "client");
               else setStep("client");
             }}
@@ -872,10 +893,11 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
 
       {/* ── Étapes ── */}
       {step === "home" && (
-        <HomeScreen session={session} onNewOrder={() => setStep("client")} onOpenClient={(c) => selectClient(c, "planning")} onToast={onToast} />
+        <HomeScreen session={session} onNewOrder={() => setStep("client")} onOpenClient={(c) => selectClient(c, "planning")} onToast={onToast}
+          onImportBon={() => openImportBon("home")} />
       )}
 
-      {step === "client" && <ClientStep session={session} onSelect={selectClient} />}
+      {step === "client" && <ClientStep session={session} onSelect={selectClient} onImportBon={() => openImportBon("client")} />}
 
       {step === "hub" && client && (
         <ClientHub
@@ -888,7 +910,7 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
           onNote={() => setShowClientNote(true)}
           onPerime={() => setStep("perime")}
           onAssistant={() => setStep("assistant")}
-          onImportBon={() => setStep("bon")}
+          onImportBon={() => openImportBon("hub")}
         />
       )}
 
@@ -900,9 +922,10 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
         <AssistantScreen session={session} client={client} />
       )}
 
-      {step === "bon" && client && (
+      {step === "bon" && (bonOrigin !== "hub" || client) && (
         <BonCommandeScreen session={session} client={client} priceItems={priceItems}
-          onApply={enterOrderModeWithLines} onToast={onToast} />
+          onApply={enterOrderModeWithLines} onToast={onToast}
+          onSelectClient={bonOrigin !== "hub" ? selectClientForImport : undefined} />
       )}
 
       {step === "perime" && client && (
@@ -1029,8 +1052,8 @@ function sameDay(a: Date, b: Date): boolean {
   return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
 }
 
-function HomeScreen({ session, onNewOrder, onOpenClient, onToast }: {
-  session: odoo.OdooSession; onNewOrder: () => void;
+function HomeScreen({ session, onNewOrder, onOpenClient, onToast, onImportBon }: {
+  session: odoo.OdooSession; onNewOrder: () => void; onImportBon: () => void;
   onOpenClient: (client: any) => void;
   onToast: (msg: string, type?: "success" | "error" | "info") => void;
 }) {
@@ -1338,6 +1361,10 @@ function HomeScreen({ session, onNewOrder, onOpenClient, onToast }: {
             style={{ width: 32, height: 32, borderRadius: "50%", background: C.white, border: `1px solid ${C.border}`, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: C.textSec, boxShadow: C.shadow }}>
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M9 18l6-6-6-6"/></svg>
           </button>
+          <button onClick={onImportBon} title="Importer un bon de commande (PDF ou photo)"
+            style={{ display: "flex", alignItems: "center", gap: 6, height: 34, padding: "0 14px", borderRadius: 999, background: C.white, color: C.tealDark, border: `1.5px solid ${C.tealMid}`, cursor: "pointer", fontFamily: "inherit", fontSize: 13, fontWeight: 700, boxShadow: C.shadow }}>
+            <Icon name="file" size={15} /> Importer un bon
+          </button>
           <button onClick={() => setNewAdminRdv(true)} title="Nouveau rendez-vous"
             style={{ display: "flex", alignItems: "center", gap: 6, height: 34, padding: "0 14px", borderRadius: 999, background: C.teal, color: "#fff", border: "none", cursor: "pointer", fontFamily: "inherit", fontSize: 13, fontWeight: 700, boxShadow: "0 8px 18px rgba(13,148,136,0.25)" }}>
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M12 5v14M5 12h14"/></svg>
@@ -1505,7 +1532,7 @@ function Row({ icon, label }: { icon: string; label: string }) {
 // ═══════════════════════════════════════════════════════════════════════════
 // ÉTAPE 1 — Sélection client
 // ═══════════════════════════════════════════════════════════════════════════
-function ClientStep({ session, onSelect }: { session: odoo.OdooSession; onSelect: (c: any) => void }) {
+function ClientStep({ session, onSelect, onImportBon }: { session: odoo.OdooSession; onSelect: (c: any) => void; onImportBon: () => void }) {
   const [q, setQ] = useState("");
   const [results, setResults] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
@@ -1607,6 +1634,14 @@ function ClientStep({ session, onSelect }: { session: odoo.OdooSession; onSelect
             {locLoading ? "…" : <Icon name="pin" size={20} />}
           </button>
         </div>
+
+        {/* Bon reçu du client : le client est retrouvé d'après le document */}
+        {!q && !locMode && (
+          <button onClick={onImportBon}
+            style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, width: "100%", height: 48, marginBottom: 16, borderRadius: 14, border: `1.5px dashed ${C.teal}`, background: C.tealSoft, color: C.tealDark, fontSize: 14, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+            <Icon name="file" size={18} /> Importer un bon de commande (PDF ou photo)
+          </button>
+        )}
 
         {locMode && !locLoading && !locError && (
           <div style={{ fontSize: 12, color: C.teal, fontWeight: 600, marginBottom: 10, textAlign: "center" as const }}>

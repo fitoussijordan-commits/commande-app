@@ -16,6 +16,7 @@ import * as sync from "@/lib/sync";
 import { apiUrl } from "@/lib/apiBase";
 import QtyPad from "@/components/QtyPad";
 import { PriceItem, applyPricelist } from "@/lib/pricing";
+import { pickClientAmong } from "@/lib/clients";
 
 const C = {
   bg: "#f8fafc", white: "#fff", text: "#0f172a", textSec: "#334155",
@@ -37,8 +38,12 @@ interface LigneLue {
   ean: string; reference: string; designation: string;
   quantite: number; prix_unitaire_ht: number | null;
 }
+interface ClientLu {
+  nom: string; adresse: string; code_postal: string; ville: string;
+  telephone: string; email: string; siret: string; numero_client: string;
+}
 interface BonLu {
-  client: { nom: string; ville: string };
+  client: ClientLu;
   numero_commande: string; date_livraison: string; commentaire: string;
   lignes: LigneLue[];
 }
@@ -144,6 +149,95 @@ async function matchProducts(session: odoo.OdooSession, lignes: LigneLue[]): Pro
   });
 }
 
+// ── Recherche du client émetteur dans Odoo ────────────────────────────────
+// Chaque indice lu sur le bon donne des points ; les identifiants uniques
+// (code client, SIRET) valent plus que le nom, souvent abrégé ou différent de la
+// raison sociale saisie dans Odoo (« GRANDE PHARMACIE GERBAUD Mme Bonnet »).
+interface ClientCandidate { row: any; score: number; reasons: string[] }
+
+const CLIENT_MATCH_FIELDS = [...sync.CLIENT_FIELDS, "zip", "street"];
+// Mots trop courants pour distinguer un client.
+const GENERIC_WORDS = new Set(["pharmacie", "grande", "parapharmacie", "pharma", "officine", "sarl", "selarl", "sas", "sasu", "eurl",
+  "centre", "comptoir", "comptoirs", "magasin", "boutique", "madame", "monsieur", "mme"]);
+
+function nameWords(s: string): string[] {
+  return Array.from(new Set(
+    (s || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+      .split(/[^a-z0-9]+/).filter(w => w.length >= 4 && !GENERIC_WORDS.has(w)),
+  ));
+}
+
+// « 04 66 67 34 82 », « 04.66.67.34.82 », « +33 4 66 67 34 82 » : on garde les
+// 8 derniers chiffres, par paires séparées de % (joker Odoo) pour ignorer le format.
+function phonePattern(tel: string): string | null {
+  const d = (tel || "").replace(/\D/g, "");
+  if (d.length < 9) return null;
+  const last = d.slice(-8);
+  return last.match(/../g)!.join("%");
+}
+
+async function findClientCandidates(session: odoo.OdooSession, c: ClientLu): Promise<ClientCandidate[]> {
+  const found = new Map<number, ClientCandidate>();
+  const add = (rows: any[], points: number, reason: string) => {
+    for (const r of rows) {
+      const cur = found.get(r.id) || { row: r, score: 0, reasons: [] };
+      if (!cur.reasons.includes(reason)) { cur.score += points; cur.reasons.push(reason); }
+      found.set(r.id, cur);
+    }
+  };
+  // Un champ absent de cette instance (siret, mobile…) fait échouer SA requête
+  // seulement : les autres indices continuent de jouer.
+  const q = async (domain: any[], points: number, reason: string, limit = 20) => {
+    try { add(await odoo.searchRead(session, "res.partner", [["active", "=", true], ...domain], CLIENT_MATCH_FIELDS, limit), points, reason); }
+    catch (e) { if (odoo.isNetworkError(e)) throw e; }
+  };
+
+  const tasks: Promise<void>[] = [];
+  const code = (c.numero_client || "").trim();
+  if (code) tasks.push(q([["ref", "=ilike", code]], 100, "code client"));
+  const siret = digits(c.siret);
+  if (siret.length >= 9) {
+    tasks.push(q([["siret", "=like", siret.slice(0, 9) + "%"]], 100, "SIRET"));
+    tasks.push(q([["company_registry", "=like", siret.slice(0, 9) + "%"]], 100, "SIRET"));
+  }
+  const email = (c.email || "").trim();
+  if (email.includes("@")) tasks.push(q([["email", "=ilike", email]], 60, "e-mail"));
+  const tel = phonePattern(c.telephone);
+  if (tel) {
+    tasks.push(q([["phone", "ilike", tel]], 60, "téléphone"));
+    tasks.push(q([["mobile", "ilike", tel]], 60, "téléphone"));
+  }
+  const words = nameWords(c.nom);
+  const zip = digits(c.code_postal).slice(0, 5);
+  if (words.length) {
+    const nameOr: any[] = [...Array(words.length - 1).fill("|"), ...words.map(w => ["name", "ilike", w])];
+    if (zip.length === 5) tasks.push(q([["zip", "=", zip], ...nameOr], 40, "nom + code postal"));
+    else if (c.ville) tasks.push(q([["city", "ilike", c.ville], ...nameOr], 30, "nom + ville"));
+    // Nom seul : dernier recours, à confirmer à la main. Un mot suffit — le bon
+    // mêle souvent la raison sociale et le nom du titulaire (« … GERBAUD Mme Bonnet »).
+    tasks.push(q([["customer_rank", ">", 0], ...nameOr], 20, "nom"));
+  }
+  await Promise.all(tasks);
+
+  // Bonus : chaque mot du nom retrouvé dans la fiche.
+  for (const cand of Array.from(found.values())) {
+    const rw = new Set(nameWords(cand.row.name));
+    cand.score += words.filter(w => rw.has(w)).length * 5;
+  }
+  return Array.from(found.values()).sort((a, b) => b.score - a.score);
+}
+
+// Client retenu d'office seulement s'il se détache nettement : un identifiant
+// fort (≥ 60 points) et aucun autre candidat au même niveau.
+function autoPick(cands: ClientCandidate[]): ClientCandidate | null {
+  if (!cands.length || cands[0].score < 60) return null;
+  const top = cands.filter(c => c.score === cands[0].score);
+  if (top.length === 1) return top[0];
+  // Même score : société et ses adresses de livraison → pickClientAmong tranche.
+  const { row, ambiguous } = pickClientAmong(top.map(c => c.row));
+  return ambiguous ? null : top.find(c => c.row.id === row?.id) || null;
+}
+
 // Mots communs à deux noms (≥ 4 lettres) — sert seulement à AVERTIR si le bon
 // semble venir d'un autre client que celui ouvert.
 function sameClientHint(a: string, b: string): boolean {
@@ -173,15 +267,21 @@ function chipBtn(active: boolean): React.CSSProperties {
 
 function fmtPrice(n: number) { return new Intl.NumberFormat("fr-FR", { style: "currency", currency: "EUR" }).format(n); }
 
-export default function BonCommandeScreen({ session, client, priceItems, onApply, onToast }: {
+export default function BonCommandeScreen({ session, client, priceItems, onApply, onToast, onSelectClient }: {
   session: odoo.OdooSession;
-  client: any;
+  // null = import lancé depuis l'accueil : le client est retrouvé d'après le bon.
+  client: any | null;
+  // Fourni seulement quand le client peut être choisi ici (import depuis l'accueil).
+  onSelectClient?: (c: any) => void;
   priceItems: PriceItem[];
   onApply: (lines: ImportedLine[], note: string) => void;
   onToast: (msg: string, type?: "success" | "error" | "info") => void;
 }) {
   const [fileName, setFileName] = useState("");
-  const [loading, setLoading] = useState<"" | "lecture" | "catalogue">("");
+  const [loading, setLoading] = useState<"" | "lecture" | "catalogue" | "client">("");
+  const [candidates, setCandidates] = useState<ClientCandidate[]>([]);
+  const [clientReasons, setClientReasons] = useState<string[] | null>(null); // client retenu d'office : pourquoi
+  const [pickingClient, setPickingClient] = useState(false);
   const [error, setError] = useState("");
   const [bon, setBon] = useState<BonLu | null>(null);
   const [lignes, setLignes] = useState<Ligne[]>([]);
@@ -202,6 +302,7 @@ export default function BonCommandeScreen({ session, client, priceItems, onApply
   const analyse = async (file: File) => {
     setError(""); setBon(null); setLignes([]); setFileName(file.name);
     setPreview(null); setOnlyToCheck(false); setSearchFor(null);
+    setCandidates([]); setClientReasons(null); setPickingClient(false);
     setLoading("lecture");
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), 65_000);
@@ -230,6 +331,14 @@ export default function BonCommandeScreen({ session, client, priceItems, onApply
       setBon(lu);
       setLoading("catalogue");
       setLignes(await matchProducts(session, lu.lignes || []));
+      if (onSelectClient) {
+        setLoading("client");
+        const cands = await findClientCandidates(session, lu.client);
+        setCandidates(cands);
+        const best = autoPick(cands);
+        if (best) { onSelectClient(best.row); setClientReasons(best.reasons); }
+        else setPickingClient(true);
+      }
     } catch (e: any) {
       setError(e?.name === "AbortError"
         ? "Lecture trop longue. Réessaie, ou envoie une photo plus nette."
@@ -273,10 +382,11 @@ export default function BonCommandeScreen({ session, client, priceItems, onApply
   const nbAVerifier = lignes.filter(aVerifier).length;
   const visibles = onlyToCheck ? lignes.filter(aVerifier) : lignes;
   const total = retenues.reduce((s, l) => s + l.qty * linePrice(l), 0);
-  const autreClient = bon?.client?.nom ? !sameClientHint(bon.client.nom, client.name) : false;
+  const autreClient = bon?.client?.nom && client && !onSelectClient ? !sameClientHint(bon.client.nom, client.name) : false;
+  const canApply = !!client && !pickingClient && retenues.length > 0;
 
   const apply = () => {
-    if (!retenues.length) return;
+    if (!canApply) return;
     // Plusieurs lignes du bon peuvent pointer sur le même produit : on cumule.
     const merged = new Map<number, ImportedLine>();
     for (const l of retenues) {
@@ -312,7 +422,7 @@ export default function BonCommandeScreen({ session, client, priceItems, onApply
         <div style={{ width: "100%", maxWidth: 560, textAlign: "center" as const }}>
           <div style={{ fontSize: 22, fontWeight: 800, color: C.text }}>Importer un bon de commande</div>
           <div style={{ fontSize: 14, color: C.muted, marginTop: 6, marginBottom: 24, lineHeight: 1.5 }}>
-            PDF reçu par mail ou photo du bon papier. Les produits sont retrouvés par EAN ou référence ; tu vérifies avant d'ajouter au panier.
+            PDF reçu par mail ou photo du bon papier. {onSelectClient ? "Le client et les produits sont retrouvés d'après le bon" : "Les produits sont retrouvés par EAN ou référence"} ; tu vérifies avant d'ajouter au panier.
           </div>
           <label style={{
             display: "flex", flexDirection: "column" as const, alignItems: "center", justifyContent: "center", gap: 10,
@@ -324,7 +434,7 @@ export default function BonCommandeScreen({ session, client, priceItems, onApply
             <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
               <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><path d="M14 2v6h6M12 18v-6M9 15l3-3 3 3"/>
             </svg>
-            {loading === "lecture" ? "Lecture du bon…" : loading === "catalogue" ? "Recherche des produits…" : "Choisir un PDF ou prendre une photo"}
+            {loading === "lecture" ? "Lecture du bon…" : loading === "catalogue" ? "Recherche des produits…" : loading === "client" ? "Recherche du client…" : "Choisir un PDF ou prendre une photo"}
             {loading && <span style={{ fontSize: 13, fontWeight: 600, color: C.muted }}>{fileName} · 10 à 30 secondes</span>}
           </label>
           {error && (
@@ -363,6 +473,12 @@ export default function BonCommandeScreen({ session, client, priceItems, onApply
         <div style={{ padding: "10px 20px", background: C.orangeSoft, color: C.orange, fontSize: 13.5, fontWeight: 700, borderBottom: `1px solid ${C.border}` }}>
           Ce bon semble venir de « {bon.client.nom} », pas de {client.name}. Vérifie le client avant de continuer.
         </div>
+      )}
+      {onSelectClient && (
+        <ClientBar session={session} client={client} reasons={clientReasons} candidates={candidates}
+          picking={pickingClient || !client} bonClient={bon.client}
+          onChange={() => setPickingClient(true)}
+          onPick={c => { onSelectClient(c.row ?? c); setClientReasons(c.reasons ?? ["choisi à la main"]); setPickingClient(false); }} />
       )}
 
       <div style={{ flex: 1, minHeight: 0, display: "flex" }}>
@@ -509,16 +625,17 @@ export default function BonCommandeScreen({ session, client, priceItems, onApply
           <div style={{ fontSize: 12.5, color: nbAVerifier ? C.orange : C.muted, fontWeight: 600 }}>
             {retenues.length} ligne{retenues.length > 1 ? "s" : ""} retenue{retenues.length > 1 ? "s" : ""}
             {nbAVerifier > 0 && ` · ${nbAVerifier} à vérifier`}
+            {!client && " · client à choisir"}
           </div>
         </div>
-        <button onClick={apply} disabled={!retenues.length}
+        <button onClick={apply} disabled={!canApply}
           style={{
             height: 52, padding: "0 28px", borderRadius: 16, border: "none",
-            background: retenues.length ? C.teal : C.border, color: "#fff",
-            fontSize: 16, fontWeight: 800, cursor: retenues.length ? "pointer" : "default", fontFamily: "inherit",
-            boxShadow: retenues.length ? "0 8px 20px rgba(13,148,136,0.25)" : "none",
+            background: canApply ? C.teal : C.border, color: "#fff",
+            fontSize: 16, fontWeight: 800, cursor: canApply ? "pointer" : "default", fontFamily: "inherit",
+            boxShadow: canApply ? "0 8px 20px rgba(13,148,136,0.25)" : "none",
           }}>
-          Ajouter au panier
+          {client ? "Ajouter au panier" : "Choisis le client"}
         </button>
       </div>
 
@@ -538,6 +655,75 @@ export default function BonCommandeScreen({ session, client, priceItems, onApply
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+// Bandeau client de l'import depuis l'accueil : client reconnu (avec la raison),
+// ou choix parmi les candidats + recherche libre.
+function ClientBar({ session, client, reasons, candidates, picking, bonClient, onChange, onPick }: {
+  session: odoo.OdooSession; client: any | null; reasons: string[] | null;
+  candidates: ClientCandidate[]; picking: boolean; bonClient: ClientLu;
+  onChange: () => void; onPick: (c: any) => void;
+}) {
+  const [q, setQ] = useState("");
+  const [results, setResults] = useState<any[]>([]);
+  const reqId = useRef(0);
+
+  useEffect(() => {
+    if (q.trim().length < 2) { setResults([]); return; }
+    const id = ++reqId.current;
+    const timer = setTimeout(async () => {
+      let rows: any[] = [];
+      try {
+        rows = await odoo.searchRead(session, "res.partner",
+          ["|", "|", ["name", "ilike", q], ["ref", "ilike", q], ["city", "ilike", q], ["customer_rank", ">", 0], ["active", "=", true]],
+          CLIENT_MATCH_FIELDS, 12);
+      } catch {
+        try { rows = await sync.searchCachedClients(q, 12); } catch {}
+      }
+      if (id === reqId.current) setResults(rows);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [q, session]);
+
+  if (client && !picking) {
+    return (
+      <div style={{ padding: "10px 20px", background: C.greenSoft, borderBottom: `1px solid ${C.border}`, display: "flex", alignItems: "center", gap: 12 }}>
+        <div style={{ flex: 1, minWidth: 0, fontSize: 13.5, color: C.textSec }}>
+          Client : <b style={{ color: C.text }}>{client.name}</b>
+          {client.city && <span style={{ color: C.muted }}> · {client.city}</span>}
+          {client.ref && <span style={{ color: C.muted }}> · {client.ref}</span>}
+          {reasons && <span style={{ color: C.green, fontWeight: 700 }}> — reconnu par {reasons.join(", ")}</span>}
+        </div>
+        <button onClick={onChange} style={toolBtn(false)}>Changer</button>
+      </div>
+    );
+  }
+
+  const clientRow = (row: any, sub?: string, cand?: ClientCandidate) => (
+    <button key={row.id} onClick={() => onPick(cand || { row, reasons: ["choisi à la main"] })}
+      style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", minHeight: 48, padding: "8px 12px", marginTop: 6, borderRadius: 12, border: `1.5px solid ${C.border}`, background: C.white, cursor: "pointer", fontFamily: "inherit", textAlign: "left" as const }}>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontSize: 14, fontWeight: 700, color: C.text }}>{row.name}</div>
+        <div style={{ fontSize: 12, color: C.muted }}>{[row.ref, row.zip, row.city].filter(Boolean).join(" · ")}</div>
+      </div>
+      {sub && <span style={{ fontSize: 11.5, fontWeight: 700, color: C.teal, textAlign: "right" as const }}>{sub}</span>}
+    </button>
+  );
+
+  return (
+    <div style={{ padding: "12px 20px 14px", background: C.orangeSoft, borderBottom: `1px solid ${C.border}` }}>
+      <div style={{ fontSize: 14, fontWeight: 800, color: C.orange }}>
+        {candidates.length ? "Quel client ?" : "Client non retrouvé dans Odoo"}
+        <span style={{ fontWeight: 600, color: C.textSec }}> — sur le bon : {[bonClient.nom, bonClient.code_postal, bonClient.ville].filter(Boolean).join(", ") || "rien d'exploitable"}</span>
+      </div>
+      <div style={{ maxWidth: 720 }}>
+        {candidates.slice(0, 4).map(c => clientRow(c.row, c.reasons.join(", "), c))}
+        <input value={q} onChange={e => setQ(e.target.value)} placeholder="Chercher un autre client (nom, code, ville)"
+          style={{ width: "100%", boxSizing: "border-box" as const, height: 44, marginTop: 8, borderRadius: 12, border: `1.5px solid ${C.teal}`, padding: "0 12px", fontSize: 14, fontFamily: "inherit", background: C.white }} />
+        {results.map(r => clientRow(r))}
+      </div>
     </div>
   );
 }
