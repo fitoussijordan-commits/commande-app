@@ -6,6 +6,7 @@ import ClientNoteModal from "@/components/ClientNoteModal";
 import OfflineBar from "@/components/OfflineBar";
 import PerimeScreen from "@/components/PerimeScreen";
 import AssistantScreen from "@/components/AssistantScreen";
+import BonCommandeScreen, { ImportedLine } from "@/components/BonCommandeScreen";
 import * as sync from "@/lib/sync";
 import * as geo from "@/lib/geo";
 import { apiUrl } from "@/lib/apiBase";
@@ -327,7 +328,7 @@ function ProductImage({ id, networkUrl, style }: { id: number; networkUrl: strin
 
 // ═══════════════════════════════════════════════════════════════════════════
 export default function OrderScreen({ session, onBack, onToast, desktop }: Props) {
-  const [step, setStep] = useState<"home" | "client" | "hub" | "catalog" | "history" | "perime" | "assistant">("client");
+  const [step, setStep] = useState<"home" | "client" | "hub" | "catalog" | "history" | "perime" | "assistant" | "bon">("client");
   const [client, setClient] = useState<any>(null);
   const [priceItems, setPriceItems] = useState<PriceItem[]>([]); // items pricelist du client
   const [cart, setCart] = useState<Record<number, CartItem>>({});
@@ -445,6 +446,16 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
     manuallyRemovedRef.current.clear(); // nouvelle commande → réinitialise les retraits manuels
     setResumePrompt(loadDraftForClient(client.id));
     setStep("catalog");
+  };
+
+  // Depuis l'import d'un bon de commande : même point de départ qu'une nouvelle
+  // commande, mais panier pré-rempli avec les lignes vérifiées par le commercial.
+  const enterOrderModeWithLines = (lines: ImportedLine[], importNote: string) => {
+    if (!client) return;
+    enterOrderMode();
+    setResumePrompt(null); // le bon importé remplace un éventuel brouillon
+    setCart(Object.fromEntries(lines.map(l => [l.product.id, l])));
+    setNote(importNote);
   };
 
   // Sauvegarde auto du brouillon du client courant dès que le panier ou la note change —
@@ -660,7 +671,7 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
              accidentel en tournée = impossible de se reconnecter hors ligne). */}
         {step !== "client" && (
           <button onClick={() => {
-              if (step === "catalog" || step === "history" || step === "perime" || step === "assistant") setStep("hub");
+              if (step === "catalog" || step === "history" || step === "perime" || step === "assistant" || step === "bon") setStep("hub");
               else if (step === "hub") setStep(clientOrigin === "planning" ? "home" : "client");
               else setStep("client");
             }}
@@ -679,6 +690,7 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
           {step === "history" && "Historique des commandes"}
           {step === "perime" && "Retour périmés"}
           {step === "assistant" && "Assistant"}
+          {step === "bon" && "Import bon de commande"}
         </div>
 
         <div style={{ flex: 1 }} />
@@ -869,6 +881,7 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
           onNote={() => setShowClientNote(true)}
           onPerime={() => setStep("perime")}
           onAssistant={() => setStep("assistant")}
+          onImportBon={() => setStep("bon")}
         />
       )}
 
@@ -878,6 +891,11 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
 
       {step === "assistant" && (
         <AssistantScreen session={session} client={client} />
+      )}
+
+      {step === "bon" && client && (
+        <BonCommandeScreen session={session} client={client} priceItems={priceItems}
+          onApply={enterOrderModeWithLines} onToast={onToast} />
       )}
 
       {step === "perime" && client && (
@@ -1644,11 +1662,12 @@ function ClientStep({ session, onSelect }: { session: odoo.OdooSession; onSelect
 // ═══════════════════════════════════════════════════════════════════════════
 // HUB CLIENT — écran d'accueil une fois le client sélectionné
 // ═══════════════════════════════════════════════════════════════════════════
-function ClientHub({ session, client, hasDraft, onOrder, onHistory, onAppointment, onNote, onPerime, onAssistant }: {
+function ClientHub({ session, client, hasDraft, onOrder, onHistory, onAppointment, onNote, onPerime, onAssistant, onImportBon }: {
   session: odoo.OdooSession; client: any; hasDraft: boolean;
   onOrder: () => void; onHistory: () => void; onAppointment: () => void; onNote: () => void;
   onPerime: () => void;
   onAssistant: () => void;
+  onImportBon: () => void;
 }) {
   const [stats, setStats] = useState<{ ca: number; count: number; lastDate: string | null } | null>(null);
 
@@ -1696,6 +1715,7 @@ function ClientHub({ session, client, hasDraft, onOrder, onHistory, onAppointmen
   // Refonte : une seule carte accentuée (l'action principale), les autres en blanc.
   const cards = [
     { key: "order", icon: "cart", title: "Prise de commande", subtitle: hasDraft ? "Brouillon en attente" : "Nouveau devis", primary: true, badge: hasDraft, onClick: onOrder },
+    { key: "bon", icon: "file", title: "Importer un bon", subtitle: "PDF ou photo du client", primary: false, badge: false, onClick: onImportBon },
     { key: "history", icon: "clock", title: "Historique", subtitle: "Commandes passées", primary: false, badge: false, onClick: onHistory },
     { key: "rdv", icon: "calendar", title: "Prendre un RDV", subtitle: "Agenda Odoo", primary: false, badge: false, onClick: onAppointment },
     { key: "note", icon: "note", title: "Note client", subtitle: "Compte rendu, vocal ou écrit", primary: false, badge: false, onClick: onNote },
