@@ -14,6 +14,7 @@ import { useState, useEffect, useRef } from "react";
 import * as odoo from "@/lib/odoo";
 import * as sync from "@/lib/sync";
 import { apiUrl } from "@/lib/apiBase";
+import QtyPad from "@/components/QtyPad";
 import { PriceItem, applyPricelist } from "@/lib/pricing";
 
 const C = {
@@ -164,7 +165,7 @@ function fmtDay(s: string) {
 
 function chipBtn(active: boolean): React.CSSProperties {
   return {
-    height: 32, padding: "0 12px", borderRadius: 16, fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit",
+    height: 44, padding: "0 14px", borderRadius: 22, fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit",
     border: `1.5px solid ${active ? C.teal : C.border}`,
     background: active ? C.teal : C.white, color: active ? "#fff" : C.textSec,
   };
@@ -185,18 +186,30 @@ export default function BonCommandeScreen({ session, client, priceItems, onApply
   const [bon, setBon] = useState<BonLu | null>(null);
   const [lignes, setLignes] = useState<Ligne[]>([]);
   const [searchFor, setSearchFor] = useState<number | null>(null);
+  // Aperçu du document d'origine, pour vérifier les lignes sans changer d'app.
+  const [preview, setPreview] = useState<{ url: string; kind: "pdf" | "image" } | null>(null);
+  const [showPreview, setShowPreview] = useState(false);   // plein écran (portrait)
+  const [onlyToCheck, setOnlyToCheck] = useState(false);
+  const [padFor, setPadFor] = useState<number | null>(null);
+  const wide = useWide();
+
+  // Libère l'URL d'aperçu quand on change de document ou quitte l'écran.
+  useEffect(() => () => { if (preview) URL.revokeObjectURL(preview.url); }, [preview]);
 
   const clientPrice = (p: any, qty: number) =>
     applyPricelist(p.lst_price || 0, p.id, p.product_tmpl_id?.[0] || 0, priceItems, Math.max(1, qty));
 
   const analyse = async (file: File) => {
     setError(""); setBon(null); setLignes([]); setFileName(file.name);
+    setPreview(null); setOnlyToCheck(false); setSearchFor(null);
     setLoading("lecture");
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), 65_000);
     try {
       let payload: { data: string; mediaType: string };
       const kind = await sniffKind(file);
+      // Blob retypé : un PDF sans extension n'a pas de type, et l'aperçu ne s'afficherait pas.
+      if (kind) setPreview({ url: URL.createObjectURL(new Blob([file], { type: kind === "pdf" ? "application/pdf" : file.type || "image/jpeg" })), kind });
       if (kind === "pdf") {
         if (file.size > MAX_FILE_BYTES) throw new Error("PDF trop volumineux (3 Mo maximum)");
         payload = { data: await readAsBase64(file), mediaType: "application/pdf" };
@@ -256,6 +269,9 @@ export default function BonCommandeScreen({ session, client, priceItems, onApply
   const retenues = lignes.filter(l => l.include && l.product && l.qty > 0);
   const nonTrouvees = lignes.filter(l => !l.product).length;
   const avecEcart = lignes.filter(l => ecartPct(l) != null).length;
+  const aVerifier = (l: Ligne) => !l.product || ecartPct(l) != null;
+  const nbAVerifier = lignes.filter(aVerifier).length;
+  const visibles = onlyToCheck ? lignes.filter(aVerifier) : lignes;
   const total = retenues.reduce((s, l) => s + l.qty * linePrice(l), 0);
   const autreClient = bon?.client?.nom ? !sameClientHint(bon.client.nom, client.name) : false;
 
@@ -280,151 +296,292 @@ export default function BonCommandeScreen({ session, client, priceItems, onApply
     onToast(`${merged.size} produit${merged.size > 1 ? "s" : ""} ajouté${merged.size > 1 ? "s" : ""} au panier`, "success");
   };
 
-  return (
-    <div style={{ flex: 1, overflowY: "auto" as const, padding: "24px 20px" }}>
-      <div style={{ maxWidth: 760, margin: "0 auto" }}>
-        <div style={{ fontSize: 20, fontWeight: 800, color: C.text }}>Importer un bon de commande</div>
-        <div style={{ fontSize: 13, color: C.muted, marginTop: 4, marginBottom: 18 }}>
-          PDF reçu par mail ou photo du bon papier. Les produits sont retrouvés par EAN ou référence ; tu vérifies avant d'ajouter au panier.
+  const fileInput = (
+    // Pas d'attribut accept : il masquerait les PDF sans extension. Le type est
+    // vérifié sur le contenu (sniffKind). Sur iPad, le sélecteur propose quand
+    // même Photothèque, Appareil photo et Fichiers.
+    <input type="file" disabled={!!loading} style={{ display: "none" }}
+      onChange={e => { const f = e.target.files?.[0]; e.target.value = ""; if (f) void analyse(f); }} />
+  );
+  const padLine = padFor != null ? lignes.find(l => l.key === padFor) : null;
+
+  // ── Avant analyse : grande zone de dépôt centrée ──────────────────────────
+  if (!bon || loading) {
+    return (
+      <div style={{ flex: 1, overflowY: "auto" as const, display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}>
+        <div style={{ width: "100%", maxWidth: 560, textAlign: "center" as const }}>
+          <div style={{ fontSize: 22, fontWeight: 800, color: C.text }}>Importer un bon de commande</div>
+          <div style={{ fontSize: 14, color: C.muted, marginTop: 6, marginBottom: 24, lineHeight: 1.5 }}>
+            PDF reçu par mail ou photo du bon papier. Les produits sont retrouvés par EAN ou référence ; tu vérifies avant d'ajouter au panier.
+          </div>
+          <label style={{
+            display: "flex", flexDirection: "column" as const, alignItems: "center", justifyContent: "center", gap: 10,
+            minHeight: 180, padding: 24, borderRadius: 20, border: `2px dashed ${C.teal}`,
+            background: C.tealSoft, color: C.tealDark, fontWeight: 800, fontSize: 17,
+            cursor: loading ? "wait" : "pointer",
+          }}>
+            {fileInput}
+            <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><path d="M14 2v6h6M12 18v-6M9 15l3-3 3 3"/>
+            </svg>
+            {loading === "lecture" ? "Lecture du bon…" : loading === "catalogue" ? "Recherche des produits…" : "Choisir un PDF ou prendre une photo"}
+            {loading && <span style={{ fontSize: 13, fontWeight: 600, color: C.muted }}>{fileName} · 10 à 30 secondes</span>}
+          </label>
+          {error && (
+            <div style={{ marginTop: 16, padding: "12px 14px", borderRadius: 12, background: C.redSoft, color: C.red, fontSize: 14, fontWeight: 600, textAlign: "left" as const }}>
+              {error}
+            </div>
+          )}
         </div>
+      </div>
+    );
+  }
 
-        <label style={{
-          display: "flex", alignItems: "center", justifyContent: "center", gap: 10,
-          padding: "18px 20px", borderRadius: 16, border: `2px dashed ${C.teal}`,
-          background: C.tealSoft, color: C.tealDark, fontWeight: 700, fontSize: 15,
-          cursor: loading ? "wait" : "pointer", opacity: loading ? 0.6 : 1,
-        }}>
-          {/* Pas d'attribut accept : il masquerait les PDF sans extension. Le type est
-              vérifié sur le contenu (sniffKind). Sur iPad, le sélecteur propose
-              quand même Photothèque, Appareil photo et Fichiers. */}
-          <input type="file" disabled={!!loading}
-            style={{ display: "none" }}
-            onChange={e => { const f = e.target.files?.[0]; e.target.value = ""; if (f) void analyse(f); }} />
-          {loading === "lecture" ? "Lecture du bon…" : loading === "catalogue" ? "Recherche des produits…" : fileName ? "Choisir un autre document" : "Choisir un PDF ou prendre une photo"}
+  // ── Après analyse : aperçu du bon à gauche (paysage), lignes à droite ─────
+  return (
+    <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" as const }}>
+      {/* En-tête compact : document + infos du bon sur une ligne */}
+      <div style={{ padding: "12px 20px", background: C.white, borderBottom: `1px solid ${C.border}`, display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" as const }}>
+        <div style={{ flex: 1, minWidth: 240, fontSize: 13, color: C.textSec, lineHeight: 1.5 }}>
+          <span style={{ fontWeight: 800, color: C.text, fontSize: 15 }}>{bon.client.nom || "Émetteur inconnu"}</span>
+          {bon.client.ville && <span style={{ color: C.muted }}> · {bon.client.ville}</span>}
+          <div style={{ display: "flex", gap: 14, flexWrap: "wrap" as const, color: C.muted, fontSize: 12.5 }}>
+            {bon.numero_commande && <span>N° <b style={{ color: C.textSec }}>{bon.numero_commande}</b></span>}
+            {bon.date_livraison && <span>Livraison <b style={{ color: C.textSec }}>{fmtDay(bon.date_livraison)}</b></span>}
+            {bon.commentaire && <span>« {bon.commentaire} »</span>}
+          </div>
+        </div>
+        {!wide && preview && (
+          <button onClick={() => setShowPreview(true)} style={toolBtn(false)}>Voir le bon</button>
+        )}
+        <label style={{ ...toolBtn(false), display: "inline-flex", alignItems: "center" }}>
+          {fileInput}
+          Changer de document
         </label>
-        {fileName && !loading && <div style={{ fontSize: 12, color: C.muted, marginTop: 6 }}>{fileName}</div>}
+      </div>
+      {autreClient && (
+        <div style={{ padding: "10px 20px", background: C.orangeSoft, color: C.orange, fontSize: 13.5, fontWeight: 700, borderBottom: `1px solid ${C.border}` }}>
+          Ce bon semble venir de « {bon.client.nom} », pas de {client.name}. Vérifie le client avant de continuer.
+        </div>
+      )}
 
-        {error && (
-          <div style={{ marginTop: 16, padding: "12px 14px", borderRadius: 12, background: C.redSoft, color: C.red, fontSize: 13, fontWeight: 600 }}>
-            {error}
+      <div style={{ flex: 1, minHeight: 0, display: "flex" }}>
+        {wide && preview && (
+          <div style={{ width: "42%", maxWidth: 620, borderRight: `1px solid ${C.border}`, background: "#e2e8f0", display: "flex" }}>
+            <DocPreview preview={preview} />
           </div>
         )}
 
-        {bon && !loading && (
-          <>
-            <div style={{ marginTop: 20, padding: "14px 16px", borderRadius: 14, background: C.white, border: `1.5px solid ${C.border}`, boxShadow: C.shadow, fontSize: 13, color: C.textSec, lineHeight: 1.6 }}>
-              <div><b>Émetteur :</b> {bon.client.nom || "—"}{bon.client.ville ? ` (${bon.client.ville})` : ""}</div>
-              {bon.numero_commande && <div><b>N° de commande :</b> {bon.numero_commande}</div>}
-              {bon.date_livraison && <div><b>Livraison souhaitée :</b> {fmtDay(bon.date_livraison)}</div>}
-              {bon.commentaire && <div><b>Commentaire :</b> {bon.commentaire}</div>}
-              {autreClient && (
-                <div style={{ marginTop: 8, padding: "8px 10px", borderRadius: 10, background: C.orangeSoft, color: C.orange, fontWeight: 700 }}>
-                  Ce bon semble venir de « {bon.client.nom} », pas de {client.name}. Vérifie le client avant de continuer.
-                </div>
-              )}
-            </div>
+        <div style={{ flex: 1, minWidth: 0, overflowY: "auto" as const, padding: "14px 20px 20px", WebkitOverflowScrolling: "touch" as any }}>
+          {/* Barre d'état + actions groupées */}
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" as const, alignItems: "center", marginBottom: 12 }}>
+            <span style={badge(C.greenSoft, C.green)}>{lignes.length - nonTrouvees} trouvée{lignes.length - nonTrouvees > 1 ? "s" : ""}</span>
+            {nonTrouvees > 0 && <span style={badge(C.orangeSoft, C.orange)}>{nonTrouvees} à choisir</span>}
+            {avecEcart > 0 && <span style={badge(C.orangeSoft, C.orange)}>{avecEcart} écart{avecEcart > 1 ? "s" : ""} de prix</span>}
+            <span style={{ flex: 1 }} />
+            {nbAVerifier > 0 && (
+              <button onClick={() => setOnlyToCheck(v => !v)} style={toolBtn(onlyToCheck)}>
+                À vérifier ({nbAVerifier})
+              </button>
+            )}
+            {avecEcart > 0 && <button onClick={() => setAllPriceModes("bon")} style={toolBtn(false)}>Tout au prix du bon</button>}
+            {avecEcart > 0 && <button onClick={() => setAllPriceModes("odoo")} style={toolBtn(false)}>Tout au prix Odoo</button>}
+          </div>
 
-            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" as const, margin: "16px 0 10px", fontSize: 12, fontWeight: 700 }}>
-              <span style={{ padding: "4px 10px", borderRadius: 8, background: C.greenSoft, color: C.green }}>{lignes.length - nonTrouvees} trouvée{lignes.length - nonTrouvees > 1 ? "s" : ""}</span>
-              {nonTrouvees > 0 && <span style={{ padding: "4px 10px", borderRadius: 8, background: C.orangeSoft, color: C.orange }}>{nonTrouvees} à choisir</span>}
-              {avecEcart > 0 && <span style={{ padding: "4px 10px", borderRadius: 8, background: C.orangeSoft, color: C.orange }}>{avecEcart} écart{avecEcart > 1 ? "s" : ""} de prix</span>}
-              {avecEcart > 0 && (
-                <span style={{ marginLeft: "auto", display: "flex", gap: 6 }}>
-                  <button onClick={() => setAllPriceModes("bon")} style={chipBtn(false)}>Tout au prix du bon</button>
-                  <button onClick={() => setAllPriceModes("odoo")} style={chipBtn(false)}>Tout au prix Odoo</button>
-                </span>
-              )}
-            </div>
+          {lignes.length === 0 && (
+            <div style={{ padding: 24, fontSize: 14, color: C.muted, textAlign: "center" as const }}>Aucune ligne de produit trouvée sur ce document.</div>
+          )}
+          {onlyToCheck && visibles.length === 0 && (
+            <div style={{ padding: 24, fontSize: 14, color: C.green, fontWeight: 700, textAlign: "center" as const }}>Tout est vérifié.</div>
+          )}
 
-            <div style={{ display: "flex", flexDirection: "column" as const, gap: 8 }}>
-              {lignes.map(l => {
-                const prixClient = l.product ? clientPrice(l.product, l.qty) : null;
-                const ecart = ecartPct(l);
-                const manualInvalid = l.priceMode === "manuel" && manualValue(l) == null;
-                return (
-                  <div key={l.key} style={{
-                    padding: "12px 14px", borderRadius: 14, background: C.white, boxShadow: C.shadow,
-                    border: `1.5px solid ${l.product ? C.border : C.orange}`,
-                    opacity: l.product && !l.include ? 0.55 : 1,
-                  }}>
+          <div style={{ display: "flex", flexDirection: "column" as const, gap: 8 }}>
+            {visibles.map(l => {
+              const prixClient = l.product ? clientPrice(l.product, l.qty) : null;
+              const ecart = ecartPct(l);
+              const manualInvalid = l.priceMode === "manuel" && manualValue(l) == null;
+              const actif = !!l.product && l.include;
+              const stripe = !l.product ? C.orange : !l.include ? C.border : ecart != null && l.priceMode === "odoo" ? C.orange : C.green;
+              return (
+                <div key={l.key} style={{
+                  display: "flex", background: C.white, borderRadius: 14, boxShadow: C.shadow,
+                  border: `1px solid ${C.border}`, borderLeft: `5px solid ${stripe}`, overflow: "hidden",
+                }}>
+                  {/* Colonne case à cocher : toute la hauteur est tapable (≥ 44 px) */}
+                  <button onClick={() => l.product && update(l.key, { include: !l.include })} disabled={!l.product}
+                    aria-label={l.include ? "Retirer la ligne" : "Garder la ligne"}
+                    style={{ width: 52, flexShrink: 0, border: "none", background: "transparent", cursor: l.product ? "pointer" : "default", display: "flex", alignItems: "flex-start", justifyContent: "center", paddingTop: 14 }}>
+                    <span style={{
+                      width: 26, height: 26, borderRadius: 8, display: "flex", alignItems: "center", justifyContent: "center",
+                      border: `2px solid ${actif ? C.teal : C.border}`, background: actif ? C.teal : C.white, color: "#fff",
+                    }}>
+                      {actif && <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6 9 17l-5-5"/></svg>}
+                    </span>
+                  </button>
+
+                  <div style={{ flex: 1, minWidth: 0, padding: "12px 14px 12px 0", opacity: l.product && !l.include ? 0.5 : 1 }}>
                     <div style={{ display: "flex", alignItems: "flex-start", gap: 12 }}>
-                      <input type="checkbox" checked={l.include} disabled={!l.product}
-                        onChange={e => update(l.key, { include: e.target.checked })}
-                        style={{ width: 22, height: 22, marginTop: 2, accentColor: C.teal, flexShrink: 0 }} />
                       <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ fontSize: 12, color: C.muted }}>
-                          Sur le bon : {l.lue.designation}
+                        <div style={{ fontSize: 12, color: C.muted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>
+                          {l.lue.designation}
                           {(l.lue.ean || l.lue.reference) && ` · ${[l.lue.ean, l.lue.reference].filter(Boolean).join(" / ")}`}
                         </div>
                         {l.product ? (
-                          <div style={{ fontSize: 14, fontWeight: 700, color: C.text, marginTop: 2 }}>
+                          <div style={{ fontSize: 15, fontWeight: 700, color: C.text, marginTop: 2, lineHeight: 1.3 }}>
                             {l.product.name}
-                            <span style={{ fontSize: 11, fontWeight: 600, color: l.matchedBy === "manuel" ? C.orange : C.green, marginLeft: 8 }}>
+                            <span style={{ fontSize: 11, fontWeight: 700, color: l.matchedBy === "manuel" ? C.teal : C.green, marginLeft: 8, whiteSpace: "nowrap" as const }}>
                               {l.matchedBy === "ean" ? "EAN ✓" : l.matchedBy === "reference" ? "Réf ✓" : "choisi à la main"}
                             </span>
                           </div>
                         ) : (
-                          <div style={{ fontSize: 13, fontWeight: 700, color: C.orange, marginTop: 2 }}>Produit non trouvé dans le catalogue</div>
-                        )}
-                        {l.product && (
-                          <div style={{ display: "flex", flexWrap: "wrap" as const, alignItems: "center", gap: 6, marginTop: 8 }}>
-                            <button onClick={() => update(l.key, { priceMode: "odoo", manualPrice: "" })} style={chipBtn(l.priceMode === "odoo")}>
-                              Prix Odoo {fmtPrice(prixClient!)}
-                            </button>
-                            {l.lue.prix_unitaire_ht != null && (
-                              <button onClick={() => update(l.key, { priceMode: "bon", manualPrice: "" })} style={chipBtn(l.priceMode === "bon")}>
-                                Prix du bon {fmtPrice(l.lue.prix_unitaire_ht)}
-                              </button>
-                            )}
-                            <input value={l.manualPrice} inputMode="decimal" placeholder="Autre prix €"
-                              onChange={e => update(l.key, { manualPrice: e.target.value, priceMode: e.target.value.trim() ? "manuel" : "odoo" })}
-                              style={{
-                                width: 100, height: 32, borderRadius: 16, padding: "0 12px", fontSize: 12, fontWeight: 700, fontFamily: "inherit",
-                                border: `1.5px solid ${manualInvalid ? C.red : l.priceMode === "manuel" ? C.teal : C.border}`,
-                                background: l.priceMode === "manuel" ? C.tealSoft : C.white, color: C.text,
-                              }} />
-                            {ecart != null && (
-                              <span style={{ fontSize: 11, fontWeight: 700, color: C.orange }}>
-                                bon {ecart > 0 ? "+" : ""}{ecart.toFixed(0)} % vs Odoo
-                              </span>
-                            )}
-                          </div>
+                          <div style={{ fontSize: 14, fontWeight: 700, color: C.orange, marginTop: 2 }}>Produit non trouvé dans le catalogue</div>
                         )}
                         <button onClick={() => setSearchFor(searchFor === l.key ? null : l.key)}
-                          style={{ marginTop: 6, padding: 0, border: "none", background: "none", color: C.teal, fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
-                          {l.product ? "Changer de produit" : "Choisir le produit"}
+                          style={{ margin: "2px 0 0 -8px", padding: "6px 8px", border: "none", background: "transparent", color: C.teal, fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+                          {searchFor === l.key ? "Fermer la recherche" : l.product ? "Changer de produit" : "Choisir le produit"}
                         </button>
-                        {searchFor === l.key && (
-                          <ProductPicker session={session} initial={l.lue.designation}
-                            onPick={p => { update(l.key, { product: p, matchedBy: "manuel", include: l.qty > 0 }); setSearchFor(null); }} />
-                        )}
                       </div>
-                      <input type="number" inputMode="numeric" min={0} value={l.qty}
-                        onChange={e => update(l.key, { qty: Math.max(0, Math.round(Number(e.target.value) || 0)) })}
-                        style={{ width: 64, height: 40, borderRadius: 10, border: `1.5px solid ${C.border}`, textAlign: "center" as const, fontSize: 16, fontWeight: 800, fontFamily: "inherit", flexShrink: 0 }} />
+
+                      {/* Quantité : − / chiffre (pavé numérique) / + */}
+                      <div style={{ display: "flex", alignItems: "center", flexShrink: 0, border: `1.5px solid ${C.border}`, borderRadius: 12, overflow: "hidden" }}>
+                        <button onClick={() => update(l.key, { qty: Math.max(0, l.qty - 1) })} style={stepBtn(C.red)} aria-label="Moins">−</button>
+                        <button onClick={() => setPadFor(l.key)} style={{ width: 52, height: 44, border: "none", borderLeft: `1px solid ${C.border}`, borderRight: `1px solid ${C.border}`, background: C.white, fontSize: 17, fontWeight: 800, color: C.text, cursor: "pointer", fontFamily: "inherit" }}>
+                          {l.qty}
+                        </button>
+                        <button onClick={() => update(l.key, { qty: l.qty + 1, include: !!l.product })} style={stepBtn(C.teal)} aria-label="Plus">+</button>
+                      </div>
+
+                      {wide && (
+                        <div style={{ width: 96, flexShrink: 0, textAlign: "right" as const, paddingTop: 2 }}>
+                          <div style={{ fontSize: 16, fontWeight: 800, color: actif ? C.text : C.muted }}>{l.product ? fmtPrice(l.qty * linePrice(l)) : "—"}</div>
+                          {l.product && <div style={{ fontSize: 11, color: C.muted }}>{l.qty} × {fmtPrice(linePrice(l))}</div>}
+                        </div>
+                      )}
                     </div>
+
+                    {l.product && (
+                    <div style={{ display: "flex", flexWrap: "wrap" as const, alignItems: "center", gap: 6, marginTop: 4 }}>
+                        <>
+                          <button onClick={() => update(l.key, { priceMode: "odoo", manualPrice: "" })} style={chipBtn(l.priceMode === "odoo")}>
+                            Prix Odoo {fmtPrice(prixClient!)}
+                          </button>
+                          {l.lue.prix_unitaire_ht != null && (
+                            <button onClick={() => update(l.key, { priceMode: "bon", manualPrice: "" })} style={chipBtn(l.priceMode === "bon")}>
+                              Prix du bon {fmtPrice(l.lue.prix_unitaire_ht)}
+                            </button>
+                          )}
+                          <input value={l.manualPrice} inputMode="decimal" placeholder="Autre prix €"
+                            onChange={e => update(l.key, { manualPrice: e.target.value, priceMode: e.target.value.trim() ? "manuel" : "odoo" })}
+                            style={{
+                              width: 116, height: 44, borderRadius: 22, padding: "0 14px", fontSize: 13, fontWeight: 700, fontFamily: "inherit",
+                              border: `1.5px solid ${manualInvalid ? C.red : l.priceMode === "manuel" ? C.teal : C.border}`,
+                              background: l.priceMode === "manuel" ? C.tealSoft : C.white, color: C.text, boxSizing: "border-box" as const,
+                            }} />
+                          {ecart != null && (
+                            <span style={{ fontSize: 12, fontWeight: 700, color: C.orange }}>
+                              bon {ecart > 0 ? "+" : ""}{ecart.toFixed(0)} % vs Odoo
+                            </span>
+                          )}
+                        </>
+                    </div>
+                    )}
+                    {!wide && l.product && (
+                      <div style={{ fontSize: 13, fontWeight: 700, color: C.textSec, marginTop: 6 }}>
+                        Total ligne {fmtPrice(l.qty * linePrice(l))}
+                      </div>
+                    )}
+                    {searchFor === l.key && (
+                      <ProductPicker session={session} initial={l.lue.designation}
+                        onPick={p => { update(l.key, { product: p, matchedBy: "manuel", include: l.qty > 0 }); setSearchFor(null); }} />
+                    )}
                   </div>
-                );
-              })}
-            </div>
-
-            {lignes.length === 0 && (
-              <div style={{ marginTop: 12, fontSize: 13, color: C.muted }}>Aucune ligne de produit trouvée sur ce document.</div>
-            )}
-
-            <button onClick={apply} disabled={!retenues.length}
-              style={{
-                width: "100%", marginTop: 20, padding: "16px 20px", borderRadius: 16, border: "none",
-                background: retenues.length ? C.teal : C.border, color: "#fff",
-                fontSize: 15, fontWeight: 800, cursor: retenues.length ? "pointer" : "default", fontFamily: "inherit",
-              }}>
-              Ajouter {retenues.length} ligne{retenues.length > 1 ? "s" : ""} au panier · {fmtPrice(total)} HT
-            </button>
-          </>
-        )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
       </div>
+
+      {/* Pied fixe : total + validation toujours visibles */}
+      <div style={{ padding: "12px 20px", background: C.white, borderTop: `1px solid ${C.border}`, display: "flex", alignItems: "center", gap: 16, boxShadow: "0 -4px 12px rgba(0,0,0,0.04)" }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontSize: 20, fontWeight: 800, color: C.text }}>{fmtPrice(total)} <span style={{ fontSize: 12, color: C.muted, fontWeight: 700 }}>HT</span></div>
+          <div style={{ fontSize: 12.5, color: nbAVerifier ? C.orange : C.muted, fontWeight: 600 }}>
+            {retenues.length} ligne{retenues.length > 1 ? "s" : ""} retenue{retenues.length > 1 ? "s" : ""}
+            {nbAVerifier > 0 && ` · ${nbAVerifier} à vérifier`}
+          </div>
+        </div>
+        <button onClick={apply} disabled={!retenues.length}
+          style={{
+            height: 52, padding: "0 28px", borderRadius: 16, border: "none",
+            background: retenues.length ? C.teal : C.border, color: "#fff",
+            fontSize: 16, fontWeight: 800, cursor: retenues.length ? "pointer" : "default", fontFamily: "inherit",
+            boxShadow: retenues.length ? "0 8px 20px rgba(13,148,136,0.25)" : "none",
+          }}>
+          Ajouter au panier
+        </button>
+      </div>
+
+      {padLine && (
+        <QtyPad name={padLine.product?.name || padLine.lue.designation} initial={padLine.qty}
+          onSet={n => update(padLine.key, { qty: n, include: !!padLine.product && n > 0 })}
+          onClose={() => setPadFor(null)} />
+      )}
+
+      {showPreview && preview && (
+        <div style={{ position: "fixed", inset: 0, zIndex: 240, background: "rgba(15,23,42,0.85)", display: "flex", flexDirection: "column" as const, paddingTop: "env(safe-area-inset-top)", paddingBottom: "env(safe-area-inset-bottom)" }}>
+          <div style={{ display: "flex", justifyContent: "flex-end", padding: 12 }}>
+            <button onClick={() => setShowPreview(false)} style={{ ...toolBtn(false), background: C.white }}>Fermer</button>
+          </div>
+          <div style={{ flex: 1, minHeight: 0, display: "flex", margin: "0 12px 12px", borderRadius: 12, overflow: "hidden", background: C.white }}>
+            <DocPreview preview={preview} />
+          </div>
+        </div>
+      )}
     </div>
   );
+}
+
+// Aperçu du document. PDF dans un iframe (visionneuse intégrée du navigateur),
+// photo en image zoomable par pincement.
+function DocPreview({ preview }: { preview: { url: string; kind: "pdf" | "image" } }) {
+  if (preview.kind === "pdf") {
+    return <iframe src={preview.url} title="Bon de commande" style={{ flex: 1, width: "100%", border: "none", background: C.white }} />;
+  }
+  return (
+    <div style={{ flex: 1, overflow: "auto" as const, WebkitOverflowScrolling: "touch" as any }}>
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img src={preview.url} alt="Bon de commande" style={{ width: "100%", display: "block" }} />
+    </div>
+  );
+}
+
+// Paysage iPad (≥ 1000 px) : place pour l'aperçu du bon à côté des lignes.
+function useWide(): boolean {
+  const [wide, setWide] = useState(false);
+  useEffect(() => {
+    const check = () => setWide(window.innerWidth >= 1000);
+    check();
+    window.addEventListener("resize", check);
+    return () => window.removeEventListener("resize", check);
+  }, []);
+  return wide;
+}
+
+function badge(bg: string, color: string): React.CSSProperties {
+  return { padding: "6px 12px", borderRadius: 10, background: bg, color, fontSize: 12.5, fontWeight: 700 };
+}
+
+function toolBtn(active: boolean): React.CSSProperties {
+  return {
+    height: 40, padding: "0 14px", borderRadius: 12, fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit",
+    border: `1.5px solid ${active ? C.teal : C.border}`,
+    background: active ? C.tealSoft : C.white, color: active ? C.tealDark : C.textSec,
+  };
+}
+
+function stepBtn(color: string): React.CSSProperties {
+  return { width: 44, height: 44, border: "none", background: C.white, color, fontSize: 22, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", lineHeight: 1 };
 }
 
 // Recherche manuelle d'un produit, lancée à la frappe (nom, référence ou EAN),
@@ -479,15 +636,15 @@ function ProductPicker({ session, initial, onPick }: {
       <div style={{ position: "relative" as const }}>
         <input value={q} autoFocus onChange={e => setQ(e.target.value)}
           placeholder="Nom, référence ou EAN"
-          style={{ width: "100%", boxSizing: "border-box" as const, height: 38, borderRadius: 10, border: `1.5px solid ${C.teal}`, padding: "0 36px 0 12px", fontSize: 14, fontFamily: "inherit" }} />
-        {loading && <span style={{ position: "absolute" as const, right: 12, top: 10, fontSize: 12, color: C.muted }}>…</span>}
+          style={{ width: "100%", boxSizing: "border-box" as const, height: 44, borderRadius: 12, border: `1.5px solid ${C.teal}`, padding: "0 36px 0 12px", fontSize: 14, fontFamily: "inherit" }} />
+        {loading && <span style={{ position: "absolute" as const, right: 12, top: 13, fontSize: 12, color: C.muted }}>…</span>}
       </div>
       {!loading && q.trim().length >= 2 && results.length === 0 && (
         <div style={{ fontSize: 12, color: C.muted, marginTop: 6 }}>Aucun produit trouvé.</div>
       )}
       {results.map(p => (
         <button key={p.id} onClick={() => onPick(p)}
-          style={{ display: "block", width: "100%", textAlign: "left" as const, marginTop: 4, padding: "8px 10px", borderRadius: 10, border: `1px solid ${C.border}`, background: C.bg, cursor: "pointer", fontFamily: "inherit", fontSize: 13, color: C.text }}>
+          style={{ display: "block", width: "100%", textAlign: "left" as const, marginTop: 4, minHeight: 44, padding: "10px 12px", borderRadius: 10, border: `1px solid ${C.border}`, background: C.bg, cursor: "pointer", fontFamily: "inherit", fontSize: 14, color: C.text }}>
           {p.name} <span style={{ color: C.muted, fontSize: 11 }}>{[p.default_code, p.barcode].filter(Boolean).join(" · ")}</span>
         </button>
       ))}
