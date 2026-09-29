@@ -6,12 +6,12 @@
 
 export interface PriceItem {
   applied_on: string;          // '0_product_variant' | '1_product' | '2_product_category' | '3_global'
-  compute_price: string;       // 'fixed' | 'discount' | 'formula'
+  compute_price: string;       // 'fixed' | 'percentage' (libellé « Remise ») | 'formula'
   product_id: any;             // [id, name] ou false
   product_tmpl_id: any;
   categ_id: any;
   fixed_price: number;
-  percent_price: number;       // % de remise pour compute_price='discount'
+  percent_price: number;       // % de remise pour compute_price='percentage'
   price_discount: number;      // % de remise pour compute_price='formula'
   price_surcharge: number;
   min_quantity: number;
@@ -58,7 +58,12 @@ export function applyPricelist(
     if (!appliesToProduct) continue;
 
     if (item.compute_price === "fixed")    return item.fixed_price;
-    if (item.compute_price === "discount") return lstPrice * (1 - item.percent_price / 100);
+    // Règle « Remise » d'Odoo : la VALEUR technique est "percentage" ("Discount"
+    // n'est que son libellé). Avant, seul "discount" était testé : les listes du
+    // type « Tarif 2026 17% » retombaient au prix catalogue (27,59 au lieu de 22,90).
+    if (item.compute_price === "percentage" || item.compute_price === "discount") {
+      return lstPrice * (1 - item.percent_price / 100);
+    }
     if (item.compute_price === "formula")  return Math.max(0, lstPrice * (1 - item.price_discount / 100) + item.price_surcharge);
   }
   return lstPrice; // aucune règle → prix catalogue
