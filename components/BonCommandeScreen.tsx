@@ -5,8 +5,9 @@
 //    (EAN, référence, désignation, quantité, prix).
 // 2. Chaque ligne est rapprochée du catalogue Odoo par recherche EXACTE sur
 //    l'EAN (barcode) puis la référence (default_code). Aucune correspondance
-//    « approchante » n'est faite automatiquement : une ligne sans code reconnu
-//    reste à choisir à la main, pour qu'un produit ne soit jamais deviné.
+//    « approchante » n'est RETENUE automatiquement : une ligne sans code reconnu
+//    reçoit des suggestions par le nom, mais le commercial doit en toucher une —
+//    un produit n'est jamais deviné.
 // 3. Le commercial vérifie, corrige, puis les lignes retenues remplissent le
 //    panier habituel — prix client, remises et validation restent ceux de la
 //    prise de commande normale.
@@ -28,7 +29,7 @@ const C = {
   shadow: "0 1px 3px rgba(0,0,0,0.08), 0 1px 2px rgba(0,0,0,0.05)",
 };
 
-const PRODUCT_FIELDS = ["id", "name", "default_code", "barcode", "lst_price", "product_tmpl_id", "virtual_available"];
+const PRODUCT_FIELDS = ["id", "name", "display_name", "default_code", "barcode", "lst_price", "product_tmpl_id", "virtual_available"];
 // Photo iPad : 3 à 6 Mo en JPEG. Réduite à 2000 px de côté, elle reste très
 // lisible pour la lecture et passe sous la limite de taille des requêtes Vercel.
 const MAX_IMAGE_SIDE = 2000;
@@ -57,6 +58,8 @@ interface Ligne {
   // Prix retenu : grille Odoo du client, prix écrit sur le bon, ou saisi à la main.
   priceMode: "odoo" | "bon" | "manuel";
   manualPrice: string;
+  // Ligne sans code reconnu : produits proposés d'après la désignation.
+  suggestions: any[];
 }
 
 // priceLocked : le prix a été choisi par le commercial (bon ou saisie) — la prise
@@ -113,6 +116,67 @@ async function sniffKind(file: File): Promise<"pdf" | "image" | null> {
 const digits = (s: string) => (s || "").replace(/\D/g, "");
 
 // Rapprochement exact avec le catalogue : EAN d'abord (le plus sûr), puis référence.
+// ── Recherche par désignation (lignes sans code, recherche manuelle) ──────
+// Les bons écrivent « LOTION TONIFIANTE VISAGE - 30ML », Odoo « Lotion
+// tonifiante 30 ml » : majuscules, accents absents, contenance collée, mots en
+// plus. Exiger tous les mots ne trouve rien. On ramène donc large (les deux mots
+// les plus distinctifs) puis on classe côté app : part des mots retrouvés,
+// contenance identique (bonus) ou différente (malus), testeurs écartés.
+const STOP_WORDS = new Set(["dr", "hauschka", "haushka", "de", "des", "du", "la", "le", "les", "et", "au", "aux", "en", "pour", "un", "une", "avec"]);
+const SIZE_RE = /(\d+(?:[.,]\d+)?)\s*(ml|gr|g|cl|l)\b/;
+
+function norm(s: string): string {
+  return (s || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+}
+function sizeOf(s: string): string | null {
+  const m = norm(s).match(SIZE_RE);
+  return m ? `${m[1].replace(",", ".")}${m[2] === "gr" ? "g" : m[2]}` : null;
+}
+function parseDesignation(d: string): { words: string[]; size: string | null } {
+  const n = norm(d).replace(/\bdr\.?\s*h\b\.?/g, " ");
+  const words = n.replace(new RegExp(SIZE_RE.source, "g"), " ")
+    .split(/[^a-z0-9]+/).filter(w => w.length >= 3 && !STOP_WORDS.has(w) && !/^\d+$/.test(w));
+  return { words: Array.from(new Set(words)), size: sizeOf(n) };
+}
+function scoreProduct(p: any, q: { words: string[]; size: string | null }): number {
+  const hay = norm(`${p.display_name || ""} ${p.name || ""}`);
+  let score = q.words.length ? q.words.filter(w => hay.includes(w)).length / q.words.length : 0;
+  if (q.size) {
+    const ps = sizeOf(hay);
+    if (ps) score += ps === q.size ? 0.5 : -0.5;
+  }
+  if (/testeur|tester|echantillon/.test(hay) && !q.words.some(w => /test|echant/.test(w))) score -= 0.4;
+  return score;
+}
+// Accents : le bon écrit « ECLAT », Odoo « Éclat ». Dans un ilike, « _ » vaut
+// un caractère quelconque : chaque e devient _ pour accepter é, è, ê.
+const accentTolerant = (w: string) => w.replace(/e/g, "_");
+
+async function searchByDesignation(session: odoo.OdooSession, text: string, limit = 8): Promise<any[]> {
+  const q = parseDesignation(text);
+  if (!q.words.length) return [];
+  const key = [...q.words].sort((a, b) => b.length - a.length).slice(0, 2);
+  let rows: any[];
+  try {
+    const nameOr: any[] = key.length === 2
+      ? ["|", ["name", "ilike", accentTolerant(key[0])], ["name", "ilike", accentTolerant(key[1])]]
+      : [["name", "ilike", accentTolerant(key[0])]];
+    rows = await odoo.searchRead(session, "product.product", [["sale_ok", "=", true], ...nameOr], PRODUCT_FIELDS, 60);
+  } catch (e) {
+    if (!odoo.isNetworkError(e)) throw e;
+    rows = (await sync.getCachedProducts()).filter((p: any) => {
+      const hay = norm(`${p.display_name || ""} ${p.name || ""}`);
+      return key.some(w => hay.includes(w));
+    });
+  }
+  return rows
+    .map(p => ({ p, s: scoreProduct(p, q) }))
+    .filter(x => x.s > 0.3)
+    .sort((a, b) => b.s - a.s)
+    .slice(0, limit)
+    .map(x => x.p);
+}
+
 async function matchProducts(session: odoo.OdooSession, lignes: LigneLue[]): Promise<Ligne[]> {
   const eans = Array.from(new Set(lignes.map(l => digits(l.ean)).filter(e => e.length >= 8)));
   const refs = Array.from(new Set(lignes.map(l => (l.reference || "").trim()).filter(Boolean)));
@@ -135,18 +199,20 @@ async function matchProducts(session: odoo.OdooSession, lignes: LigneLue[]): Pro
     if (p.barcode) byEan.set(String(p.barcode), p);
     if (p.default_code) byRef.set(String(p.default_code), p);
   }
-  return lignes.map((lue, i) => {
+  return Promise.all(lignes.map(async (lue, i): Promise<Ligne> => {
     const pe = byEan.get(digits(lue.ean));
     const pr = byRef.get((lue.reference || "").trim());
     const product = pe || pr || null;
     const qty = Math.max(0, Math.round(lue.quantite || 0));
+    const suggestions = product ? [] : await searchByDesignation(session, lue.designation, 4).catch(() => []);
     return {
       key: i, lue, product,
       matchedBy: pe ? "ean" : pr ? "reference" : null,
       qty, include: !!product && qty > 0,
       priceMode: "odoo", manualPrice: "",
+      suggestions,
     };
-  });
+  }));
 }
 
 // ── Recherche du client émetteur dans Odoo ────────────────────────────────
@@ -551,17 +617,30 @@ export default function BonCommandeScreen({ session, client, priceItems, onApply
                         </div>
                         {l.product ? (
                           <div style={{ fontSize: 15, fontWeight: 700, color: C.text, marginTop: 2, lineHeight: 1.3 }}>
-                            {l.product.name}
+                            {l.product.display_name || l.product.name}
                             <span style={{ fontSize: 11, fontWeight: 700, color: l.matchedBy === "manuel" ? C.teal : C.green, marginLeft: 8, whiteSpace: "nowrap" as const }}>
                               {l.matchedBy === "ean" ? "EAN ✓" : l.matchedBy === "reference" ? "Réf ✓" : "choisi à la main"}
                             </span>
                           </div>
                         ) : (
-                          <div style={{ fontSize: 14, fontWeight: 700, color: C.orange, marginTop: 2 }}>Produit non trouvé dans le catalogue</div>
+                          <div style={{ fontSize: 14, fontWeight: 700, color: C.orange, marginTop: 2 }}>
+                            {l.suggestions.length ? "Code absent — choisis le bon produit :" : "Produit non trouvé dans le catalogue"}
+                          </div>
+                        )}
+                        {!l.product && l.suggestions.length > 0 && (
+                          <div style={{ display: "flex", flexWrap: "wrap" as const, gap: 6, marginTop: 6 }}>
+                            {l.suggestions.map(p => (
+                              <button key={p.id} onClick={() => update(l.key, { product: p, matchedBy: "manuel", include: l.qty > 0 })}
+                                style={{ ...chipBtn(false), borderColor: C.teal, color: C.tealDark, textAlign: "left" as const }}>
+                                {p.display_name || p.name}
+                                {p.default_code && <span style={{ color: C.muted, fontWeight: 600, marginLeft: 6 }}>{p.default_code}</span>}
+                              </button>
+                            ))}
+                          </div>
                         )}
                         <button onClick={() => setSearchFor(searchFor === l.key ? null : l.key)}
                           style={{ margin: "2px 0 0 -8px", padding: "6px 8px", border: "none", background: "transparent", color: C.teal, fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
-                          {searchFor === l.key ? "Fermer la recherche" : l.product ? "Changer de produit" : "Choisir le produit"}
+                          {searchFor === l.key ? "Fermer la recherche" : l.product ? "Changer de produit" : l.suggestions.length ? "Autre produit…" : "Choisir le produit"}
                         </button>
                       </div>
 
@@ -788,33 +867,32 @@ function ProductPicker({ session, initial, onPick }: {
   const [loading, setLoading] = useState(false);
   const reqId = useRef(0);
 
+  const boxRef = useRef<HTMLDivElement>(null);
+
+  // À l'ouverture, amène la recherche à l'écran : sur iPad elle s'ouvrait parfois
+  // hors de la zone visible et le tap semblait sans effet.
+  useEffect(() => { boxRef.current?.scrollIntoView({ block: "nearest", behavior: "smooth" }); }, []);
+
   useEffect(() => {
-    const words = q.trim().split(/\s+/).filter(w => w.length >= 2);
-    if (!words.length) { setResults([]); return; }
+    const text = q.trim();
+    if (text.length < 2) { setResults([]); return; }
     const id = ++reqId.current;
     const timer = setTimeout(async () => {
       setLoading(true);
       let rows: any[] = [];
       try {
-        // Un seul mot : il peut s'agir d'une référence ou d'un EAN.
-        const codeClause: any[] = words.length === 1
-          ? ["|", "|", ["default_code", "ilike", words[0]], ["barcode", "ilike", words[0]], ["name", "ilike", words[0]]]
-          : words.map(w => ["name", "ilike", w]);
-        try {
-          rows = await odoo.searchRead(session, "product.product", [["sale_ok", "=", true], ...codeClause], PRODUCT_FIELDS, 10, "name");
-          // Aucun résultat avec tous les mots : on relâche sur les deux premiers.
-          if (!rows.length && words.length > 2) {
+        // Un seul terme avec des chiffres : référence ou EAN.
+        if (!/\s/.test(text) && /\d/.test(text)) {
+          try {
             rows = await odoo.searchRead(session, "product.product",
-              [["sale_ok", "=", true], ...words.slice(0, 2).map(w => ["name", "ilike", w])], PRODUCT_FIELDS, 10, "name");
+              [["sale_ok", "=", true], "|", ["default_code", "ilike", text], ["barcode", "ilike", text]], PRODUCT_FIELDS, 10, "name");
+          } catch (e) {
+            if (!odoo.isNetworkError(e)) throw e;
+            rows = (await sync.getCachedProducts())
+              .filter((p: any) => `${p.default_code || ""} ${p.barcode || ""}`.includes(text)).slice(0, 10);
           }
-        } catch (e) {
-          if (!odoo.isNetworkError(e)) throw e;
-          const lw = words.map(w => w.toLowerCase());
-          rows = (await sync.getCachedProducts()).filter((p: any) => {
-            const hay = `${p.name || ""} ${p.default_code || ""} ${p.barcode || ""}`.toLowerCase();
-            return lw.every(w => hay.includes(w));
-          }).slice(0, 10);
         }
+        if (!rows.length) rows = await searchByDesignation(session, text, 10);
       } catch { rows = []; }
       // Ignore une réponse arrivée après une frappe plus récente.
       if (id !== reqId.current) return;
@@ -825,7 +903,7 @@ function ProductPicker({ session, initial, onPick }: {
   }, [q, session]);
 
   return (
-    <div style={{ marginTop: 8 }}>
+    <div ref={boxRef} style={{ marginTop: 8 }}>
       <div style={{ position: "relative" as const }}>
         <input value={q} autoFocus onChange={e => setQ(e.target.value)}
           placeholder="Nom, référence ou EAN"
@@ -838,7 +916,7 @@ function ProductPicker({ session, initial, onPick }: {
       {results.map(p => (
         <button key={p.id} onClick={() => onPick(p)}
           style={{ display: "block", width: "100%", textAlign: "left" as const, marginTop: 4, minHeight: 44, padding: "10px 12px", borderRadius: 10, border: `1px solid ${C.border}`, background: C.bg, cursor: "pointer", fontFamily: "inherit", fontSize: 14, color: C.text }}>
-          {p.name} <span style={{ color: C.muted, fontSize: 11 }}>{[p.default_code, p.barcode].filter(Boolean).join(" · ")}</span>
+          {p.display_name || p.name} <span style={{ color: C.muted, fontSize: 11 }}>{[p.default_code, p.barcode].filter(Boolean).join(" · ")}</span>
         </button>
       ))}
     </div>
