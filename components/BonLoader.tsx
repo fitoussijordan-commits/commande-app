@@ -6,11 +6,11 @@
 // vers un plafond propre à chaque étape (jamais 100 % avant la fin), puis saute
 // au palier suivant quand l'étape change vraiment.
 //
-// Le visuel est un tube dessiné en SVG. Pour mettre une vraie photo détourée,
-// déposer un PNG transparent et renseigner TUBE_IMAGE (ex. "/tube-purifiant.png").
+// Le visuel est la photo détourée de la Crème Purifiante (public/tube-purifiant.png,
+// PNG transparent) : fichier local, donc affiché aussi hors ligne sur l'iPad.
 import { useEffect, useRef, useState } from "react";
 
-const TUBE_IMAGE = "";
+const TUBE_IMAGE = "/tube-purifiant.png";
 
 const C = {
   text: "#0f172a", muted: "#94a3b8", border: "#e2e8f0",
@@ -104,10 +104,8 @@ export default function BonLoader({ step, fileName, withClient }: {
           transformOrigin: "50% 100%", marginBottom: 8,
           animation: "bonTubeJump 1.1s cubic-bezier(.45,.05,.55,.95) infinite",
         }}>
-          {TUBE_IMAGE
-            // eslint-disable-next-line @next/next/no-img-element
-            ? <img src={TUBE_IMAGE} alt="" style={{ height: 130, display: "block" }} />
-            : <TubeSvg />}
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src={TUBE_IMAGE} alt="" style={{ height: 140, display: "block" }} />
         </div>
       </div>
 
@@ -149,46 +147,5 @@ export default function BonLoader({ step, fileName, withClient }: {
         })}
       </div>
     </div>
-  );
-}
-
-// Tube de Crème Purifiante dessiné (en attendant une photo détourée) : tube
-// blanc, soudure en haut, bande orange, bouchon blanc en bas.
-function TubeSvg() {
-  return (
-    <svg width="44" height="150" viewBox="0 0 60 204" aria-hidden="true">
-      <defs>
-        <linearGradient id="bonTubeBody" x1="0" x2="1" y1="0" y2="0">
-          <stop offset="0" stopColor="#dcdcdc" />
-          <stop offset="0.12" stopColor="#f7f7f7" />
-          <stop offset="0.5" stopColor="#ffffff" />
-          <stop offset="0.88" stopColor="#f3f3f3" />
-          <stop offset="1" stopColor="#d2d2d2" />
-        </linearGradient>
-        <linearGradient id="bonTubeBand" x1="0" x2="1" y1="0" y2="0">
-          <stop offset="0" stopColor="#e8870a" />
-          <stop offset="0.5" stopColor="#f7a21b" />
-          <stop offset="1" stopColor="#e3830a" />
-        </linearGradient>
-      </defs>
-      {/* Soudure */}
-      <rect x="0.5" y="0.5" width="59" height="12" rx="1.5" fill="url(#bonTubeBody)" stroke="#d6d6d6" strokeWidth="0.8" />
-      <line x1="2" y1="9" x2="58" y2="9" stroke="#e2e2e2" strokeWidth="0.8" />
-      {/* Corps, légèrement resserré vers le bouchon */}
-      <path d="M1 12 H59 L56 176 H4 Z" fill="url(#bonTubeBody)" stroke="#d9d9d9" strokeWidth="0.8" />
-      {/* Marque et logo */}
-      <text x="30" y="30" textAnchor="middle" fontFamily="Georgia, serif" fontSize="6" fill="#3a3a3a">Dr. Hauschka</text>
-      <circle cx="30" cy="38" r="2.6" fill="none" stroke="#3a3a3a" strokeWidth="0.9" />
-      <circle cx="30" cy="38" r="0.9" fill="#3a3a3a" />
-      {/* Nom du produit */}
-      <text x="48" y="128" textAnchor="end" fontFamily="Helvetica, Arial, sans-serif" fontSize="4.6" fill="#3a3a3a">Crème</text>
-      <text x="48" y="134" textAnchor="end" fontFamily="Helvetica, Arial, sans-serif" fontSize="4.6" fill="#3a3a3a">Purifiante</text>
-      <text x="48" y="140" textAnchor="end" fontFamily="Helvetica, Arial, sans-serif" fontSize="4.6" fill="#3a3a3a">pour le Visage</text>
-      {/* Bande orange */}
-      <path d="M2.3 152 H57.7 L57.2 162 H2.8 Z" fill="url(#bonTubeBand)" />
-      {/* Bouchon */}
-      <rect x="6" y="176" width="48" height="27" rx="3" fill="url(#bonTubeBody)" stroke="#d6d6d6" strokeWidth="0.8" />
-      <line x1="6.5" y1="179" x2="53.5" y2="179" stroke="#e4e4e4" strokeWidth="0.8" />
-    </svg>
   );
 }
