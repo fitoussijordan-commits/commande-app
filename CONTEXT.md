@@ -121,6 +121,14 @@ en masse au bouton « Télécharger les données ».)
 
 ## Pièges connus (déjà rencontrés — ne pas refaire)
 
+- **Pas de champ `active` non plus** sur `product.pricelist.item` (« Invalid field ») :
+  ne jamais filtrer dessus, la requête des prix client échoue en entier.
+- **Règle « Remise » d'une liste de prix = `compute_price: "percentage"`**, pas
+  `"discount"` (ce n'est que le libellé). Tester `"discount"` seul faisait retomber
+  les listes « Tarif 2026 17% » au prix catalogue (voir `lib/pricing.ts`).
+- **Import de bons (`/api/bon-commande`)** : Claude ne fait que LIRE le document ;
+  produits et client sont rapprochés par l'app (EAN, référence, puis suggestions à
+  confirmer). Coût ≈ 3 à 6 c par bon (Opus 5.5, effort bas).
 - **`sequence` n'existe PAS** sur `product.pricelist.item` dans cet Odoo. Ne jamais
   trier une requête pricelist par `sequence` → ça fait planter toute la requête.
 - **Proxy sur Vercel** : `.env.local` doit contenir
