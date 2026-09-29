@@ -6,11 +6,18 @@
 // vers un plafond propre à chaque étape (jamais 100 % avant la fin), puis saute
 // au palier suivant quand l'étape change vraiment.
 //
-// Le visuel est la photo détourée de la Crème Purifiante (public/tube-purifiant.png,
-// PNG transparent) : fichier local, donc affiché aussi hors ligne sur l'iPad.
+// Les visuels sont des photos détourées de produits (PNG transparents dans
+// public/) : fichiers locaux, donc affichés aussi hors ligne sur l'iPad. Ils
+// sautent à tour de rôle ; ceux des côtés penchent vers le centre en l'air.
 import { useEffect, useRef, useState } from "react";
 
-const TUBE_IMAGE = "/tube-purifiant.png";
+// Hauteurs à l'écran proches des proportions réelles (le tube est plus grand).
+const PRODUCTS = [
+  { src: "/serum-hydratant.png", height: 118 },
+  { src: "/tube-purifiant.png", height: 150 },
+  { src: "/lotion-tonifiante.png", height: 128 },
+];
+const JUMP_S = 1.1;
 
 const C = {
   text: "#0f172a", muted: "#94a3b8", border: "#e2e8f0",
@@ -76,8 +83,8 @@ export default function BonLoader({ step, fileName, withClient }: {
         @keyframes bonTubeJump {
           0%   { transform: translateY(0) scale(1.12, 0.86); }
           12%  { transform: translateY(0) scale(0.94, 1.08); }
-          45%  { transform: translateY(-62px) scale(1, 1) rotate(-6deg); }
-          55%  { transform: translateY(-66px) scale(1, 1) rotate(4deg); }
+          45%  { transform: translateY(-62px) scale(1, 1) rotate(var(--tilt-a)); }
+          55%  { transform: translateY(-66px) scale(1, 1) rotate(var(--tilt-b)); }
           88%  { transform: translateY(0) scale(0.96, 1.05); }
           100% { transform: translateY(0) scale(1.12, 0.86); }
         }
@@ -94,19 +101,31 @@ export default function BonLoader({ step, fileName, withClient }: {
         }
       `}</style>
 
-      {/* Tube + ombre */}
-      <div style={{ position: "relative" as const, height: 170, width: 120, display: "flex", alignItems: "flex-end", justifyContent: "center" }}>
-        <div className="bon-shadow" style={{
-          position: "absolute" as const, bottom: 2, width: 70, height: 12, borderRadius: "50%",
-          background: "#0f172a", animation: "bonTubeShadow 1.1s ease-in-out infinite",
-        }} />
-        <div className="bon-tube" style={{
-          transformOrigin: "50% 100%", marginBottom: 8,
-          animation: "bonTubeJump 1.1s cubic-bezier(.45,.05,.55,.95) infinite",
-        }}>
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={TUBE_IMAGE} alt="" style={{ height: 140, display: "block" }} />
-        </div>
+      {/* Produits + ombres, décalés dans le temps pour sauter à tour de rôle */}
+      <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "center", gap: 18 }}>
+        {PRODUCTS.map(({ src, height }, i) => {
+          const n = PRODUCTS.length;
+          const delay = `-${(i * JUMP_S) / n}s`;
+          // Seul au centre : se dandine. Sur un côté : penche vers le centre.
+          const side = n === 1 ? 0 : (i - (n - 1) / 2);
+          const [a, b] = side === 0 ? ["-6deg", "4deg"] : side < 0 ? ["9deg", "3deg"] : ["-9deg", "-3deg"];
+          return (
+            <div key={src} style={{ position: "relative" as const, height: 170, width: 90, display: "flex", alignItems: "flex-end", justifyContent: "center" }}>
+              <div className="bon-shadow" style={{
+                position: "absolute" as const, bottom: 2, width: 64, height: 12, borderRadius: "50%",
+                background: "#0f172a", animation: `bonTubeShadow ${JUMP_S}s ease-in-out infinite`, animationDelay: delay,
+              }} />
+              <div className="bon-tube" style={{
+                transformOrigin: "50% 100%", marginBottom: 8,
+                animation: `bonTubeJump ${JUMP_S}s cubic-bezier(.45,.05,.55,.95) infinite`, animationDelay: delay,
+                ["--tilt-a" as any]: a, ["--tilt-b" as any]: b,
+              }}>
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={src} alt="" style={{ height, maxWidth: 110, objectFit: "contain" as const, display: "block" }} />
+              </div>
+            </div>
+          );
+        })}
       </div>
 
       <div style={{ fontSize: 18, fontWeight: 800, color: C.text, marginTop: 14 }}>{LABELS[step]}…</div>
