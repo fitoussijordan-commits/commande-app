@@ -1638,8 +1638,8 @@ function ClientStep({ session, onSelect, onImportBon }: { session: odoo.OdooSess
         {/* Bon reçu du client : le client est retrouvé d'après le document */}
         {!q && !locMode && (
           <button onClick={onImportBon}
-            style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, width: "100%", height: 48, marginBottom: 16, borderRadius: 14, border: `1.5px dashed ${C.teal}`, background: C.tealSoft, color: C.tealDark, fontSize: 14, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
-            <Icon name="file" size={18} /> Importer un bon de commande (PDF ou photo)
+            style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6, margin: "-4px auto 12px", minHeight: 44, padding: "0 12px", border: "none", background: "transparent", color: C.teal, fontSize: 13.5, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>
+            <Icon name="file" size={15} /> ou importer un bon de commande
           </button>
         )}
 
