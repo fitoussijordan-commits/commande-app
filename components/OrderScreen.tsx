@@ -384,7 +384,8 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
   // Import d'un bon : depuis la fiche client (client connu) ou depuis l'accueil /
   // la recherche client (client retrouvé d'après le bon, puis confirmé).
   const [bonOrigin, setBonOrigin] = useState<"hub" | "home" | "client">("hub");
-  // PDF ou photo ouvert dans l'app depuis Mail (partager → Commande).
+  // Fichier à analyser : choisi via un bouton « Importer », ou ouvert dans l'app
+  // depuis Mail (partager → Commande).
   const [incomingFile, setIncomingFile] = useState<File | null>(null);
   const openImportBon = (origin: "hub" | "home" | "client") => {
     setBonOrigin(origin);
@@ -394,6 +395,18 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
       setClientOrigin(origin === "home" ? "planning" : "search");
     }
     setStep("bon");
+  };
+  // Les boutons « Importer » ouvrent directement le sélecteur de fichier : l'écran
+  // d'import n'apparaît qu'une fois le fichier choisi, analyse déjà lancée.
+  const bonFileInput = useRef<HTMLInputElement>(null);
+  const bonPickOrigin = useRef<"hub" | "home" | "client">("hub");
+  const pickBonFile = (origin: "hub" | "home" | "client") => {
+    bonPickOrigin.current = origin;
+    bonFileInput.current?.click();
+  };
+  const onBonFilePicked = (f: File) => {
+    openImportBon(bonPickOrigin.current);
+    setIncomingFile(f);
   };
   useEffect(() => onIncomingFile(f => {
     openImportBon("home");
@@ -701,6 +714,11 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
   return (
     <div style={{ position: "fixed", inset: 0, left: desktop ? 248 : 0, zIndex: 150, background: C.bg, display: "flex", flexDirection: "column" as const, fontFamily: "'DM Sans', sans-serif", overflow: "hidden", paddingTop: "env(safe-area-inset-top)", paddingBottom: "env(safe-area-inset-bottom)" }}>
 
+      {/* Sélecteur de fichier des boutons « Importer un bon » — sans accept : un PDF
+           sans extension serait masqué ; le type est vérifié sur le contenu. */}
+      <input ref={bonFileInput} type="file" style={{ display: "none" }}
+        onChange={e => { const f = e.target.files?.[0]; e.target.value = ""; if (f) onBonFilePicked(f); }} />
+
       {/* ── Top bar ── */}
       <div style={{ height: 56, background: "#fff", borderBottom: `1px solid ${C.border}`, display: "flex", alignItems: "center", padding: "0 20px", gap: 16, flexShrink: 0, boxShadow: C.shadow }}>
         {/* Flèche retour — jamais sur l'écran racine (avant, elle déconnectait : un tap
@@ -903,10 +921,10 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
       {/* ── Étapes ── */}
       {step === "home" && (
         <HomeScreen session={session} onNewOrder={() => setStep("client")} onOpenClient={(c) => selectClient(c, "planning")} onToast={onToast}
-          onImportBon={() => openImportBon("home")} />
+          onImportBon={() => pickBonFile("home")} />
       )}
 
-      {step === "client" && <ClientStep session={session} onSelect={selectClient} onImportBon={() => openImportBon("client")} />}
+      {step === "client" && <ClientStep session={session} onSelect={selectClient} onImportBon={() => pickBonFile("client")} />}
 
       {step === "hub" && client && (
         <ClientHub
@@ -919,7 +937,7 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
           onNote={() => setShowClientNote(true)}
           onPerime={() => setStep("perime")}
           onAssistant={() => setStep("assistant")}
-          onImportBon={() => openImportBon("hub")}
+          onImportBon={() => pickBonFile("hub")}
         />
       )}
 
