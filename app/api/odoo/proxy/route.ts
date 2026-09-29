@@ -39,13 +39,13 @@ export async function POST(req: NextRequest) {
     const { odooUrl, endpoint, params, sessionId } = body;
 
     // ── Ping de connectivité (utilisé par lib/network.ts) ──
-    // Répond immédiatement sans contacter Odoo : sert uniquement à prouver
-    // que le réseau/serveur est joignable côté client.
-    if (body.ping === true) {
+    // Sans odooUrl (anciens builds iPad) : prouve seulement que le réseau et
+    // Vercel répondent. Avec odooUrl : testé plus bas, après les contrôles SSRF.
+    if (body.ping === true && !odooUrl) {
       return J({ pong: true });
     }
 
-    if (!odooUrl || !endpoint) {
+    if (!odooUrl || (!endpoint && body.ping !== true)) {
       return J({ error: "odooUrl et endpoint requis" }, { status: 400 });
     }
 
@@ -72,6 +72,36 @@ export async function POST(req: NextRequest) {
     if (BLOCKED_PATTERNS.some(p => p.test(odooUrl))) {
       console.warn(`[proxy] SSRF bloqué — IP réservée: ${odooUrl}`);
       return J({ error: "URL non autorisée" }, { status: 403 });
+    }
+
+    // Ping avec odooUrl : la BASE Odoo répond-elle ? Avant, la pastille disait
+    // « En ligne » dès qu'Internet marchait, même base Odoo hors service.
+    // get_session_info avec la session interroge la base du commercial ;
+    // version_info (sans session) ne teste que le serveur. Toujours HTTP 200 :
+    // le client distingue « Internet OK, Odoo KO » de « pas de réseau ».
+    if (body.ping === true) {
+      const base = odooUrl.replace(/\/$/, "");
+      const pingEndpoint = sessionId ? "/web/session/get_session_info" : "/web/webclient/version_info";
+      try {
+        const r = await fetchT(`${base}${pingEndpoint}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", ...(sessionId ? { Cookie: `session_id=${sessionId}` } : {}) },
+          body: JSON.stringify({ jsonrpc: "2.0", method: "call", id: Date.now(), params: {} }),
+        }, 6_000);
+        const d = await r.json().catch(() => null);
+        // Session expirée : la base a répondu, elle est donc bien en service.
+        const errText = JSON.stringify(d?.error || "");
+        if (d?.error && /SessionExpired|session.expired/i.test(errText)) {
+          return J({ pong: true, odoo: true, sessionExpired: true });
+        }
+        if (!r.ok || !d || d.error) {
+          const why = d?.error?.data?.message || d?.error?.message || `HTTP ${r.status}`;
+          return J({ pong: true, odoo: false, odooError: String(why).slice(0, 200) });
+        }
+        return J({ pong: true, odoo: true });
+      } catch (e: any) {
+        return J({ pong: true, odoo: false, odooError: e?.name === "AbortError" ? "délai dépassé" : (e?.message || "injoignable") });
+      }
     }
 
     if (!isEndpointAllowed(endpoint)) {

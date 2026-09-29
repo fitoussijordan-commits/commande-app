@@ -41,7 +41,9 @@ export default function OfflineBar({
   session: odoo.OdooSession;
   onToast?: (msg: string, type?: "success" | "error" | "info") => void;
 }) {
-  const { online, checking, recheck } = useNetwork();
+  const { online, checking, recheck, odooUp, odooError } = useNetwork(30000, { odooUrl: session.config.url, sessionId: session.sessionId });
+  // Internet OK mais base Odoo hors service (serveur arrêté, base test HS…).
+  const odooDown = online && odooUp === false;
   const [queue, setQueue] = useState<QueuedOrder[]>([]);
   const [lastSync, setLastSync] = useState<number | undefined>(undefined);
   const [preloading, setPreloading] = useState(false);
@@ -69,11 +71,11 @@ export default function OfflineBar({
 
   // Synchro automatique dès qu'on repasse en ligne s'il y a des commandes en attente.
   useEffect(() => {
-    if (online && pending > 0 && !syncing) {
+    if (online && !odooDown && pending > 0 && !syncing) {
       void doSync();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [online]);
+  }, [online, odooDown]);
 
   const doPreload = async () => {
     if (!online) { onToast?.("Connexion requise pour préparer le hors-ligne", "error"); return; }
@@ -131,6 +133,8 @@ export default function OfflineBar({
     ? { bg: "#f0fdfa", border: "#99f6e4", color: "#0f766e", dot: "#0d9488", label: progress && progress.total > 10 ? `Images ${pct}%` : (progress?.step || "Préparation…") }
     : !online
       ? { bg: "#fef2f2", border: "#fecaca", color: "#991b1b", dot: "#dc2626", label: "Hors ligne" }
+      : odooDown
+        ? { bg: "#fff7ed", border: "#fed7aa", color: "#9a3412", dot: "#ea580c", label: "Odoo injoignable" }
       : syncing
         ? { bg: "#eff6ff", border: "#bfdbfe", color: "#1d4ed8", dot: "#2563eb", label: "Synchro…" }
         : checking
@@ -176,9 +180,14 @@ export default function OfflineBar({
             <div style={{ padding: "14px 18px", borderBottom: "1px solid #e2e8f0", display: "flex", alignItems: "center", gap: 10 }}>
               <span style={{ width: 9, height: 9, borderRadius: "50%", background: pill.dot, flexShrink: 0 }} />
               <div style={{ fontSize: 14, fontWeight: 800, color: "#0f172a", flex: 1 }}>
-                {checking ? "Vérification…" : online ? "En ligne" : "Hors ligne"}
+                {checking ? "Vérification…" : !online ? "Hors ligne" : odooDown ? "Odoo injoignable" : "En ligne"}
+                {odooDown && (
+                  <div style={{ fontSize: 11.5, fontWeight: 600, color: "#9a3412", marginTop: 2 }}>
+                    Internet fonctionne, mais la base {session.config.db} ne répond pas{odooError ? ` (${odooError})` : ""}. Les commandes restent en file et partiront à son retour.
+                  </div>
+                )}
               </div>
-              {!online && (
+              {(!online || odooDown) && (
                 <button onClick={recheck} style={btnStyle(false, "#4b5563")}>Revérifier</button>
               )}
               <button onClick={() => setShowPanel(false)}

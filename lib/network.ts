@@ -7,25 +7,28 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import { apiUrl } from "@/lib/apiBase";
 
-// Ping léger : on interroge le proxy avec un endpoint volontairement anodin.
-// Le proxy répond quel que soit le résultat Odoo ; ce qui nous intéresse est
-// uniquement de savoir si la requête HTTP aboutit (réseau up) ou non.
-export async function probeConnection(timeoutMs = 4000): Promise<boolean> {
-  if (typeof fetch === "undefined") return false;
+// Ping : une réponse HTTP du proxy prouve que le réseau est là. Avec l'URL Odoo
+// (et la session), le proxy teste AUSSI la base Odoo : `odoo` vaut alors
+// true/false. Sans cible, `odoo` reste null (non testé).
+export interface Probe { net: boolean; odoo: boolean | null; odooError?: string }
+export interface OdooTarget { odooUrl: string; sessionId?: string }
+
+export async function probeOdoo(target?: OdooTarget, timeoutMs = 9000): Promise<Probe> {
+  if (typeof fetch === "undefined") return { net: false, odoo: null };
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const res = await fetch(apiUrl("/api/odoo/proxy"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ping: true }),
+      body: JSON.stringify({ ping: true, ...(target || {}) }),
       signal: controller.signal,
       cache: "no-store",
     });
-    // Toute réponse HTTP (même 4xx/5xx applicative) prouve que le réseau est là.
-    return res.status > 0;
+    const d = await res.json().catch(() => ({}));
+    return { net: res.status > 0, odoo: typeof d.odoo === "boolean" ? d.odoo : null, odooError: d.odooError };
   } catch {
-    return false;
+    return { net: false, odoo: null };
   } finally {
     clearTimeout(timer);
   }
@@ -35,18 +38,24 @@ export interface NetworkState {
   online: boolean;        // état confirmé (navigator + ping)
   checking: boolean;      // un ping est en cours
   recheck: () => void;    // force une revérification
+  odooUp: boolean | null; // la base Odoo répond (null = pas encore testé)
+  odooError?: string;     // cause quand odooUp === false
 }
 
 // Hook React : expose l'état réseau confirmé et le revérifie
 //  - au montage
 //  - sur les événements online/offline du navigateur
 //  - toutes les 30 s tant que l'app est visible
-export function useNetwork(pollMs = 30000): NetworkState {
+export function useNetwork(pollMs = 30000, target?: OdooTarget): NetworkState {
   const [online, setOnline] = useState<boolean>(
     typeof navigator !== "undefined" ? navigator.onLine : true
   );
   const [checking, setChecking] = useState(false);
+  const [odooUp, setOdooUp] = useState<boolean | null>(null);
+  const [odooError, setOdooError] = useState<string | undefined>(undefined);
   const mounted = useRef(true);
+  const targetRef = useRef(target);
+  targetRef.current = target;
 
   const run = useCallback(async () => {
     // Si le navigateur est certain d'être hors ligne, c'est fiable → hors ligne.
@@ -60,8 +69,13 @@ export function useNetwork(pollMs = 30000): NetworkState {
     // du CORS/préflight alors que le réseau est bien là).
     if (mounted.current) setOnline(true);
     setChecking(true);
-    try { await probeConnection(); } catch {}
-    if (mounted.current) setChecking(false);
+    const p = await probeOdoo(targetRef.current).catch(() => ({ net: false, odoo: null } as Probe));
+    if (mounted.current) {
+      // Le ping ne décide que de l'état ODOO : réseau KO sur ping → on ne sait
+      // pas (CORS…), on garde le dernier état connu.
+      if (p.net && p.odoo !== null) { setOdooUp(p.odoo); setOdooError(p.odoo ? undefined : p.odooError); }
+      setChecking(false);
+    }
   }, []);
 
   useEffect(() => {
@@ -85,5 +99,5 @@ export function useNetwork(pollMs = 30000): NetworkState {
     };
   }, [run, pollMs]);
 
-  return { online, checking, recheck: run };
+  return { online, checking, recheck: run, odooUp, odooError };
 }
