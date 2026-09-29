@@ -87,6 +87,23 @@ async function shrinkImage(file: File): Promise<{ data: string; mediaType: strin
   }
 }
 
+// Type réel du fichier, lu dans ses premiers octets. Un bon enregistré depuis un
+// mail ou un logiciel de pharmacie arrive souvent SANS extension (« BC Phi
+// GERBAUD ») : le navigateur ne lui donne alors aucun type, alors que c'est un PDF.
+async function sniffKind(file: File): Promise<"pdf" | "image" | null> {
+  const b = new Uint8Array(await file.slice(0, 12).arrayBuffer());
+  const ascii = String.fromCharCode(...Array.from(b));
+  if (ascii.startsWith("%PDF-")) return "pdf";
+  if (b[0] === 0xff && b[1] === 0xd8) return "image";                 // JPEG
+  if (ascii.startsWith("\x89PNG")) return "image";                    // PNG
+  if (ascii.startsWith("RIFF") && ascii.slice(8, 12) === "WEBP") return "image";
+  if (ascii.startsWith("GIF8")) return "image";
+  if (ascii.slice(4, 8) === "ftyp") return "image";                   // HEIC (photo iPhone)
+  if (file.type === "application/pdf") return "pdf";
+  if (file.type.startsWith("image/")) return "image";
+  return null;
+}
+
 const digits = (s: string) => (s || "").replace(/\D/g, "");
 
 // Rapprochement exact avec le catalogue : EAN d'abord (le plus sûr), puis référence.
@@ -179,13 +196,14 @@ export default function BonCommandeScreen({ session, client, priceItems, onApply
     const timer = setTimeout(() => ctrl.abort(), 65_000);
     try {
       let payload: { data: string; mediaType: string };
-      if (file.type === "application/pdf") {
+      const kind = await sniffKind(file);
+      if (kind === "pdf") {
         if (file.size > MAX_FILE_BYTES) throw new Error("PDF trop volumineux (3 Mo maximum)");
         payload = { data: await readAsBase64(file), mediaType: "application/pdf" };
-      } else if (file.type.startsWith("image/")) {
+      } else if (kind === "image") {
         payload = await shrinkImage(file);
       } else {
-        throw new Error("Choisis un PDF ou une photo");
+        throw new Error("Ce fichier n'est ni un PDF ni une photo");
       }
       const res = await fetch(apiUrl("/api/bon-commande"), {
         method: "POST",
@@ -276,7 +294,10 @@ export default function BonCommandeScreen({ session, client, priceItems, onApply
           background: C.tealSoft, color: C.tealDark, fontWeight: 700, fontSize: 15,
           cursor: loading ? "wait" : "pointer", opacity: loading ? 0.6 : 1,
         }}>
-          <input type="file" accept="application/pdf,image/*" disabled={!!loading}
+          {/* Pas d'attribut accept : il masquerait les PDF sans extension. Le type est
+              vérifié sur le contenu (sniffKind). Sur iPad, le sélecteur propose
+              quand même Photothèque, Appareil photo et Fichiers. */}
+          <input type="file" disabled={!!loading}
             style={{ display: "none" }}
             onChange={e => { const f = e.target.files?.[0]; e.target.value = ""; if (f) void analyse(f); }} />
           {loading === "lecture" ? "Lecture du bon…" : loading === "catalogue" ? "Recherche des produits…" : fileName ? "Choisir un autre document" : "Choisir un PDF ou prendre une photo"}
