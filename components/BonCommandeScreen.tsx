@@ -10,7 +10,7 @@
 // 3. Le commercial vérifie, corrige, puis les lignes retenues remplissent le
 //    panier habituel — prix client, remises et validation restent ceux de la
 //    prise de commande normale.
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import * as odoo from "@/lib/odoo";
 import * as sync from "@/lib/sync";
 import { apiUrl } from "@/lib/apiBase";
@@ -48,9 +48,14 @@ interface Ligne {
   matchedBy: "ean" | "reference" | "manuel" | null;
   qty: number;
   include: boolean;
+  // Prix retenu : grille Odoo du client, prix écrit sur le bon, ou saisi à la main.
+  priceMode: "odoo" | "bon" | "manuel";
+  manualPrice: string;
 }
 
-export interface ImportedLine { product: any; qty: number; unitPrice: number }
+// priceLocked : le prix a été choisi par le commercial (bon ou saisie) — la prise
+// de commande ne doit pas le recalculer depuis la grille quand la quantité change.
+export interface ImportedLine { product: any; qty: number; unitPrice: number; priceLocked?: boolean }
 
 function readAsBase64(file: Blob): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -116,6 +121,7 @@ async function matchProducts(session: odoo.OdooSession, lignes: LigneLue[]): Pro
       key: i, lue, product,
       matchedBy: pe ? "ean" : pr ? "reference" : null,
       qty, include: !!product && qty > 0,
+      priceMode: "odoo", manualPrice: "",
     };
   });
 }
@@ -137,6 +143,14 @@ function sameClientHint(a: string, b: string): boolean {
 function fmtDay(s: string) {
   const d = new Date(s);
   return isNaN(d.getTime()) ? s : d.toLocaleDateString("fr-FR");
+}
+
+function chipBtn(active: boolean): React.CSSProperties {
+  return {
+    height: 32, padding: "0 12px", borderRadius: 16, fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit",
+    border: `1.5px solid ${active ? C.teal : C.border}`,
+    background: active ? C.teal : C.white, color: active ? "#fff" : C.textSec,
+  };
 }
 
 function fmtPrice(n: number) { return new Intl.NumberFormat("fr-FR", { style: "currency", currency: "EUR" }).format(n); }
@@ -200,9 +214,31 @@ export default function BonCommandeScreen({ session, client, priceItems, onApply
   const update = (key: number, patch: Partial<Ligne>) =>
     setLignes(prev => prev.map(l => l.key === key ? { ...l, ...patch } : l));
 
+  const manualValue = (l: Ligne): number | null => {
+    const n = parseFloat(l.manualPrice.replace(",", "."));
+    return isFinite(n) && n >= 0 ? n : null;
+  };
+  const linePrice = (l: Ligne): number => {
+    if (l.priceMode === "bon" && l.lue.prix_unitaire_ht != null) return l.lue.prix_unitaire_ht;
+    if (l.priceMode === "manuel") { const m = manualValue(l); if (m != null) return m; }
+    return clientPrice(l.product, l.qty);
+  };
+  // Écart relatif entre le prix du bon et la grille Odoo (null si incomparable).
+  const ecartPct = (l: Ligne): number | null => {
+    if (!l.product || l.lue.prix_unitaire_ht == null) return null;
+    const odooPrice = clientPrice(l.product, l.qty);
+    if (odooPrice <= 0) return null;
+    const pct = (l.lue.prix_unitaire_ht - odooPrice) / odooPrice * 100;
+    return Math.abs(pct) > 2 ? pct : null;
+  };
+  const setAllPriceModes = (mode: "odoo" | "bon") =>
+    setLignes(prev => prev.map(l =>
+      mode === "bon" && l.lue.prix_unitaire_ht == null ? l : { ...l, priceMode: mode, manualPrice: "" }));
+
   const retenues = lignes.filter(l => l.include && l.product && l.qty > 0);
   const nonTrouvees = lignes.filter(l => !l.product).length;
-  const total = retenues.reduce((s, l) => s + l.qty * clientPrice(l.product, l.qty), 0);
+  const avecEcart = lignes.filter(l => ecartPct(l) != null).length;
+  const total = retenues.reduce((s, l) => s + l.qty * linePrice(l), 0);
   const autreClient = bon?.client?.nom ? !sameClientHint(bon.client.nom, client.name) : false;
 
   const apply = () => {
@@ -212,7 +248,10 @@ export default function BonCommandeScreen({ session, client, priceItems, onApply
     for (const l of retenues) {
       const prev = merged.get(l.product.id);
       const qty = (prev?.qty || 0) + l.qty;
-      merged.set(l.product.id, { product: l.product, qty, unitPrice: clientPrice(l.product, qty) });
+      const locked = l.priceMode !== "odoo" && linePrice(l) !== clientPrice(l.product, l.qty);
+      merged.set(l.product.id, locked
+        ? { product: l.product, qty, unitPrice: linePrice(l), priceLocked: true }
+        : { product: l.product, qty, unitPrice: clientPrice(l.product, qty) });
     }
     const note = [
       bon?.numero_commande && `Bon de commande client n° ${bon.numero_commande}`,
@@ -267,13 +306,20 @@ export default function BonCommandeScreen({ session, client, priceItems, onApply
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap" as const, margin: "16px 0 10px", fontSize: 12, fontWeight: 700 }}>
               <span style={{ padding: "4px 10px", borderRadius: 8, background: C.greenSoft, color: C.green }}>{lignes.length - nonTrouvees} trouvée{lignes.length - nonTrouvees > 1 ? "s" : ""}</span>
               {nonTrouvees > 0 && <span style={{ padding: "4px 10px", borderRadius: 8, background: C.orangeSoft, color: C.orange }}>{nonTrouvees} à choisir</span>}
+              {avecEcart > 0 && <span style={{ padding: "4px 10px", borderRadius: 8, background: C.orangeSoft, color: C.orange }}>{avecEcart} écart{avecEcart > 1 ? "s" : ""} de prix</span>}
+              {avecEcart > 0 && (
+                <span style={{ marginLeft: "auto", display: "flex", gap: 6 }}>
+                  <button onClick={() => setAllPriceModes("bon")} style={chipBtn(false)}>Tout au prix du bon</button>
+                  <button onClick={() => setAllPriceModes("odoo")} style={chipBtn(false)}>Tout au prix Odoo</button>
+                </span>
+              )}
             </div>
 
             <div style={{ display: "flex", flexDirection: "column" as const, gap: 8 }}>
               {lignes.map(l => {
                 const prixClient = l.product ? clientPrice(l.product, l.qty) : null;
-                const ecart = prixClient != null && l.lue.prix_unitaire_ht != null && prixClient > 0
-                  && Math.abs(l.lue.prix_unitaire_ht - prixClient) / prixClient > 0.02;
+                const ecart = ecartPct(l);
+                const manualInvalid = l.priceMode === "manuel" && manualValue(l) == null;
                 return (
                   <div key={l.key} style={{
                     padding: "12px 14px", borderRadius: 14, background: C.white, boxShadow: C.shadow,
@@ -300,10 +346,27 @@ export default function BonCommandeScreen({ session, client, priceItems, onApply
                           <div style={{ fontSize: 13, fontWeight: 700, color: C.orange, marginTop: 2 }}>Produit non trouvé dans le catalogue</div>
                         )}
                         {l.product && (
-                          <div style={{ fontSize: 12, color: ecart ? C.orange : C.textSec, marginTop: 3 }}>
-                            Prix client {fmtPrice(prixClient!)}
-                            {l.lue.prix_unitaire_ht != null && ` · sur le bon ${fmtPrice(l.lue.prix_unitaire_ht)}`}
-                            {ecart && " — écart de prix"}
+                          <div style={{ display: "flex", flexWrap: "wrap" as const, alignItems: "center", gap: 6, marginTop: 8 }}>
+                            <button onClick={() => update(l.key, { priceMode: "odoo", manualPrice: "" })} style={chipBtn(l.priceMode === "odoo")}>
+                              Prix Odoo {fmtPrice(prixClient!)}
+                            </button>
+                            {l.lue.prix_unitaire_ht != null && (
+                              <button onClick={() => update(l.key, { priceMode: "bon", manualPrice: "" })} style={chipBtn(l.priceMode === "bon")}>
+                                Prix du bon {fmtPrice(l.lue.prix_unitaire_ht)}
+                              </button>
+                            )}
+                            <input value={l.manualPrice} inputMode="decimal" placeholder="Autre prix €"
+                              onChange={e => update(l.key, { manualPrice: e.target.value, priceMode: e.target.value.trim() ? "manuel" : "odoo" })}
+                              style={{
+                                width: 100, height: 32, borderRadius: 16, padding: "0 12px", fontSize: 12, fontWeight: 700, fontFamily: "inherit",
+                                border: `1.5px solid ${manualInvalid ? C.red : l.priceMode === "manuel" ? C.teal : C.border}`,
+                                background: l.priceMode === "manuel" ? C.tealSoft : C.white, color: C.text,
+                              }} />
+                            {ecart != null && (
+                              <span style={{ fontSize: 11, fontWeight: 700, color: C.orange }}>
+                                bon {ecart > 0 ? "+" : ""}{ecart.toFixed(0)} % vs Odoo
+                              </span>
+                            )}
                           </div>
                         )}
                         <button onClick={() => setSearchFor(searchFor === l.key ? null : l.key)}
@@ -343,7 +406,8 @@ export default function BonCommandeScreen({ session, client, priceItems, onApply
   );
 }
 
-// Recherche manuelle d'un produit (nom ou référence), pour les lignes sans code reconnu.
+// Recherche manuelle d'un produit, lancée à la frappe (nom, référence ou EAN),
+// pour les lignes sans code reconnu ou pour substituer un produit.
 function ProductPicker({ session, initial, onPick }: {
   session: odoo.OdooSession; initial: string; onPick: (p: any) => void;
 }) {
@@ -351,47 +415,59 @@ function ProductPicker({ session, initial, onPick }: {
   const [q, setQ] = useState(initial.replace(/\bdr\.?\s*(h|haus\w*)\b\.?/gi, "").replace(/\s+/g, " ").trim());
   const [results, setResults] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
+  const reqId = useRef(0);
 
-  const search = async () => {
+  useEffect(() => {
     const words = q.trim().split(/\s+/).filter(w => w.length >= 2);
-    if (!words.length) return;
-    setLoading(true);
-    try {
-      // Tous les mots doivent figurer dans le nom (ordre libre).
-      const domain: any[] = [["sale_ok", "=", true], ...words.map(w => ["name", "ilike", w])];
-      let rows: any[];
+    if (!words.length) { setResults([]); return; }
+    const id = ++reqId.current;
+    const timer = setTimeout(async () => {
+      setLoading(true);
+      let rows: any[] = [];
       try {
-        rows = await odoo.searchRead(session, "product.product", domain, PRODUCT_FIELDS, 8, "name");
-        if (!rows.length && words.length > 1) {
-          rows = await odoo.searchRead(session, "product.product",
-            [["sale_ok", "=", true], ["name", "ilike", words[0]]], PRODUCT_FIELDS, 8, "name");
+        // Un seul mot : il peut s'agir d'une référence ou d'un EAN.
+        const codeClause: any[] = words.length === 1
+          ? ["|", "|", ["default_code", "ilike", words[0]], ["barcode", "ilike", words[0]], ["name", "ilike", words[0]]]
+          : words.map(w => ["name", "ilike", w]);
+        try {
+          rows = await odoo.searchRead(session, "product.product", [["sale_ok", "=", true], ...codeClause], PRODUCT_FIELDS, 10, "name");
+          // Aucun résultat avec tous les mots : on relâche sur les deux premiers.
+          if (!rows.length && words.length > 2) {
+            rows = await odoo.searchRead(session, "product.product",
+              [["sale_ok", "=", true], ...words.slice(0, 2).map(w => ["name", "ilike", w])], PRODUCT_FIELDS, 10, "name");
+          }
+        } catch (e) {
+          if (!odoo.isNetworkError(e)) throw e;
+          const lw = words.map(w => w.toLowerCase());
+          rows = (await sync.getCachedProducts()).filter((p: any) => {
+            const hay = `${p.name || ""} ${p.default_code || ""} ${p.barcode || ""}`.toLowerCase();
+            return lw.every(w => hay.includes(w));
+          }).slice(0, 10);
         }
-      } catch (e) {
-        if (!odoo.isNetworkError(e)) throw e;
-        const lw = words.map(w => w.toLowerCase());
-        rows = (await sync.getCachedProducts())
-          .filter((p: any) => lw.every(w => String(p.name || "").toLowerCase().includes(w))).slice(0, 8);
-      }
+      } catch { rows = []; }
+      // Ignore une réponse arrivée après une frappe plus récente.
+      if (id !== reqId.current) return;
       setResults(rows);
-    } catch { setResults([]); }
-    setLoading(false);
-  };
+      setLoading(false);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [q, session]);
 
   return (
     <div style={{ marginTop: 8 }}>
-      <div style={{ display: "flex", gap: 6 }}>
-        <input value={q} onChange={e => setQ(e.target.value)} onKeyDown={e => { if (e.key === "Enter") void search(); }}
-          placeholder="Nom ou référence"
-          style={{ flex: 1, height: 36, borderRadius: 10, border: `1.5px solid ${C.border}`, padding: "0 10px", fontSize: 14, fontFamily: "inherit" }} />
-        <button onClick={() => void search()}
-          style={{ height: 36, padding: "0 14px", borderRadius: 10, border: "none", background: C.teal, color: "#fff", fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
-          {loading ? "…" : "Chercher"}
-        </button>
+      <div style={{ position: "relative" as const }}>
+        <input value={q} autoFocus onChange={e => setQ(e.target.value)}
+          placeholder="Nom, référence ou EAN"
+          style={{ width: "100%", boxSizing: "border-box" as const, height: 38, borderRadius: 10, border: `1.5px solid ${C.teal}`, padding: "0 36px 0 12px", fontSize: 14, fontFamily: "inherit" }} />
+        {loading && <span style={{ position: "absolute" as const, right: 12, top: 10, fontSize: 12, color: C.muted }}>…</span>}
       </div>
+      {!loading && q.trim().length >= 2 && results.length === 0 && (
+        <div style={{ fontSize: 12, color: C.muted, marginTop: 6 }}>Aucun produit trouvé.</div>
+      )}
       {results.map(p => (
         <button key={p.id} onClick={() => onPick(p)}
           style={{ display: "block", width: "100%", textAlign: "left" as const, marginTop: 4, padding: "8px 10px", borderRadius: 10, border: `1px solid ${C.border}`, background: C.bg, cursor: "pointer", fontFamily: "inherit", fontSize: 13, color: C.text }}>
-          {p.name} <span style={{ color: C.muted, fontSize: 11 }}>{p.default_code || ""}</span>
+          {p.name} <span style={{ color: C.muted, fontSize: 11 }}>{[p.default_code, p.barcode].filter(Boolean).join(" · ")}</span>
         </button>
       ))}
     </div>

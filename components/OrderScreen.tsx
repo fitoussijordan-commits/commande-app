@@ -70,7 +70,9 @@ interface Props {
   onToast: (msg: string, type?: "success" | "error" | "info") => void;
   desktop?: boolean;
 }
-interface CartItem { product: any; qty: number; unitPrice: number; }
+// priceLocked : prix fixé à la main (ex. prix d'un bon de commande importé) —
+// il n'est plus recalculé depuis la grille quand la quantité change.
+interface CartItem { product: any; qty: number; unitPrice: number; priceLocked?: boolean; }
 // Ligne offerte : produit à 0€ + type de gratuité (type_gratuit sur sale.order.line).
 interface GiftItem { product: any; qty: number; type: string; }
 interface FreeRule {
@@ -478,7 +480,9 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
   const setQty = (product: any, qty: number, unitPrice?: number) => {
     setCart(prev => {
       if (qty <= 0) { const n = { ...prev }; delete n[product.id]; return n; }
-      const price = unitPrice ?? prev[product.id]?.unitPrice ?? product.lst_price ?? 0;
+      const cur = prev[product.id];
+      if (cur?.priceLocked) return { ...prev, [product.id]: { ...cur, qty } };
+      const price = unitPrice ?? cur?.unitPrice ?? product.lst_price ?? 0;
       return { ...prev, [product.id]: { product, qty, unitPrice: price } };
     });
   };
@@ -2809,6 +2813,7 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
                   <div style={{ fontSize: 10, color: C.muted, display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" as const, marginBottom: 8 }}>
                     {item.product.default_code && <span style={{ fontFamily: "monospace" }}>{item.product.default_code}</span>}
                     <span>{item.qty} × {fmtPrice(item.unitPrice)}</span>
+                    {item.priceLocked && <span style={{ color: C.teal, fontWeight: 700 }}>prix fixé</span>}
                     {hasPricelistDiscount && <span style={{ textDecoration: "line-through" }}>{fmtPrice(catalog)}</span>}
                     {(pricelistPct > 0 || pct > 0) && (
                       <span style={{ background: C.orangeSoft, color: C.orange, borderRadius: 5, padding: "1px 6px", fontWeight: 700 }}>
