@@ -39,6 +39,7 @@ const MAX_FILE_BYTES = 3_000_000;
 interface LigneLue {
   ean: string; reference: string; designation: string;
   quantite: number; prix_unitaire_ht: number | null;
+  prix_brut_ht?: number | null; remise_pct?: number | null;
 }
 interface ClientLu {
   nom: string; adresse: string; code_postal: string; ville: string;
@@ -65,7 +66,19 @@ interface Ligne {
 
 // priceLocked : le prix a été choisi par le commercial (bon ou saisie) — la prise
 // de commande ne doit pas le recalculer depuis la grille quand la quantité change.
-export interface ImportedLine { product: any; qty: number; unitPrice: number; priceLocked?: boolean }
+// bonBrut / bonRemise : prix du bon exprimé comme dans le logiciel du client
+// (brut + % de remise), pour qu'Odoo retombe sur les mêmes totaux au centime.
+export interface ImportedLine {
+  product: any; qty: number; unitPrice: number; priceLocked?: boolean;
+  bonBrut?: number; bonRemise?: number;
+}
+
+// Prix net du bon, NON arrondi : brut × (1 − remise) quand le bon donne les deux,
+// sinon le net écrit. Le net imprimé (22,90) est un arrondi de 22,8997.
+function bonNetPrice(l: LigneLue): number | null {
+  if (l.prix_brut_ht != null && l.remise_pct) return l.prix_brut_ht * (1 - l.remise_pct / 100);
+  return l.prix_unitaire_ht;
+}
 
 function readAsBase64(file: Blob): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -332,6 +345,11 @@ function chipBtn(active: boolean): React.CSSProperties {
   };
 }
 
+// Prix unitaire : jusqu'à 3 décimales si le bon en a (« 13,917 »), sinon 2.
+function fmtUnit(n: number) {
+  return new Intl.NumberFormat("fr-FR", { style: "currency", currency: "EUR", minimumFractionDigits: 2, maximumFractionDigits: 3 }).format(n);
+}
+
 function fmtPrice(n: number) { return new Intl.NumberFormat("fr-FR", { style: "currency", currency: "EUR" }).format(n); }
 
 export default function BonCommandeScreen({ session, client, priceItems, onApply, onToast, onSelectClient, initialFile }: {
@@ -433,21 +451,22 @@ export default function BonCommandeScreen({ session, client, priceItems, onApply
     return isFinite(n) && n >= 0 ? n : null;
   };
   const linePrice = (l: Ligne): number => {
-    if (l.priceMode === "bon" && l.lue.prix_unitaire_ht != null) return l.lue.prix_unitaire_ht;
+    if (l.priceMode === "bon") { const b = bonNetPrice(l.lue); if (b != null) return b; }
     if (l.priceMode === "manuel") { const m = manualValue(l); if (m != null) return m; }
     return clientPrice(l.product, l.qty);
   };
   // Écart relatif entre le prix du bon et la grille Odoo (null si incomparable).
   const ecartPct = (l: Ligne): number | null => {
-    if (!l.product || l.lue.prix_unitaire_ht == null) return null;
+    const bonPrice = bonNetPrice(l.lue);
+    if (!l.product || bonPrice == null) return null;
     const odooPrice = clientPrice(l.product, l.qty);
     if (odooPrice <= 0) return null;
-    const pct = (l.lue.prix_unitaire_ht - odooPrice) / odooPrice * 100;
+    const pct = (bonPrice - odooPrice) / odooPrice * 100;
     return Math.abs(pct) > 2 ? pct : null;
   };
   const setAllPriceModes = (mode: "odoo" | "bon") =>
     setLignes(prev => prev.map(l =>
-      mode === "bon" && l.lue.prix_unitaire_ht == null ? l : { ...l, priceMode: mode, manualPrice: "" }));
+      mode === "bon" && bonNetPrice(l.lue) == null ? l : { ...l, priceMode: mode, manualPrice: "" }));
 
   const retenues = lignes.filter(l => l.include && l.product && l.qty > 0);
   const nonTrouvees = lignes.filter(l => !l.product).length;
@@ -467,8 +486,10 @@ export default function BonCommandeScreen({ session, client, priceItems, onApply
       const prev = merged.get(l.product.id);
       const qty = (prev?.qty || 0) + l.qty;
       const locked = l.priceMode !== "odoo" && linePrice(l) !== clientPrice(l.product, l.qty);
+      const asBon = l.priceMode === "bon" && l.lue.prix_brut_ht != null && !!l.lue.remise_pct;
       merged.set(l.product.id, locked
-        ? { product: l.product, qty, unitPrice: linePrice(l), priceLocked: true }
+        ? { product: l.product, qty, unitPrice: linePrice(l), priceLocked: true,
+            ...(asBon ? { bonBrut: l.lue.prix_brut_ht!, bonRemise: l.lue.remise_pct! } : {}) }
         : { product: l.product, qty, unitPrice: clientPrice(l.product, qty) });
     }
     const note = [
@@ -666,7 +687,7 @@ export default function BonCommandeScreen({ session, client, priceItems, onApply
                       {wide && (
                         <div style={{ width: 96, flexShrink: 0, textAlign: "right" as const, paddingTop: 2 }}>
                           <div style={{ fontSize: 16, fontWeight: 800, color: actif ? C.text : C.muted }}>{l.product ? fmtPrice(l.qty * linePrice(l)) : "—"}</div>
-                          {l.product && <div style={{ fontSize: 11, color: C.muted }}>{l.qty} × {fmtPrice(linePrice(l))}</div>}
+                          {l.product && <div style={{ fontSize: 11, color: C.muted }}>{l.qty} × {fmtUnit(linePrice(l))}</div>}
                         </div>
                       )}
                     </div>
@@ -675,11 +696,16 @@ export default function BonCommandeScreen({ session, client, priceItems, onApply
                     <div style={{ display: "flex", flexWrap: "wrap" as const, alignItems: "center", gap: 6, marginTop: 4 }}>
                         <>
                           <button onClick={() => update(l.key, { priceMode: "odoo", manualPrice: "" })} style={chipBtn(l.priceMode === "odoo")}>
-                            Prix Odoo {fmtPrice(prixClient!)}
+                            Prix Odoo {fmtUnit(prixClient!)}
                           </button>
-                          {l.lue.prix_unitaire_ht != null && (
+                          {bonNetPrice(l.lue) != null && (
                             <button onClick={() => update(l.key, { priceMode: "bon", manualPrice: "" })} style={chipBtn(l.priceMode === "bon")}>
-                              Prix du bon {fmtPrice(l.lue.prix_unitaire_ht)}
+                              Prix du bon {fmtUnit(bonNetPrice(l.lue)!)}
+                              {l.lue.prix_brut_ht != null && !!l.lue.remise_pct && (
+                                <span style={{ fontWeight: 600, opacity: 0.75, marginLeft: 6 }}>
+                                  ({fmtUnit(l.lue.prix_brut_ht)} −{l.lue.remise_pct} %)
+                                </span>
+                              )}
                             </button>
                           )}
                           <input value={l.manualPrice} inputMode="decimal" placeholder="Autre prix €"

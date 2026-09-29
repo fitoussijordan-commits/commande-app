@@ -54,6 +54,10 @@ const BonCommande = z.object({
     designation: z.string(),
     quantite: z.number().describe("Nombre d'UNITÉS commandées (pas le nombre de colis ni le PCB)"),
     prix_unitaire_ht: z.number().nullable().describe("Prix d'achat unitaire HT NET (après remise) indiqué sur le bon, null si absent"),
+    // Brut + remise : le logiciel du client calcule ses totaux avec, pas avec le
+    // net arrondi — 24 × 27,59 × 0,83 = 549,59 alors que 24 × 22,90 = 549,60.
+    prix_brut_ht: z.number().nullable().describe("Prix unitaire HT AVANT remise (prix d'achat, tarif), null si le bon ne donne que le prix net"),
+    remise_pct: z.number().nullable().describe("Remise de la ligne en %, ex. 17 pour « 17,00 », null si absente"),
   })),
 });
 
@@ -72,6 +76,7 @@ Recopie chaque ligne de produit commandée, dans l'ordre du document.
 - La quantité est le nombre d'unités commandées. Quand le bon donne à la fois un
   PCB (unités par colis), un nombre de colis et une quantité, prends la quantité
   en unités. « 2,000 » signifie 2.
+- Recopie les prix avec toutes leurs décimales (« 13,917 » → 13.917), sans arrondir.
 - Ignore les lignes de rubrique ou de catégorie (ex. « > SOIN VISAGE »), les
   lignes à quantité nulle, les totaux et les récapitulatifs de TVA.
 - Le client est l'ÉMETTEUR du bon, jamais Dr. Hauschka (qui est le fournisseur) :

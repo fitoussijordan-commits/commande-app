@@ -74,7 +74,9 @@ interface Props {
 }
 // priceLocked : prix fixé à la main (ex. prix d'un bon de commande importé) —
 // il n'est plus recalculé depuis la grille quand la quantité change.
-interface CartItem { product: any; qty: number; unitPrice: number; priceLocked?: boolean; }
+// bonBrut / bonRemise : prix d'un bon importé, envoyé à Odoo en brut + % de remise
+// comme dans le logiciel du client (voir handleValidate).
+interface CartItem { product: any; qty: number; unitPrice: number; priceLocked?: boolean; bonBrut?: number; bonRemise?: number; }
 // Ligne offerte : produit à 0€ + type de gratuité (type_gratuit sur sale.order.line).
 interface GiftItem { product: any; qty: number; type: string; }
 interface FreeRule {
@@ -590,11 +592,19 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
         order_line: [
           ...Object.values(cart).map(item => {
             // Remise ligne = remise promo Odoo + remise événement Co (cumul, plafonné à 100%).
-            const disc = Math.min(100, (lineDiscounts[item.product.id] || 0) + (eventDiscount || 0));
+            const promoDisc = Math.min(100, (lineDiscounts[item.product.id] || 0) + (eventDiscount || 0));
+            // Prix d'un bon importé avec remise : brut + % comme le logiciel du client.
+            // Envoyé en net, Odoo l'arrondit à 2 décimales (22,8997 → 22,90) et le
+            // total dérive de quelques centimes (549,60 au lieu de 549,59).
+            const asBon = item.priceLocked && item.bonBrut != null && !!item.bonRemise;
+            const price = asBon ? item.bonBrut! : item.unitPrice;
+            const disc = asBon
+              ? Math.round(10000 * (1 - (1 - item.bonRemise! / 100) * (1 - promoDisc / 100))) / 100
+              : promoDisc;
             return [0, 0, {
               product_id: item.product.id,
               product_uom_qty: item.qty,
-              price_unit: item.unitPrice,
+              price_unit: price,
               ...(disc > 0 ? { discount: disc } : {}),
             }];
           }),
