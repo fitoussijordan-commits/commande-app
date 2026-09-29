@@ -229,7 +229,9 @@ async function fetchPricelistItems(session: odoo.OdooSession, pricelistId: numbe
   // Pas de tri "sequence asc" : ce champ n'existe pas sur product.pricelist.item
   // dans cette instance Odoo et faisait échouer la requête (prix → catalogue).
   // Limite 0 = TOUTES les règles (avant : 500 → grille tronquée = prix faux).
-  const domain = [["pricelist_id", "=", pricelistId], ["active", "=", true]];
+  // Pas de filtre "active" non plus : ce champ n'existe pas sur product.pricelist.item
+  // ici (« Invalid field ») — la requête échouait, et les prix retombaient au catalogue.
+  const domain = [["pricelist_id", "=", pricelistId]];
   try {
     let items: PriceItem[];
     try {

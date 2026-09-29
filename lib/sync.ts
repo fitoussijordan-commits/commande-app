@@ -76,6 +76,8 @@ export async function preloadCatalog(
   onProgress?.({ step: "Grilles tarifaires", done: 2, total: steps });
   // Pas de tri par "sequence" : ce champ n'existe pas sur product.pricelist.item
   // dans toutes les versions d'Odoo (il faisait planter le préchargement).
+  // Pas de filtre "active" non plus : absent de product.pricelist.item sur cette
+  // instance (« Invalid field product.pricelist.item.active »).
   const PRICELIST_FIELDS = [
     "pricelist_id", "applied_on", "compute_price", "product_id", "product_tmpl_id",
     "categ_id", "fixed_price", "percent_price", "price_discount", "price_surcharge",
@@ -86,7 +88,7 @@ export async function preloadCatalog(
     // Avec les dates de validité (une règle expirée ne doit plus s'appliquer).
     pricelistItems = await odoo.searchRead(
       session, "product.pricelist.item",
-      [["active", "=", true]],
+      [],
       [...PRICELIST_FIELDS, "date_start", "date_end"],
       0
     );
@@ -95,7 +97,7 @@ export async function preloadCatalog(
     // Repli si date_start/date_end n'existent pas sur cette instance (comme "sequence").
     pricelistItems = await odoo.searchRead(
       session, "product.pricelist.item",
-      [["active", "=", true]],
+      [],
       PRICELIST_FIELDS,
       0
     );
