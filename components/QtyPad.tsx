@@ -1,7 +1,7 @@
 "use client";
 // Pavé numérique de saisie de quantité (tactile, touches de 52 px).
 // Partagé par la prise de commande et l'import de bon de commande.
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 const C = {
   bg: "#f8fafc", text: "#0f172a", muted: "#94a3b8", border: "#e2e8f0",
@@ -20,6 +20,24 @@ export default function QtyPad({ name, initial, onSet, onClose }: {
     onClose();
   };
   const keys = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "C", "0", "⌫"];
+
+  // Clavier de l'ordinateur (ou clavier physique de l'iPad) : chiffres, retour
+  // arrière, Suppr/C pour effacer, Entrée pour valider, Échap pour annuler.
+  const commitRef = useRef(commit);
+  commitRef.current = commit;
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (/^[0-9]$/.test(e.key)) setVal(v => ((v === "" || v === "0" ? e.key : v + e.key)).slice(0, 4));
+      else if (e.key === "Backspace") setVal(v => (v === "" ? "" : v.slice(0, -1)));
+      else if (e.key === "Delete" || e.key.toLowerCase() === "c") setVal("0");
+      else if (e.key === "Enter") commitRef.current();
+      else if (e.key === "Escape") onClose();
+      else return;
+      e.preventDefault();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
   return (
     <div onClick={onClose}
       style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)", zIndex: 250, display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}>

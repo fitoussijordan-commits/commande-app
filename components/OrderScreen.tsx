@@ -81,7 +81,14 @@ interface Props {
 // il n'est plus recalculé depuis la grille quand la quantité change.
 // bonBrut / bonRemise : prix d'un bon importé, envoyé à Odoo en brut + % de remise
 // comme dans le logiciel du client (voir handleValidate).
-interface CartItem { product: any; qty: number; unitPrice: number; priceLocked?: boolean; bonBrut?: number; bonRemise?: number; }
+// seq : ordre d'ajout (l'objet panier, indexé par id produit, se trie tout seul
+// par id). group : MEA d'origine, pour regrouper ses lignes sous un séparateur.
+interface CartItem { product: any; qty: number; unitPrice: number; priceLocked?: boolean; bonBrut?: number; bonRemise?: number; seq?: number; group?: string; }
+
+// Lignes du panier dans l'ordre d'ajout (paniers anciens sans seq : en tête).
+function orderedCart(cart: Record<number, CartItem>): CartItem[] {
+  return Object.values(cart).sort((a, b) => (a.seq || 0) - (b.seq || 0));
+}
 // Ligne offerte : produit à 0€ + type de gratuité (type_gratuit sur sale.order.line).
 interface GiftItem { product: any; qty: number; type: string; }
 interface FreeRule {
@@ -498,7 +505,7 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
     if (!client) return;
     enterOrderMode();
     setResumePrompt(null); // le bon importé remplace un éventuel brouillon
-    setCart(Object.fromEntries(lines.map(l => [l.product.id, l])));
+    setCart(Object.fromEntries(lines.map((l, i) => [l.product.id, { ...l, seq: i + 1 }])));
     setNote(importNote);
   };
 
@@ -517,13 +524,15 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
   const cartTotal = Object.values(cart).reduce((s, i) => s + i.qty * i.unitPrice, 0);
   const freeCount = freeItems.reduce((s, i) => s + i.qty, 0);
 
-  const setQty = (product: any, qty: number, unitPrice?: number) => {
+  const setQty = (product: any, qty: number, unitPrice?: number, group?: string) => {
     setCart(prev => {
       if (qty <= 0) { const n = { ...prev }; delete n[product.id]; return n; }
       const cur = prev[product.id];
       if (cur?.priceLocked) return { ...prev, [product.id]: { ...cur, qty } };
       const price = unitPrice ?? cur?.unitPrice ?? product.lst_price ?? 0;
-      return { ...prev, [product.id]: { product, qty, unitPrice: price } };
+      // Une ligne déjà au panier garde sa place et sa MEA d'origine.
+      const seq = cur?.seq ?? Math.max(0, ...Object.values(prev).map(i => i.seq || 0)) + 1;
+      return { ...prev, [product.id]: { product, qty, unitPrice: price, seq, group: cur ? cur.group : group } };
     });
   };
 
@@ -585,7 +594,8 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
         note: note || "",
         ...tagVals,
         order_line: [
-          ...Object.values(cart).map(item => {
+          // Ordre d'ajout : les lignes d'une même MEA restent groupées dans le devis.
+          ...orderedCart(cart).map(item => {
             // Remise ligne = remise promo Odoo + remise événement Co (cumul, plafonné à 100%).
             const promoDisc = Math.min(100, (lineDiscounts[item.product.id] || 0) + (eventDiscount || 0));
             // Prix d'un bon importé avec remise : brut + % comme le logiciel du client.
@@ -2500,7 +2510,7 @@ function ClientHistory({ session, client }: { session: odoo.OdooSession; client:
 // ═══════════════════════════════════════════════════════════════════════════
 function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submitting, note, setNote, client, priceItems, onToast, appliedPromos, giftItems, setGiftItems, freeTypes, eventDiscount, setEventDiscount }: {
   session: odoo.OdooSession; cart: Record<number, CartItem>;
-  onQtyChange: (p: any, q: number, price?: number) => void; freeItems: FreeItem[];
+  onQtyChange: (p: any, q: number, price?: number, group?: string) => void; freeItems: FreeItem[];
   onValidate: () => void; submitting: boolean;
   note: string; setNote: (n: string) => void; client: any;
   priceItems: PriceItem[];
@@ -2681,7 +2691,7 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
         if (isSeparatorProduct(product)) continue;
         const qty = Math.max(1, Math.round(line.product_uom_qty || 1));
         const clientPrice = applyPricelist(product.lst_price || 0, product.id, product.product_tmpl_id?.[0] || 0, priceItems, qty);
-        onQtyChange(product, (cart[product.id]?.qty || 0) + qty, clientPrice);
+        onQtyChange(product, (cart[product.id]?.qty || 0) + qty, clientPrice, template.name);
         added++;
       }
       onToast(`✅ ${template.name} — ${added} produit${added > 1 ? "s" : ""} ajouté${added > 1 ? "s" : ""}`, "success");
@@ -2778,7 +2788,24 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
   }, [allProducts, stockOnly]);
 
   const freeProductIds = new Set(freeItems.map(f => f.product.id));
-  const cartItems = Object.values(cart);
+  // Largeur du panier : glisser la poignée (souris ou doigt), retenue sur l'appareil.
+  const [cartW, setCartW] = useState<number>(() => {
+    try { return Math.max(260, Number(localStorage.getItem("wms_cart_width")) || 310); } catch { return 310; }
+  });
+  const startResize = (e: React.PointerEvent) => {
+    e.preventDefault();
+    const startX = e.clientX, startW = cartW;
+    const max = Math.max(320, Math.round(window.innerWidth * 0.6));
+    let w = startW;
+    const move = (ev: PointerEvent) => { w = Math.min(max, Math.max(260, startW + (startX - ev.clientX))); setCartW(w); };
+    const up = () => {
+      window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", up);
+      try { localStorage.setItem("wms_cart_width", String(Math.round(w))); } catch {}
+    };
+    window.addEventListener("pointermove", move); window.addEventListener("pointerup", up);
+  };
+
+  const cartItems = orderedCart(cart);
   const cartCount = cartItems.reduce((s, i) => s + i.qty, 0);
   const cartTotal = cartItems.reduce((s, i) => s + i.qty * i.unitPrice, 0);
   const freeCount = freeItems.reduce((s, i) => s + i.qty, 0);
@@ -3021,8 +3048,12 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
         </div>
       </div>
 
-      {/* ── Panier persistant (droite) ── */}
-      <div style={{ width: 310, background: C.white, borderLeft: `1px solid ${C.border}`, display: "flex", flexDirection: "column" as const, flexShrink: 0 }}>
+      {/* ── Panier persistant (droite), largeur réglable par la poignée ── */}
+      <div style={{ width: cartW, position: "relative" as const, background: C.white, borderLeft: `1px solid ${C.border}`, display: "flex", flexDirection: "column" as const, flexShrink: 0 }}>
+        <div onPointerDown={startResize} title="Glisser pour élargir ou réduire le panier"
+          style={{ position: "absolute" as const, left: -12, top: 0, bottom: 0, width: 24, cursor: "col-resize", zIndex: 5, touchAction: "none" as const, display: "flex", alignItems: "center", justifyContent: "center" }}>
+          <div style={{ width: 5, height: 44, borderRadius: 3, background: C.border, boxShadow: "0 0 0 2px #fff" }} />
+        </div>
         {/* Header panier */}
         <div style={{ padding: "12px 14px", background: "#0f766e", color: "#fff" }}>
           <div style={{ fontSize: 13, fontWeight: 700, display: "flex", alignItems: "center", gap: 7 }}><Icon name="cart" size={14} /> Panier — {client.name}</div>
@@ -3040,7 +3071,13 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
               <div style={{ fontSize: 12 }}>Ajoute des produits</div>
             </div>
           ) : (
-            cartItems.map(item => {
+            cartItems.map((item, idx) => {
+              const prevGroup = idx > 0 ? cartItems[idx - 1].group : undefined;
+              // Séparateur quand on change de MEA ; « Autres articles » après une MEA.
+              const sepLabel = item.group !== prevGroup && (idx > 0 || item.group)
+                ? (item.group || "Autres articles") : null;
+              // Pastille stock : rouge si la quantité dépasse le stock prévisionnel.
+              const stockOk = isSeparatorProduct(item.product) || item.qty <= Math.floor(item.product.virtual_available || 0);
               const pct = lineDiscounts[item.product.id] || 0;
               const gross = item.qty * item.unitPrice;
               const net = gross * (1 - pct / 100);
@@ -3049,9 +3086,20 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
               const hasPricelistDiscount = catalog > 0 && catalog - item.unitPrice > 0.01;
               const pricelistPct = hasPricelistDiscount ? Math.round((1 - item.unitPrice / catalog) * 100) : 0;
               return (
-                <div key={item.product.id} style={{ marginBottom: 8, padding: "10px 10px", background: C.bg, borderRadius: 10 }}>
-                  {/* Étage 1 : nom complet + croix de suppression rapide */}
+                <div key={item.product.id}>
+                {sepLabel && (
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, margin: idx === 0 ? "0 0 8px" : "14px 0 8px" }}>
+                    <span style={{ fontSize: 10.5, fontWeight: 800, color: item.group ? C.tealDark : C.muted, textTransform: "uppercase" as const, letterSpacing: "0.04em", whiteSpace: "nowrap" as const, overflow: "hidden", textOverflow: "ellipsis", maxWidth: "85%" }}>
+                      {sepLabel}
+                    </span>
+                    <span style={{ flex: 1, height: 1, background: item.group ? C.tealMid : C.border }} />
+                  </div>
+                )}
+                <div style={{ marginBottom: 8, padding: "10px 10px", background: C.bg, borderRadius: 10 }}>
+                  {/* Étage 1 : pastille stock + nom complet + croix de suppression rapide */}
                   <div style={{ display: "flex", alignItems: "flex-start", gap: 8, marginBottom: 2 }}>
+                    <span title={stockOk ? "En stock" : `Stock insuffisant : ${Math.floor(item.product.virtual_available || 0)} dispo`}
+                      style={{ width: 9, height: 9, borderRadius: "50%", flexShrink: 0, marginTop: 4, background: stockOk ? C.green : C.red }} />
                     <div style={{ flex: 1, minWidth: 0, fontSize: 12.5, fontWeight: 700, color: C.text, lineHeight: 1.3 }}>{item.product.name}</div>
                     <button onClick={() => onQtyChange(item.product, 0)}
                       title="Retirer cet article du panier"
@@ -3094,6 +3142,7 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
                       )}
                     </div>
                   </div>
+                </div>
                 </div>
               );
             })
@@ -3211,17 +3260,12 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
           </div>
         )}
 
-        {/* Alerte rupture de stock — informative, ne bloque plus la validation */}
+        {/* Rupture de stock : le détail est porté par la pastille rouge de chaque
+            ligne ; ici un simple rappel. Informatif — le devis reste créable. */}
         {hasStockIssue && (
-          <div style={{ margin: "0 12px 8px", padding: "10px 12px", background: C.orangeSoft, border: `1px solid ${C.orange}44`, borderRadius: 12 }}>
-            <div style={{ fontSize: 11, fontWeight: 800, color: C.orange, marginBottom: 4, display: "flex", alignItems: "center", gap: 6 }}>
-              <Icon name="package" size={13} /> Stock insuffisant — devis possible
-            </div>
-            {overStockItems.map(i => (
-              <div key={i.product.id} style={{ fontSize: 11, color: C.orange, marginBottom: 2 }}>
-                {i.product.name} — commandé {i.qty}, dispo {Math.floor(i.product.virtual_available || 0)}
-              </div>
-            ))}
+          <div style={{ margin: "0 12px 8px", display: "flex", alignItems: "center", gap: 6, fontSize: 11.5, fontWeight: 700, color: C.red }}>
+            <span style={{ width: 8, height: 8, borderRadius: "50%", background: C.red }} />
+            {overStockItems.length} article{overStockItems.length > 1 ? "s" : ""} en stock insuffisant — devis possible
           </div>
         )}
 
