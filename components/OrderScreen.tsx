@@ -13,6 +13,7 @@ import VisitPriority from "@/components/VisitPriority";
 import AgendaGlass from "@/components/AgendaGlass";
 import { resolveClientFamily } from "@/lib/perimes";
 import { orderMeta, isMea, isImplantation, offerNames, type OrderMeta } from "@/lib/orderOffers";
+import { loadBlockingTags, clientBlockingTags, type BlockingTag } from "@/lib/clientFlags";
 import { onIncomingFile } from "@/lib/incomingFile";
 import * as sync from "@/lib/sync";
 import * as geo from "@/lib/geo";
@@ -422,6 +423,15 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
   // Import d'un bon : depuis la fiche client (client connu) ou depuis l'accueil /
   // la recherche client (client retrouvé d'après le bon, puis confirmé).
   const [bonOrigin, setBonOrigin] = useState<"hub" | "home" | "client">("hub");
+  // Étiquettes client « Bloqué compta » / « Redressement judiciaire » : commande
+  // saisissable mais à valider par le service client (bandeau + pas d'étiquette
+  // « Validé » sur le devis).
+  const [blockingTags, setBlockingTags] = useState<BlockingTag[]>([]);
+  useEffect(() => { loadBlockingTags(session).then(setBlockingTags).catch(() => {}); }, [session]);
+  const clientBlocks = client ? clientBlockingTags(client, blockingTags) : [];
+  const clientBlocked = clientBlocks.length > 0;
+  const blockLabel = clientBlocks.map(t => t.name).join(" · ");
+
   // Écran d'où l'on a ouvert le rapport Périmés, pour y revenir.
   const [reportOrigin, setReportOrigin] = useState<"client" | "perime">("client");
   // Semaine à ouvrir dans le planning quand on vient de l'agenda de l'accueil.
@@ -611,11 +621,16 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
   const handleValidate = async () => {
     setSubmitting(true);
     try {
-      const validatedTagId = await getValidatedTagId(session);
-      if (validatedTagId === null) {
+      // Client bloqué (compta, redressement) : PAS d'étiquette « Validé » — c'est le service
+      // client qui validera ; la note du devis le signale en tête.
+      const validatedTagId = clientBlocked ? null : await getValidatedTagId(session);
+      if (validatedTagId === null && !clientBlocked) {
         onToast("Étiquette « Validé » introuvable dans Odoo — commande créée sans étiquette", "info");
       }
       const tagVals = validatedTagId ? { tag_ids: [[6, 0, [validatedTagId]]] } : {};
+      const orderNote = clientBlocked
+        ? `CLIENT ${blockLabel.toUpperCase()} — commande à valider par le service client.${note ? `\n${note}` : ""}`
+        : (note || "");
 
       const pricelistId = client.property_product_pricelist?.[0] || false;
 
@@ -629,7 +644,7 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
       const mainPayload: any = {
         partner_id: client.id, state: "draft",
         ...(pricelistId ? { pricelist_id: pricelistId } : {}),
-        note: note || "",
+        note: orderNote,
         ...tagVals,
         order_line: [
           // Ordre d'ajout : les lignes d'une même MEA restent groupées dans le devis.
@@ -889,6 +904,19 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
 
       {/* ── Bandeau reprise — scopé UNIQUEMENT au client qu'on vient de sélectionner,
            jamais un autre client : pas de fuite d'info si on est en face d'un client. ── */}
+      {/* Client « Bloqué compta » / « Redressement judiciaire » : la commande se
+          saisit, mais le service client valide. */}
+      {clientBlocked && (step === "hub" || step === "catalog" || step === "bon") && (
+        <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 20px", background: "#fef2f2", borderBottom: "1px solid #fecaca", color: "#b91c1c", fontSize: 13.5, fontWeight: 700, flexShrink: 0 }}>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+            <path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h16.9a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/><path d="M12 9v4M12 17h.01"/>
+          </svg>
+          <span>
+            Client « {blockLabel} » — tu peux saisir la commande, mais elle devra être validée par le service client.
+          </span>
+        </div>
+      )}
+
       {resumePrompt && step === "catalog" && client?.id === resumePrompt.client?.id && (
         <div style={{ background: "#fefce8", borderBottom: `1px solid #fde047`, padding: "10px 20px", display: "flex", alignItems: "center", gap: 12, flexShrink: 0 }}>
           <Icon name="file" size={18} color="#a16207" />
@@ -1064,7 +1092,7 @@ const LOC_RADIUS_KM = 1;
 // parent_id / type servent à écarter les adresses enfants (voir dedupeClients).
 // customer_rank : sert à départager plusieurs fiches partageant le même ref
 // (cf. pickClient) — c'est la fiche qui reçoit réellement les commandes.
-const CLIENT_FIELDS = ["id", "name", "ref", "city", "country_id", "property_product_pricelist", "email", "phone", "is_company", "x_nbre_visites_realisees", "parent_id", "type", "customer_rank", "x_evolution_ca_n_n_1", "x_ca_n_1", "x_statut_client_id"];
+const CLIENT_FIELDS = ["id", "name", "ref", "city", "country_id", "property_product_pricelist", "email", "phone", "is_company", "x_nbre_visites_realisees", "parent_id", "type", "customer_rank", "x_evolution_ca_n_n_1", "x_ca_n_1", "x_statut_client_id", "category_id"];
 
 // Évolution du CA année N vs N-1 (onglet « Conditions commerciales » de la fiche
 // client Odoo, champ x_evolution_ca_n_n_1).

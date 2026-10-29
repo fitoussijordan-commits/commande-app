@@ -30,6 +30,8 @@ export const CLIENT_FIELDS = [
   // customer_rank départage les fiches partageant un même ref (cf. pickClient
   // dans OrderScreen) : sans lui, le cache hors ligne ne pouvait pas trancher.
   "parent_id", "type", "customer_rank", "x_evolution_ca_n_n_1", "x_ca_n_1", "x_statut_client_id",
+  // Étiquettes client : « Bloqué compta » doit s'afficher aussi hors ligne.
+  "category_id",
 ];
 
 const KEY = "all";

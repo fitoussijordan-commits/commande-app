@@ -134,6 +134,10 @@ en masse au bouton « Télécharger les données ».)
   (step `home`). Sous la recherche : cartes « verre » iOS (`components/glass.ts`)
   — `AgendaGlass` (semaine/mois, ouvre le planning sur la semaine choisie) et
   `VisitPriority`. Le fond coloré de l'écran est nécessaire à l'effet verre.
+- **Clients bloqués** (`lib/clientFlags.ts`) : étiquettes `res.partner.category_id`
+  « Bloqué compta » et « Redressement judiciaire » (repérées par leur nom). Bandeau
+  rouge (fiche, catalogue, import), devis créé SANS l'étiquette « Validé » et note
+  en tête « à valider par le service client ».
 - **Premier chiffre de la référence produit** : 1 vente, 3 testeur, 5 échantillon,
   6 PLV, 7 offre MEA, 8 gratuité allemande. Sert aux gammes du catalogue (vente
   seule), aux sections Testeurs / Échantillons / PLV et à l'exclusion des
