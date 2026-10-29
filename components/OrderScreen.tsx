@@ -135,7 +135,7 @@ function matchesCat(product: any, cat: SmartCat): boolean {
 }
 
 // ── Type de produit Odoo (x_type_de_produit_id sur product.template) ──────────
-// Volontairement PAS la liste brute des types Odoo : seulement les cinq catégories
+// Volontairement PAS la liste brute des types Odoo : seulement les six catégories
 // utiles en visite. « Accessoires » regroupe plusieurs types Odoo (sacs, éponges).
 //
 // Le rattachement se fait par MOT-CLÉ sur le libellé, pas sur l'ID : les IDs de
@@ -143,12 +143,18 @@ function matchesCat(product: any, cat: SmartCat): boolean {
 // au pluriel ou mal accentué tombe quand même dans la bonne catégorie.
 const TYPE_CAT_PREFIX = "type:";
 
-const PRODUCT_TYPE_GROUPS: { id: string; label: string; patterns: RegExp[] }[] = [
-  { id: "testeurs",    label: "Testeurs",     patterns: [/testeur/i] },
+// `also` : repli quand le type Odoo n'est pas renseigné — par le nom ou la
+// référence (PLV en 6xxxxxx dans cette base).
+const PRODUCT_TYPE_GROUPS: { id: string; label: string; patterns: RegExp[]; also?: (p: any) => boolean }[] = [
+  { id: "testeurs",    label: "Testeurs",     patterns: [/test/i],
+    also: p => /\btest(eur|er)s?\b/i.test(String(p.name || "")) },
   { id: "echantillons", label: "Échantillons", patterns: [/[ée]chantillon/i] },
   { id: "travel",      label: "Travel size",  patterns: [/travel/i] },
   { id: "miniatures",  label: "Miniatures",   patterns: [/miniature/i] },
   { id: "accessoires", label: "Accessoires",  patterns: [/\bsacs?\b/i, /[ée]ponge/i, /accessoire/i] },
+  { id: "plv",         label: "PLV",          patterns: [/\bplv\b/i, /pr[ée]sentoir/i, /publicit/i, /merchandising/i],
+    also: p => /^6/.test(String(p.default_code || "").trim())
+      || /^(pr[ée]sentoir|chevalet|panneau|stop-rayon|r[ée]glette|brochure|emballage vide|vitrophanie|affiche)/i.test(String(p.name || "")) },
 ];
 
 function productTypeLabel(product: any): string {
@@ -157,10 +163,19 @@ function productTypeLabel(product: any): string {
 }
 
 function matchesTypeGroup(product: any, groupId: string): boolean {
-  const label = productTypeLabel(product);
-  if (!label) return false;
   const group = PRODUCT_TYPE_GROUPS.find(g => g.id === groupId);
-  return group ? group.patterns.some(re => re.test(label)) : false;
+  if (!group) return false;
+  const label = productTypeLabel(product);
+  return (!!label && group.patterns.some(re => re.test(label))) || !!group.also?.(product);
+}
+
+// Produit de VENTE, seul affiché dans les gammes (Visage, Corps, Régénérant…) :
+// référence en 1xxxxxx (6 = PLV, 7 = offres MEA, 8 = gratuités allemandes) et
+// hors testeurs, échantillons, travel size, miniatures, accessoires et PLV, qui
+// ont leur propre section.
+function isSaleProduct(product: any): boolean {
+  if (!/^1/.test(String(product.default_code || "").trim())) return false;
+  return !PRODUCT_TYPE_GROUPS.some(g => matchesTypeGroup(product, g.id));
 }
 
 function loadRules(): FreeRule[] { try { return JSON.parse(localStorage.getItem(LS_RULES) || "[]"); } catch { return []; } }
@@ -2772,12 +2787,12 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
       : activeCatId
         ? allProducts.filter(p => {
             const cat = smartCats.find(c => c.id === activeCatId);
-            return cat ? matchesCat(p, cat) : true;
+            return cat ? matchesCat(p, cat) && isSaleProduct(p) : true;
           })
         : allProducts;
   const displayedProducts = stockOnly ? baseProducts.filter(inStock) : baseProducts;
 
-  // Les cinq catégories de type, avec leur nombre d'articles. Une catégorie sans
+  // Les catégories de type, avec leur nombre d'articles. Une catégorie sans
   // aucun produit n'est pas affichée (inutile de proposer un filtre vide).
   const productTypes = useMemo(() => {
     return PRODUCT_TYPE_GROUPS.map(g => ({
@@ -2852,7 +2867,7 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
 
         {/* Catégories configurées */}
         {smartCats.map(cat => {
-          const count = allProducts.filter(p => matchesCat(p, cat) && (!stockOnly || inStock(p))).length;
+          const count = allProducts.filter(p => matchesCat(p, cat) && isSaleProduct(p) && (!stockOnly || inStock(p))).length;
           const active = activeCatId === cat.id;
           return (
             <button key={cat.id} onClick={() => setActiveCatId(cat.id)}
