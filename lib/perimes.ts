@@ -536,18 +536,30 @@ export async function resolveRebutLocation(
   try {
     // Sans filtre sur usage : si l'emplacement a été créé en "internal" par une
     // version précédente, on le retrouve quand même pour ne pas en faire un second.
-    const found = await odoo.searchRead(session, "stock.location",
-      [["name", "=", name]], ["id", "usage", "scrap_location"], 1);
+    // scrap_location (« Est un emplacement de rebut ? ») n'existe pas sur toutes
+    // les versions d'Odoo : le LIRE faisait échouer toute la recherche (« Invalid
+    // field 'scrap_location' on 'stock.location' ») et aucun transfert n'était créé.
+    let hasScrapField = true;
+    let found: any[];
+    try {
+      found = await odoo.searchRead(session, "stock.location",
+        [["name", "=", name]], ["id", "usage", "scrap_location"], 1);
+    } catch (e) {
+      if (odoo.isNetworkError(e)) throw e;
+      hasScrapField = false;
+      found = await odoo.searchRead(session, "stock.location",
+        [["name", "=", name]], ["id", "usage"], 1);
+    }
 
     if (found.length) {
       const loc = found[0];
       // AUTO-RÉPARATION. Un emplacement rebut resté en "internal" fait compter les
       // périmés dans le stock disponible et dans la valorisation. Le corriger ici
       // évite d'avoir à le refaire à la main pour chaque commercial, chaque mois.
-      if (loc.usage !== REBUT_USAGE || !loc.scrap_location) {
+      if (loc.usage !== REBUT_USAGE || (hasScrapField && !loc.scrap_location)) {
         try {
           await odoo.write(session, "stock.location", [loc.id],
-            { usage: REBUT_USAGE, scrap_location: true });
+            hasScrapField ? { usage: REBUT_USAGE, scrap_location: true } : { usage: REBUT_USAGE });
         } catch (e: any) {
           // Odoo refuse de changer le type d'un emplacement qui contient encore
           // du stock. Il faut le vider avant — on le dit explicitement.
@@ -574,12 +586,16 @@ export async function resolveRebutLocation(
     // marque l'emplacement comme destination de mise au rebut, ce qui le sort des
     // flux de réapprovisionnement et le rend explicite en inventaire.
     let id: number;
-    try {
-      id = await odoo.create(session, "stock.location", { ...base, scrap_location: true });
-    } catch (e) {
-      if (odoo.isNetworkError(e)) throw e;
-      // Champ absent sur cette version : l'emplacement reste valable sans.
+    if (!hasScrapField) {
       id = await odoo.create(session, "stock.location", base);
+    } else {
+      try {
+        id = await odoo.create(session, "stock.location", { ...base, scrap_location: true });
+      } catch (e) {
+        if (odoo.isNetworkError(e)) throw e;
+        // Champ absent sur cette version : l'emplacement reste valable sans.
+        id = await odoo.create(session, "stock.location", base);
+      }
     }
     return { id };
   } catch (e: any) {

@@ -68,6 +68,22 @@ export default function PerimeScreen({ session, client, priceItems, freeTypes, o
   // distinguer « pas de résultat » de « la requête a planté ».
   const [lotNote, setLotNote] = useState("");
   const [lastResult, setLastResult] = useState<{ orderName: string; pickingName: string | null; stockError: string } | null>(null);
+  // Saisie de la dernière reprise : permet de relancer le seul transfert de rebut
+  // s'il a échoué (submitReprise est idempotent, le BC n'est pas recréé).
+  const [lastInput, setLastInput] = useState<perimes.RepriseInput | null>(null);
+  const [retrying, setRetrying] = useState(false);
+  const retryTransfer = async () => {
+    if (!lastInput) return;
+    setRetrying(true);
+    try {
+      const res = await perimes.submitReprise(session, lastInput);
+      setLastResult({ orderName: res.orderName, pickingName: res.pickingName, stockError: res.stockError });
+      onToast(res.pickingName ? `Transfert ${res.pickingName} créé` : "Transfert toujours en échec", res.pickingName ? "success" : "error");
+    } catch (e: any) {
+      onToast(`Relance impossible : ${e?.message || "erreur"}`, "error");
+    }
+    setRetrying(false);
+  };
   const [recent, setRecent] = useState<any[]>([]);
   // Historique déroulant : fermé par défaut, lignes de tous les BC chargées à l'ouverture.
   const [showHistory, setShowHistory] = useState(false);
@@ -285,6 +301,7 @@ export default function PerimeScreen({ session, client, priceItems, freeTypes, o
       const res = await perimes.submitReprise(session, input);
 
       setLastResult({ orderName: res.orderName, pickingName: res.pickingName, stockError: res.stockError });
+      setLastInput(input);
       setReturns([]); setExchanges([]);
       onToast(
         res.pickingName
@@ -384,9 +401,17 @@ export default function PerimeScreen({ session, client, priceItems, freeTypes, o
                 )}
               </>
             ) : (
-              <div style={{ fontSize: 11.5, color: C.red, marginTop: 5, lineHeight: 1.5 }}>
-                Transfert de rebut NON créé. Erreur Odoo : {lastResult.stockError || "non renseignée"}
-              </div>
+              <>
+                <div style={{ fontSize: 11.5, color: C.red, marginTop: 5, lineHeight: 1.5 }}>
+                  Transfert de rebut NON créé. Erreur Odoo : {lastResult.stockError || "non renseignée"}
+                </div>
+                {lastInput && (
+                  <button onClick={retryTransfer} disabled={retrying}
+                    style={{ marginTop: 8, height: 36, padding: "0 14px", borderRadius: 10, border: "none", background: C.red, color: "#fff", fontSize: 12.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+                    {retrying ? "Relance…" : "Relancer le transfert"}
+                  </button>
+                )}
+              </>
             )}
             <button onClick={() => setLastResult(null)}
               style={{ marginTop: 8, background: "none", border: "none", padding: 0, cursor: "pointer", fontFamily: "inherit", fontSize: 11, fontWeight: 700, color: C.muted }}>
