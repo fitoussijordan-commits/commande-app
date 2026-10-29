@@ -395,12 +395,20 @@ export async function transmitToLogistics(session: odoo.OdooSession, orderId: nu
   }
 }
 
+// Commandes jointes : même date d'expédition prévue que la commande en cours,
+// sinon la logistique ne les prépare pas ensemble.
+export async function alignJoinedExpedition(session: odoo.OdooSession, ids: number[], field: string, date: string): Promise<string | undefined> {
+  if (!ids.length) return;
+  try { await odoo.write(session, "sale.order", ids, { [field]: date }); }
+  catch (e: any) { return `date d'expédition non reportée sur les commandes jointes : ${e?.message || e}`; }
+}
+
 export async function queueOrder(
   clientName: string,
   total: number,
   payloads: any[],
   label?: string,
-  transmit?: { pickingNote: string; scheduledDate?: string },   // commande directe logistique : confirmée au rejeu
+  transmit?: { pickingNote: string; scheduledDate?: string; joinedIds?: number[]; expeditionDate?: string },   // commande directe logistique : confirmée au rejeu
 ): Promise<{ localRef: string; id: number }> {
   const localRef = `LOCAL-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   const id = await db.enqueueOrder({ localRef, label: label || `Commande — ${clientName}`, clientName, total, payloads, ...(transmit ? { transmit } : {}) });
@@ -545,6 +553,10 @@ export async function flushQueue(
           if (order.transmit && resultIds[0]) {
             const t = await transmitToLogistics(session, resultIds[0], order.transmit.pickingNote, order.transmit.scheduledDate);
             if (t.error) transmitError = t.error;
+            if (order.transmit.joinedIds?.length && order.transmit.expeditionDate) {
+              const j = await alignJoinedExpedition(session, order.transmit.joinedIds, "x_studio_date_dexpdition_prvue", order.transmit.expeditionDate);
+              if (j) transmitError = transmitError ? `${transmitError} ; ${j}` : j;
+            }
           }
         }
         await db.updateQueuedOrder(order.id, {

@@ -162,7 +162,7 @@ export interface QueuedOrder {
   payloads?: any[];
   // Commande transmise directement à la logistique : à confirmer après création,
   // note recopiée sur le bon de préparation (voir sync.transmitToLogistics).
-  transmit?: { pickingNote: string; scheduledDate?: string };
+  transmit?: { pickingNote: string; scheduledDate?: string; joinedIds?: number[]; expeditionDate?: string };
   // Nouveau format générique : liste d'actions Odoo à rejouer en séquence.
   actions?: QueuedAction[];
   // Reprise de périmés : la séquence (BC → emplacement → transfert → validation)
