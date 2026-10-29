@@ -276,8 +276,9 @@ export default function PerimeScreen({ session, client, priceItems, freeTypes, o
 
   const returnsTotal = perimes.returnsValue(returns);
   const exchangesTotal = perimes.exchangesValue(exchanges);
-  // BC toujours à 0 € : l'écart est porté par une ligne d'ajustement (voir
-  // perimes.buildExchangeOrderPayload). > 0 : reprise non restituée ; < 0 : échange offert.
+  // BC toujours à 0 € : l'écart devient une remise supplémentaire sur les lignes
+  // du côté le plus élevé (perimes.balancedLines). > 0 : remise sur la reprise ;
+  // < 0 : remise sur l'échange. Les prix des articles restent les vrais prix.
   const adjustment = perimes.balanceAdjustment(returns, exchanges);
 
   const validate = async () => {
@@ -657,7 +658,7 @@ export default function PerimeScreen({ session, client, priceItems, freeTypes, o
           <Row label="Valeur des périmés repris" value={`−${fmt(returnsTotal)}`} color="#fb923c" />
           <Row label="Produits d'échange" value={fmt(exchangesTotal)} color="#5eead4" />
           {adjustment !== 0 && (
-            <Row label={adjustment > 0 ? "Ajustement (reprise non restituée)" : "Ajustement (échange offert)"}
+            <Row label={adjustment > 0 ? "Remise sur la reprise (solde à 0)" : "Remise sur l'échange (solde à 0)"}
               value={`${adjustment > 0 ? "+" : "−"}${fmt(Math.abs(adjustment))}`} color="rgba(255,255,255,0.7)" />
           )}
           <div style={{ borderTop: "1px solid rgba(255,255,255,0.12)", marginTop: 8, paddingTop: 8, display: "flex", justifyContent: "space-between", alignItems: "center" }}>

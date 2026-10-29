@@ -920,16 +920,7 @@ export function buildExchangeOrderPayload(opts: {
 }): any {
   const noteLines = opts.returns.map(
     r => `• ${r.product.name}${r.lot ? ` (lot ${r.lot})` : ""} × ${r.qty}`);
-  // Solde ramené à 0 : ni facturation en plus, ni avoir. Écart positif = reprise
-  // non utilisée en échange ; négatif = échange au-delà de la reprise, offert.
-  const adj = balanceAdjustment(opts.returns, opts.exchanges);
-  // Sans article de service, pas de ligne d'ajustement possible : on ramène à 0
-  // par une remise sur l'échange, ou en réduisant le prix des lignes reprises
-  // (l'arrondi par ligne peut alors laisser 1 centime — cas de repli seulement).
-  const exchDiscount = !opts.serviceProductId && adj < 0 && exchangesValue(opts.exchanges) > 0
-    ? Math.round(10000 * (-adj / exchangesValue(opts.exchanges))) / 100 : 0;
-  const returnScale = !opts.serviceProductId && adj > 0 && returnsValue(opts.returns) > 0
-    ? exchangesValue(opts.exchanges) / returnsValue(opts.returns) : 1;
+  const lines = balancedLines(opts.returns, opts.exchanges);
   return {
     partner_id: opts.clientId,
     state: "draft",
@@ -938,38 +929,71 @@ export function buildExchangeOrderPayload(opts: {
     ...(opts.tagIds && opts.tagIds.length ? { tag_ids: [[6, 0, opts.tagIds]] } : {}),
     note: [`Retour périmés — ${opts.repName}`, ...noteLines].join("\n"),
     order_line: [
-      // Repris : ligne négative = la réduction accordée au client.
+      // Repris : ligne négative = la réduction accordée au client, au PRIX PAYÉ ;
+      // le taux de reprise (ex. 80 %) est porté par la remise de la ligne.
       //
       // Sur l'ARTICLE DE SERVICE quand il existe : aucun mouvement de stock n'est
       // généré, le physique reste porté par le seul transfert de rebut. À défaut,
       // repli sur le produit lui-même — mais Odoo créera alors un second circuit
       // logistique à la confirmation, en doublon du transfert de rebut.
-      ...opts.returns.map(r => [0, 0, {
+      ...lines.returns.map(({ line: r, price, discount }) => [0, 0, {
         product_id: opts.serviceProductId || r.product.id,
         product_uom_qty: -Math.abs(r.qty),
-        price_unit: Math.round(r.unitPrice * returnScale * 100) / 100,
+        price_unit: price,
+        ...(discount > 0 ? { discount } : {}),
         name: `Reprise périmé — ${r.product.name}`
           + (r.lot ? ` — lot ${r.lot}` : "")
           + (r.product.default_code ? ` [${r.product.default_code}]` : ""),
       }]),
-      // Échange : produits neufs au tarif de l'année en cours.
-      ...opts.exchanges.map(e => [0, 0, {
+      // Échange : produits neufs au prix client ; remise éventuelle = solde à 0.
+      ...lines.exchanges.map(({ line: e, price, discount }) => [0, 0, {
         product_id: e.product.id,
         product_uom_qty: e.qty,
-        price_unit: Math.round(e.unitPrice * 100) / 100,
-        ...(exchDiscount > 0 ? { discount: exchDiscount } : {}),
+        price_unit: price,
+        ...(discount > 0 ? { discount } : {}),
         ...(opts.freeType ? { type_gratuit: opts.freeType } : {}),
       }]),
-      ...(opts.serviceProductId && adj !== 0 ? [[0, 0, {
-        product_id: opts.serviceProductId,
-        product_uom_qty: 1,
-        price_unit: adj,
-        name: adj > 0
-          ? "Ajustement reprise périmés — reprise non restituée, BC ramené à 0"
-          : "Ajustement reprise périmés — échange offert au-delà de la reprise, BC ramené à 0",
-      }]] : []),
     ],
   };
+}
+
+// ── BC toujours à 0 € : vrais prix + remises ──────────────────────────────────
+// Chaque ligne garde son vrai prix (prix payé pour la reprise, prix client pour
+// l'échange). Le taux de reprise est une remise sur la ligne reprise, et l'écart
+// entre reprise et échange est absorbé par une remise SUPPLÉMENTAIRE sur le côté
+// le plus élevé : échange au-delà de la reprise → remise sur l'échange ; reprise
+// non utilisée → remise sur la reprise. Calculé avec l'arrondi d'Odoo (prix et
+// remise à 2 décimales, sous-total arrondi par ligne) pour tomber pile à 0.
+type Bal<T> = { line: T; qty: number; price: number; discount: number };
+const r2 = (n: number) => Math.round(n * 100) / 100;
+const subtotal = (b: Bal<any>) => r2(b.qty * b.price * (1 - b.discount / 100));
+const sumOf = (bs: Bal<any>[]) => r2(bs.reduce((s, b) => s + subtotal(b), 0));
+
+export function balancedLines(returns: PerimeLine[], exchanges: ExchangeLine[]) {
+  const ret: Bal<PerimeLine>[] = returns.map(r => {
+    const price = r2(r.basePrice > 0 ? r.basePrice : r.unitPrice);
+    const discount = price > 0 ? r2(Math.min(100, Math.max(0, (1 - r.unitPrice / price) * 100))) : 0;
+    return { line: r, qty: Math.abs(r.qty), price, discount };
+  });
+  const exc: Bal<ExchangeLine>[] = exchanges.map(e => ({ line: e, qty: e.qty, price: r2(e.unitPrice), discount: 0 }));
+
+  const R = sumOf(ret), E = sumOf(exc);
+  if (R !== E) {
+    // Côté à réduire et montant à atteindre.
+    const [side, target] = E > R ? [exc as Bal<any>[], R] : [ret as Bal<any>[], E];
+    const total = E > R ? E : R;
+    const f = total > 0 ? target / total : 0;
+    for (const b of side) b.discount = r2(Math.min(100, 100 * (1 - (1 - b.discount / 100) * f)));
+    // Reste d'arrondi (quelques centimes) : on ajuste la remise de la plus grosse
+    // ligne par pas de 0,01 % jusqu'à tomber pile.
+    const big = side.reduce((a, b) => (b.qty * b.price > a.qty * a.price ? b : a), side[0]);
+    for (let i = 0; big && i < 400; i++) {
+      const diff = r2(sumOf(side) - target);
+      if (diff === 0) break;
+      big.discount = r2(Math.min(100, Math.max(0, big.discount + (diff > 0 ? 0.01 : -0.01))));
+    }
+  }
+  return { returns: ret, exchanges: exc };
 }
 
 // Écart à compenser pour un BC à 0 € (montants arrondis par ligne, comme Odoo).
