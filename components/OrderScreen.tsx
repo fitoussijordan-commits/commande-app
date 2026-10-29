@@ -1758,6 +1758,11 @@ function ClientStep({ session, onSelect, onImportBon, onOpenPlanning }: {
       background: "radial-gradient(circle at 12% 18%, rgba(45,212,191,0.30), transparent 42%), radial-gradient(circle at 88% 26%, rgba(125,211,252,0.28), transparent 44%), radial-gradient(circle at 55% 100%, rgba(253,186,116,0.22), transparent 50%), #eef3f6" }}>
       <div style={{ width: "100%", maxWidth: 560 }}>
         <div style={{ textAlign: "center", marginBottom: showWidgets ? 20 : 32 }}>
+          {showWidgets && (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src="/logo-accueil.png" alt="Dr. Hauschka" width={150}
+              style={{ display: "block", height: "auto", margin: "0 auto 16px" }} />
+          )}
           {!showWidgets && (
             <div style={{ width: 72, height: 72, borderRadius: 20, background: C.tealSoft, border: `1.5px solid ${C.tealMid}`, display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 16px" }}>
               <Icon name="user" size={34} color={C.teal} />
