@@ -633,11 +633,6 @@ export default function PerimeScreen({ session, client, priceItems, freeTypes, o
             <span style={{ fontSize: 19, fontWeight: 800, color: "#5eead4" }}>{fmt(0)}</span>
           </div>
           {/* Le BC est toujours à 0 : on signale ce que l'ajustement absorbe. */}
-          {returns.length > 0 && adjustment > 0.005 && (
-            <div style={{ fontSize: 11, color: "#fdba74", marginTop: 6, lineHeight: 1.45 }}>
-              Il reste {fmt(adjustment)} de reprise à utiliser — ajoute des produits d&apos;échange, sinon ils sont perdus.
-            </div>
-          )}
           {adjustment < -0.005 && (
             <div style={{ fontSize: 11, color: "#fdba74", marginTop: 6, lineHeight: 1.45 }}>
               L&apos;échange dépasse la reprise de {fmt(-adjustment)} — offert, rien n&apos;est facturé en plus.
