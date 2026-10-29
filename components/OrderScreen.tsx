@@ -746,7 +746,8 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
         if (odoo.isNetworkError(e)) {
           // Réseau indisponible → on met la commande en file de synchro locale.
           const payloads = freePayload ? [mainPayload, freePayload] : [mainPayload];
-          await sync.queueOrder(client.name, cartTotal, payloads);
+          await sync.queueOrder(client.name, cartTotal, payloads, undefined,
+            directLogistics ? { pickingNote: orderNote } : undefined);
           removeDraftForClient(client.id);
           refreshPendingDrafts();
           setAppliedPromos({});
@@ -760,6 +761,14 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
         onToast("Odoo a refusé le devis : " + (e?.message || e), "error");
         setSubmitting(false);
         return;
+      }
+
+      // 1 bis) Commande directe logistique : confirmation automatique + note de la
+      // commande recopiée sur le bon de préparation (la logistique ne lit que celle-là).
+      if (directLogistics) {
+        const t = await sync.transmitToLogistics(session, mainId, orderNote);
+        if (t.error) onToast(`Devis #${mainId} créé, mais ${t.error}`, "error");
+        else onToast(`Commande confirmée et transmise${t.pickings.length ? ` — ${t.pickings.join(", ")}` : ""}`, "success");
       }
 
       // 2) BC gratuit — le devis principal EXISTE déjà dans Odoo : quoi qu'il

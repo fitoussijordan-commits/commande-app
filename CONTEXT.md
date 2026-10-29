@@ -140,7 +140,10 @@ en masse au bouton « Télécharger les données ».)
   Expédition le jour même avant 14 h 30, sinon jour ouvré suivant ; week-end /
   férié = jour ouvré suivant avant 14 h 30 ; livraison J+1 ouvré ; étiquettes
   client « Fermé le <jour> » repoussent la livraison (expédition calée la veille).
-  Jamais pour un client bloqué. Pas de confirmation automatique (à venir).
+  Date d'expédition modifiable par le délégué (écrite telle quelle). Commande
+  CONFIRMÉE automatiquement (`sync.transmitToLogistics`) puis note recopiée dans
+  `stock.picking.note` (la logistique ne lit pas la note du devis). Hors ligne :
+  `transmit` sur l'élément de file, confirmé au rejeu. Jamais pour un client bloqué.
 - **Clients bloqués** (`lib/clientFlags.ts`) : étiquettes `res.partner.category_id`
   « Bloqué compta » et « Redressement judiciaire » (repérées par leur nom). Bandeau
   rouge (fiche, catalogue, import), devis créé SANS l'étiquette « Validé » et note

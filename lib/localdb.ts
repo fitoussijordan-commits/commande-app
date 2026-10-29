@@ -160,6 +160,9 @@ export interface QueuedOrder {
   total?: number;              // conservé pour rétro-compat
   // Ancien format commandes : liste de sale.order à créer.
   payloads?: any[];
+  // Commande transmise directement à la logistique : à confirmer après création,
+  // note recopiée sur le bon de préparation (voir sync.transmitToLogistics).
+  transmit?: { pickingNote: string };
   // Nouveau format générique : liste d'actions Odoo à rejouer en séquence.
   actions?: QueuedAction[];
   // Reprise de périmés : la séquence (BC → emplacement → transfert → validation)

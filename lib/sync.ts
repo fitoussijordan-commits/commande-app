@@ -367,14 +367,40 @@ export async function searchCachedClients(query: string, limit = 30): Promise<an
 
 // Enfile une commande (un ou plusieurs payloads sale.order) pour synchro ultérieure.
 // `label` optionnel : ex. « BC gratuit — X » quand seul le BC part en file.
+// Commande transmise directement à la logistique : confirmation automatique
+// (ce qui crée le bon de préparation), puis la note de la commande recopiée dans
+// la note du/des bon(s) de préparation — la logistique ne voit pas celle du devis.
+// N'échoue jamais : renvoie l'erreur, le devis existe déjà de toute façon.
+export async function transmitToLogistics(session: odoo.OdooSession, orderId: number, pickingNote: string)
+  : Promise<{ confirmed: boolean; pickings: string[]; error?: string }> {
+  try {
+    await odoo.callMethod(session, "sale.order", "action_confirm", [[orderId]]);
+  } catch (e: any) {
+    return { confirmed: false, pickings: [], error: `confirmation refusée par Odoo : ${e?.message || e}` };
+  }
+  try {
+    const picks = await odoo.searchRead(session, "stock.picking",
+      [["sale_id", "=", orderId], ["state", "not in", ["done", "cancel"]]], ["id", "name"], 20);
+    const text = pickingNote.trim();
+    if (picks.length && text) {
+      const html = `<p>${text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/\n/g, "<br/>")}</p>`;
+      await odoo.write(session, "stock.picking", picks.map((p: any) => p.id), { note: html });
+    }
+    return { confirmed: true, pickings: picks.map((p: any) => String(p.name)) };
+  } catch (e: any) {
+    return { confirmed: true, pickings: [], error: `note du bon de préparation non écrite : ${e?.message || e}` };
+  }
+}
+
 export async function queueOrder(
   clientName: string,
   total: number,
   payloads: any[],
-  label?: string
+  label?: string,
+  transmit?: { pickingNote: string },   // commande directe logistique : confirmée au rejeu
 ): Promise<{ localRef: string; id: number }> {
   const localRef = `LOCAL-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-  const id = await db.enqueueOrder({ localRef, label: label || `Commande — ${clientName}`, clientName, total, payloads });
+  const id = await db.enqueueOrder({ localRef, label: label || `Commande — ${clientName}`, clientName, total, payloads, ...(transmit ? { transmit } : {}) });
   return { localRef, id };
 }
 
@@ -505,17 +531,26 @@ export async function flushQueue(
           }
         }
         // Ancien format commandes : liste de sale.order.
+        let transmitError = "";
         if (order.payloads && order.payloads.length) {
           for (const payload of order.payloads) {
             const oid = await odoo.create(session, "sale.order", payload);
             resultIds.push(oid);
+          }
+          // Commande directe logistique : confirmation APRÈS création. Un échec ne
+          // doit pas faire rejouer la création (doublon) : il est seulement noté.
+          if (order.transmit && resultIds[0]) {
+            const t = await transmitToLogistics(session, resultIds[0], order.transmit.pickingNote);
+            if (t.error) transmitError = t.error;
           }
         }
         await db.updateQueuedOrder(order.id, {
           status: "synced",
           odooId: resultIds[0],
           attempts: (order.attempts || 0) + 1,
-          lastError: undefined,
+          // Devis créé mais confirmation / note du pick en échec : visible dans le
+          // panneau de la file, à terminer dans Odoo.
+          lastError: transmitError || undefined,
         });
         synced++;
         onOrderSynced?.({ ...order, status: "synced", odooId: resultIds[0] });
