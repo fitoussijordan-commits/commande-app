@@ -9,6 +9,7 @@ import AssistantScreen from "@/components/AssistantScreen";
 import BonCommandeScreen, { ImportedLine } from "@/components/BonCommandeScreen";
 import QtyPad from "@/components/QtyPad";
 import PerimesReportScreen from "@/components/PerimesReportScreen";
+import VisitPriority from "@/components/VisitPriority";
 import { onIncomingFile } from "@/lib/incomingFile";
 import * as sync from "@/lib/sync";
 import * as geo from "@/lib/geo";
@@ -1092,6 +1093,17 @@ function HomeScreen({ session, onNewOrder, onOpenClient, onToast, onImportBon }:
   const [events, setEvents] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [weekOffset, setWeekOffset] = useState(0); // 0 = semaine en cours, ±1 = semaine précédente/suivante
+  // Vue Semaine (cartes par jour) ou Mois (grille compacte). Retenue sur l'appareil.
+  const [view, setView] = useState<"week" | "month">(() => {
+    try { return localStorage.getItem("wms_planning_view") === "month" ? "month" : "week"; } catch { return "week"; }
+  });
+  const [monthOffset, setMonthOffset] = useState(0);
+  const chooseView = (v: "week" | "month") => {
+    setView(v);
+    try { localStorage.setItem("wms_planning_view", v); } catch {}
+  };
+  // Décale la période affichée (flèches et swipe), selon la vue.
+  const shift = (delta: number) => view === "month" ? setMonthOffset(o => o + delta) : setWeekOffset(o => o + delta);
   const [selectedEvent, setSelectedEvent] = useState<any>(null); // RDV ouvert en aperçu
   const [openingClient, setOpeningClient] = useState(false);
   const [editingEvent, setEditingEvent] = useState<any>(null); // RDV en cours de modification
@@ -1140,7 +1152,7 @@ function HomeScreen({ session, onNewOrder, onOpenClient, onToast, onImportBon }:
       el.style.transform = `translateX(${dir * width}px)`;
       // 2) après l'anim : change de semaine et réinjecte la grille depuis l'autre bord
       window.setTimeout(() => {
-        setWeekOffset(o => o + (dir > 0 ? -1 : 1));
+        shift(dir > 0 ? -1 : 1);
         if (gridRef.current) {
           gridRef.current.style.transition = "none";
           gridRef.current.style.transform = `translateX(${-dir * width}px)`;
@@ -1169,17 +1181,44 @@ function HomeScreen({ session, onNewOrder, onOpenClient, onToast, onImportBon }:
   }), [monday]);
   const today = new Date();
 
+  // Vue Mois : grille du lundi précédant le 1er au dimanche suivant la fin du mois.
+  const monthStart = useMemo(() => {
+    const t = new Date();
+    return new Date(t.getFullYear(), t.getMonth() + monthOffset, 1);
+  }, [monthOffset]);
+  const monthDays = useMemo(() => {
+    const first = startOfWeek(monthStart);
+    const end = new Date(monthStart.getFullYear(), monthStart.getMonth() + 1, 0);
+    const out: Date[] = [];
+    for (let d = new Date(first); out.length < 42 && (d <= end || out.length % 7 !== 0); d.setDate(d.getDate() + 1)) {
+      out.push(new Date(d));
+    }
+    return out;
+  }, [monthStart]);
+  const rangeStart = view === "month" ? monthDays[0] : monday;
+  const rangeEnd = useMemo(() => {
+    const e = new Date(view === "month" ? monthDays[monthDays.length - 1] : days[6]);
+    e.setDate(e.getDate() + 1);
+    return e;
+  }, [view, monthDays, days]);
+
+  // Clic sur un jour de la vue Mois → sa semaine en vue Semaine.
+  const openWeekOf = (d: Date) => {
+    const diff = startOfWeek(d).getTime() - startOfWeek(new Date()).getTime();
+    setWeekOffset(Math.round(diff / (7 * 86400000)));
+    chooseView("week");
+  };
+
   useEffect(() => {
     (async () => {
       setLoading(true);
       try {
-        const sunday = new Date(monday);
-        sunday.setDate(monday.getDate() + 7);
+        const sunday = rangeEnd;
         // ["active", "in", [true, false]] : un RDV annulé est ARCHIVÉ dans Odoo
         // (active = false) pour sortir du calendrier Odoo. Sans ce clause, le
         // domaine par défaut masquerait les archivés et le commercial perdrait
         // la trace de ses annulations dans l'app.
-        const domain = [["user_id", "=", session.uid], ["start", "<", toOdooDateStr(sunday)], ["stop", ">=", toOdooDateStr(monday)], ["active", "in", [true, false]]];
+        const domain = [["user_id", "=", session.uid], ["start", "<", toOdooDateStr(sunday)], ["stop", ">=", toOdooDateStr(rangeStart)], ["active", "in", [true, false]]];
         // res_model / res_id = « document lié » natif d'Odoo sur calendar.event.
         // C'est là qu'on enregistre la fiche client EXACTE au moment de la prise
         // de RDV (cf. AppointmentModal) : plus besoin de la retrouver au code,
@@ -1188,10 +1227,10 @@ function HomeScreen({ session, onNewOrder, onOpenClient, onToast, onImportBon }:
         const BASE_FIELDS = ["id", "name", "start", "stop", "location", "description", "x_studio_code_client_cli_calendar", "x_studio_annul", "active"];
         let rows: any[];
         try {
-          rows = await odoo.searchRead(session, "calendar.event", domain, [...BASE_FIELDS, "res_model", "res_id"], 200, "start asc");
+          rows = await odoo.searchRead(session, "calendar.event", domain, [...BASE_FIELDS, "res_model", "res_id"], 600, "start asc");
         } catch (e) {
           if (odoo.isNetworkError(e)) throw e;
-          rows = await odoo.searchRead(session, "calendar.event", domain, BASE_FIELDS, 200, "start asc");
+          rows = await odoo.searchRead(session, "calendar.event", domain, BASE_FIELDS, 600, "start asc");
         }
         setEvents(rows);
       } catch {
@@ -1200,7 +1239,7 @@ function HomeScreen({ session, onNewOrder, onOpenClient, onToast, onImportBon }:
       setLoading(false);
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [session, monday, reloadKey]);
+  }, [session, rangeStart.getTime(), rangeEnd.getTime(), reloadKey]);
 
   // Un RDV est annulé s'il porte le flag Studio OU s'il est archivé dans Odoo.
   // Les deux, parce qu'il existe des RDV annulés AVANT l'archivage (l'app ne
@@ -1252,7 +1291,10 @@ function HomeScreen({ session, onNewOrder, onOpenClient, onToast, onImportBon }:
   };
 
   const eventsByDay = days.map(d => events.filter(e => sameDay(odooToLocalDate(e.start), d)));
-  const totalCount = events.length;
+  // En vue Mois, on ne compte que les RDV du mois (la grille déborde sur les mois voisins).
+  const totalCount = view === "month"
+    ? events.filter(e => odooToLocalDate(e.start).getMonth() === monthStart.getMonth()).length
+    : events.length;
 
   // Les RDV créés depuis l'outil Commande indiquent le client dans la description
   // (le champ partner_ids n'est volontairement pas utilisé, cf. AppointmentModal — anti-invitation Outlook).
@@ -1377,19 +1419,34 @@ function HomeScreen({ session, onNewOrder, onOpenClient, onToast, onImportBon }:
             {today.toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long" })}
           </div>
           <div style={{ fontSize: 26, fontWeight: 800, color: C.text }}>
-            Salut {session.name?.split(" ")[0] || ""}, {loading ? "…" : <span style={{ color: C.teal }}>{totalCount} RDV</span>} cette semaine
+            Salut {session.name?.split(" ")[0] || ""}, {loading ? "…" : <span style={{ color: C.teal }}>{totalCount} RDV</span>}{" "}
+            {view === "month"
+              ? (monthOffset === 0 ? "ce mois-ci" : `en ${monthStart.toLocaleDateString("fr-FR", { month: "long" })}`)
+              : "cette semaine"}
           </div>
         </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <button onClick={() => setWeekOffset(o => o - 1)} title="Semaine précédente"
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" as const }}>
+          {/* Semaine / Mois */}
+          <div style={{ display: "flex", background: C.white, border: `1px solid ${C.border}`, borderRadius: 999, padding: 3, boxShadow: C.shadow }}>
+            {([["week", "Semaine"], ["month", "Mois"]] as const).map(([v, label]) => (
+              <button key={v} onClick={() => chooseView(v)}
+                style={{ height: 28, padding: "0 12px", borderRadius: 999, border: "none", cursor: "pointer", fontFamily: "inherit", fontSize: 12.5, fontWeight: 700,
+                  background: view === v ? C.tealMid : "transparent", color: view === v ? C.tealDark : C.muted }}>
+                {label}
+              </button>
+            ))}
+          </div>
+          <button onClick={() => shift(-1)} title={view === "month" ? "Mois précédent" : "Semaine précédente"}
             style={{ width: 32, height: 32, borderRadius: "50%", background: C.white, border: `1px solid ${C.border}`, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: C.textSec, boxShadow: C.shadow }}>
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M15 18l-6-6 6-6"/></svg>
           </button>
-          <div onClick={() => weekOffset !== 0 && setWeekOffset(0)}
-            style={{ fontSize: 13, fontWeight: 800, color: "#fff", background: C.teal, borderRadius: 999, padding: "9px 18px", cursor: weekOffset !== 0 ? "pointer" : "default", whiteSpace: "nowrap" as const, boxShadow: "0 8px 18px rgba(13,148,136,0.25)" }}>
-            {monday.toLocaleDateString("fr-FR", { day: "numeric", month: "short" })} — {days[6].toLocaleDateString("fr-FR", { day: "numeric", month: "short" })}
+          <div onClick={() => view === "month" ? setMonthOffset(0) : setWeekOffset(0)}
+            style={{ fontSize: 13, fontWeight: 800, color: "#fff", background: C.teal, borderRadius: 999, padding: "9px 18px", cursor: "pointer", whiteSpace: "nowrap" as const, boxShadow: "0 8px 18px rgba(13,148,136,0.25)", minWidth: 120, textAlign: "center" as const }}>
+            {view === "month"
+              ? monthStart.toLocaleDateString("fr-FR", { month: "long", year: "numeric" }).replace(/^./, c => c.toUpperCase())
+              : <>{monday.toLocaleDateString("fr-FR", { day: "numeric", month: "short" })} — {days[6].toLocaleDateString("fr-FR", { day: "numeric", month: "short" })}</>}
           </div>
-          <button onClick={() => setWeekOffset(o => o + 1)} title="Semaine suivante"
+          <button onClick={() => shift(1)} title={view === "month" ? "Mois suivant" : "Semaine suivante"}
             style={{ width: 32, height: 32, borderRadius: "50%", background: C.white, border: `1px solid ${C.border}`, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: C.textSec, boxShadow: C.shadow }}>
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M9 18l6-6-6-6"/></svg>
           </button>
@@ -1406,8 +1463,56 @@ function HomeScreen({ session, onNewOrder, onOpenClient, onToast, onImportBon }:
         </div>
       </div>
 
+      {/* Clients dont la visite est due selon leur rythme (CA N-1) — repliable */}
+      <VisitPriority session={session} onOpenClient={onOpenClient} />
+
+      {/* Vue mois — grille compacte : 3 RDV max par jour, clic sur un jour = sa semaine */}
+      {view === "month" && (
+        <div ref={gridRef} onTouchStart={onTouchStart} onTouchMove={onTouchMove} onTouchEnd={onTouchEnd}
+          style={{ flex: 1, display: "flex", flexDirection: "column" as const, transform: "translateX(0px)", willChange: "transform", touchAction: "pan-y" as const }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 8, marginBottom: 6 }}>
+            {WEEKDAY_LABELS.map(l => (
+              <div key={l} style={{ fontSize: 10.5, fontWeight: 700, color: C.muted, textTransform: "uppercase" as const, letterSpacing: "0.04em", textAlign: "center" as const }}>{l.slice(0, 3)}</div>
+            ))}
+          </div>
+          <div style={{ flex: 1, display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gridAutoRows: "minmax(96px, 1fr)", gap: 8 }}>
+            {monthDays.map(d => {
+              const inMonth = d.getMonth() === monthStart.getMonth();
+              const isToday = sameDay(d, today);
+              const dayEvents = events.filter(e => sameDay(odooToLocalDate(e.start), d));
+              return (
+                <div key={d.toISOString()} onClick={() => openWeekOf(d)}
+                  style={{ background: C.white, borderRadius: 12, padding: "6px 7px", cursor: "pointer", opacity: inMonth ? 1 : 0.4, overflow: "hidden",
+                    boxShadow: isToday ? `0 0 0 2px ${C.teal}` : "0 1px 4px rgba(15,23,42,0.05)", display: "flex", flexDirection: "column" as const, gap: 3 }}>
+                  <div style={{ alignSelf: "flex-start", minWidth: 22, height: 22, borderRadius: 11, display: "flex", alignItems: "center", justifyContent: "center", padding: "0 5px",
+                    fontSize: 12, fontWeight: 800, background: isToday ? C.teal : "transparent", color: isToday ? "#fff" : C.text }}>
+                    {d.getDate()}
+                  </div>
+                  {dayEvents.slice(0, 3).map((e, idx) => {
+                    const col = EVENT_COLORS[idx % EVENT_COLORS.length];
+                    return (
+                      <button key={e.id} onClick={ev => { ev.stopPropagation(); setSelectedEvent(e); }}
+                        style={{ display: "flex", alignItems: "center", gap: 4, width: "100%", border: "none", borderRadius: 6, padding: "3px 5px", cursor: "pointer", fontFamily: "inherit", textAlign: "left" as const,
+                          background: isCancelled(e) ? "#f8fafc" : col.bg, opacity: isCancelled(e) ? 0.6 : 1 }}>
+                        <span style={{ fontSize: 9.5, fontWeight: 800, color: isCancelled(e) ? C.muted : col.text, flexShrink: 0 }}>
+                          {odooToLocalDate(e.start).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}
+                        </span>
+                        <span style={{ fontSize: 10, fontWeight: 600, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const, textDecoration: isCancelled(e) ? "line-through" : "none" }}>{e.name}</span>
+                      </button>
+                    );
+                  })}
+                  {dayEvents.length > 3 && (
+                    <div style={{ fontSize: 10, fontWeight: 700, color: C.teal, paddingLeft: 4 }}>+{dayEvents.length - 3} autre{dayEvents.length - 3 > 1 ? "s" : ""}</div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
       {/* Vue semaine — 7 colonnes façon cartes, glissables gauche/droite */}
-      <div
+      {view === "week" && <div
         ref={gridRef}
         onTouchStart={onTouchStart}
         onTouchMove={onTouchMove}
@@ -1461,7 +1566,7 @@ function HomeScreen({ session, onNewOrder, onOpenClient, onToast, onImportBon }:
             </div>
           );
         })}
-      </div>
+      </div>}
 
       {/* ── Aperçu d'un RDV (heure, lieu, client, notes) avant d'ouvrir la fiche ── */}
       {selectedEvent && (() => {

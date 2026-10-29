@@ -130,6 +130,11 @@ en masse au bouton « Télécharger les données ».)
   `base = "pricelist"` + `base_pricelist_id`. `resolveBaseLists` rattache les règles
   de la liste de base ; sans ça la remise partirait du prix catalogue. Le
   préchargement garde TOUTES les listes pour que ça marche hors ligne.
+- **Clients à visiter en priorité** (`components/VisitPriority.tsx`, accueil) :
+  rythme selon le CA N-1 `x_ca_n_1` (≥ 20 k€ mensuel, 10–20 k€ tous les 2 mois,
+  < 10 k€ tous les 4 mois — constante `RULES`). Clients = ceux dont le commercial
+  est le Vendeur (`res.partner.user_id`). Dernière visite = dernier RDV passé non
+  annulé (lien res_model/res_id, sinon code client du RDV).
 - **Transfert de rebut des périmés = suivi, pas logistique.** Les produits repris
   ne reviennent PAS physiquement (détruits chez le client). Le transfert est gardé
   volontairement : lots rattachés, et surtout plafond « déjà repris » (livré −
