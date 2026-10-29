@@ -11,6 +11,8 @@ import QtyPad from "@/components/QtyPad";
 import PerimesReportScreen from "@/components/PerimesReportScreen";
 import VisitPriority from "@/components/VisitPriority";
 import AgendaGlass from "@/components/AgendaGlass";
+import { resolveClientFamily } from "@/lib/perimes";
+import { orderMeta, isMea, isImplantation, offerNames, type OrderMeta } from "@/lib/orderOffers";
 import { onIncomingFile } from "@/lib/incomingFile";
 import * as sync from "@/lib/sync";
 import * as geo from "@/lib/geo";
@@ -2055,6 +2057,10 @@ function ClientHistory({ session, client }: { session: odoo.OdooSession; client:
   // Palmarès + MEA : chargés à la demande (lignes de commandes confirmées de l'année).
   const [ranking, setRanking] = useState<any[]>([]);
   const [meaOrders, setMeaOrders] = useState<any[]>([]);
+  // Devis d'implantation : séparés des MEA, devis non confirmés compris.
+  const [implantOrders, setImplantOrders] = useState<any[]>([]);
+  const [offerLabels, setOfferLabels] = useState<Map<number, string>>(new Map());
+  const [meta, setMeta] = useState<OrderMeta | null>(null);
   const [analyLoading, setAnalyLoading] = useState(false);
 
   // Gratuités : quotas Studio (état courant, fiche client) + consommation de l'année
@@ -2097,14 +2103,33 @@ function ClientHistory({ session, client }: { session: odoo.OdooSession; client:
       try {
         const start = `${year}-01-01 00:00:00`;
         const end = `${year}-12-31 23:59:59`;
-        // Commandes confirmées du client sur l'année (avec modèle de devis pour les MEA).
+        // TOUTES les fiches du client (société, adresses, doublons du même code) :
+        // une MEA passée sur l'adresse de livraison n'apparaissait pas.
+        const [m, family] = await Promise.all([
+          orderMeta(session).catch(() => ({ implantValues: [] } as OrderMeta)),
+          resolveClientFamily(session, client).catch(() => [client.id]),
+        ]);
+        if (cancelled) return;
+        setMeta(m);
+        const extra = [m.offersField, m.typeField].filter((f): f is string => !!f);
+        const orderFields = ["id", "name", "date_order", "amount_total", "state", "sale_order_template_id", ...extra];
+        const inYear = [["partner_id", "child_of", family], ["date_order", ">=", start], ["date_order", "<=", end]];
         const yearOrders = await odoo.searchRead(session, "sale.order",
-          [["partner_id", "=", client.id], ["state", "in", ["sale", "done"]], ["date_order", ">=", start], ["date_order", "<=", end]],
-          ["id", "name", "date_order", "amount_total", "sale_order_template_id"], 300, "date_order desc");
+          [...inYear, ["state", "in", ["sale", "done"]]], orderFields, 300, "date_order desc");
         if (cancelled) return;
 
-        // MEA = commandes ayant un modèle de devis.
-        setMeaOrders(yearOrders.filter((o: any) => Array.isArray(o.sale_order_template_id) && o.sale_order_template_id[0]));
+        // MEA = commande portant des « Offres commandées » (ou un modèle de
+        // devis), hors devis d'implantation, affichés à part.
+        if (mode === "mea") {
+          const mea = yearOrders.filter((o: any) => isMea(o, m) && !isImplantation(o, m));
+          // Implantations : devis non confirmés compris (c'est souvent leur état).
+          const allYear = await odoo.searchRead(session, "sale.order",
+            [...inYear, ["state", "!=", "cancel"]], orderFields, 300, "date_order desc");
+          if (cancelled) return;
+          setImplantOrders(allYear.filter((o: any) => isImplantation(o, m)));
+          setOfferLabels(await offerNames(session, mea, m));
+          setMeaOrders(mea);
+        }
 
         // Palmarès : agrège les lignes de toutes ces commandes.
         if (mode === "ranking" && yearOrders.length) {
@@ -2152,7 +2177,7 @@ function ClientHistory({ session, client }: { session: odoo.OdooSession; client:
           }
         }
       } catch {
-        setRanking([]); setMeaOrders([]); setGiftYearLines([]);
+        setRanking([]); setMeaOrders([]); setImplantOrders([]); setGiftYearLines([]);
       }
       setAnalyLoading(false);
     })();
@@ -2262,15 +2287,45 @@ function ClientHistory({ session, client }: { session: odoo.OdooSession; client:
         {/* ── Onglet MEA ── */}
         {mode === "mea" && (
           analyLoading ? <div style={{ textAlign: "center" as const, color: C.muted, padding: 40 }}>Chargement…</div>
-          : meaOrders.length === 0 ? <div style={{ textAlign: "center" as const, color: C.muted, padding: 40 }}>Aucune MEA commandée en {year}</div>
           : (
             <div style={{ display: "flex", flexDirection: "column" as const, gap: 10 }}>
+              {meaOrders.length === 0 && <div style={{ textAlign: "center" as const, color: C.muted, padding: 24 }}>Aucune MEA commandée en {year}</div>}
               {meaOrders.map(o => (
                 <button key={o.id} onClick={() => openOrder(o)}
                   style={{ display: "flex", alignItems: "center", gap: 12, padding: "14px 16px", background: C.white, border: `1px solid ${C.border}`, borderRadius: 14, boxShadow: C.shadow, cursor: "pointer", fontFamily: "inherit", textAlign: "left" as const, width: "100%" }}>
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: 13, fontWeight: 700, color: C.text }}>{o.sale_order_template_id?.[1] || "Offre"}</div>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: C.text }}>
+                      {(meta?.offersField && (o[meta.offersField] || []).map((id: number) => offerLabels.get(id)).filter(Boolean).join(" · "))
+                        || o.sale_order_template_id?.[1] || "Offre"}
+                    </div>
                     <div style={{ fontSize: 11, color: C.muted, marginTop: 2 }}>{o.name} · {o.date_order ? fmtDate(new Date(o.date_order.replace(" ", "T") + "Z").getTime()) : "—"}</div>
+                  </div>
+                  <div style={{ fontSize: 14, fontWeight: 800, color: C.tealDark, flexShrink: 0 }}>{fmtPrice(o.amount_total)}</div>
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={C.muted} strokeWidth="2" style={{ flexShrink: 0 }}><path d="M9 18l6-6-6-6"/></svg>
+                </button>
+              ))}
+
+              {/* Devis d'implantation : à part des MEA, devis non confirmés compris */}
+              <div style={{ fontSize: 11, fontWeight: 800, color: C.muted, textTransform: "uppercase" as const, letterSpacing: "0.05em", marginTop: 14 }}>
+                Devis d&apos;implantation
+              </div>
+              {implantOrders.length === 0 ? (
+                <div style={{ fontSize: 13, color: C.muted, padding: "4px 2px" }}>
+                  {meta && !meta.typeField
+                    ? "Champ « Type de commande » introuvable dans Odoo — implantations non repérables."
+                    : `Aucun devis d'implantation en ${year}`}
+                </div>
+              ) : implantOrders.map(o => (
+                <button key={o.id} onClick={() => openOrder(o)}
+                  style={{ display: "flex", alignItems: "center", gap: 12, padding: "14px 16px", background: C.white, border: `1px solid ${C.border}`, borderLeft: `4px solid ${C.teal}`, borderRadius: 14, boxShadow: C.shadow, cursor: "pointer", fontFamily: "inherit", textAlign: "left" as const, width: "100%" }}>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: C.text }}>
+                      {o.sale_order_template_id?.[1] || (meta?.typeField && Array.isArray(o[meta.typeField]) ? o[meta.typeField][1] : "Implantation")}
+                    </div>
+                    <div style={{ fontSize: 11, color: C.muted, marginTop: 2 }}>
+                      {o.name} · {o.date_order ? fmtDate(new Date(o.date_order.replace(" ", "T") + "Z").getTime()) : "—"}
+                      {" · "}{o.state === "draft" || o.state === "sent" ? "Devis" : "Confirmé"}
+                    </div>
                   </div>
                   <div style={{ fontSize: 14, fontWeight: 800, color: C.tealDark, flexShrink: 0 }}>{fmtPrice(o.amount_total)}</div>
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={C.muted} strokeWidth="2" style={{ flexShrink: 0 }}><path d="M9 18l6-6-6-6"/></svg>
