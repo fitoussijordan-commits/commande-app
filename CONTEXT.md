@@ -130,7 +130,11 @@ en masse au bouton « Télécharger les données ».)
   `base = "pricelist"` + `base_pricelist_id`. `resolveBaseLists` rattache les règles
   de la liste de base ; sans ça la remise partirait du prix catalogue. Le
   préchargement garde TOUTES les listes pour que ça marche hors ligne.
-- **Clients à visiter en priorité** (`components/VisitPriority.tsx`, accueil) :
+- **Écran d'accueil = « Choisir un client »** (step `client`), pas le planning
+  (step `home`). Sous la recherche : cartes « verre » iOS (`components/glass.ts`)
+  — `AgendaGlass` (semaine/mois, ouvre le planning sur la semaine choisie) et
+  `VisitPriority`. Le fond coloré de l'écran est nécessaire à l'effet verre.
+- **Clients à visiter en priorité** (`components/VisitPriority.tsx`) :
   rythme selon le CA N-1 `x_ca_n_1` (≥ 20 k€ mensuel, 10–20 k€ tous les 2 mois,
   < 10 k€ tous les 4 mois — constante `RULES`). Clients = ceux dont le commercial
   est le Vendeur (`res.partner.user_id`). Dernière visite = dernier RDV passé non

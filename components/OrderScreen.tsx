@@ -10,6 +10,7 @@ import BonCommandeScreen, { ImportedLine } from "@/components/BonCommandeScreen"
 import QtyPad from "@/components/QtyPad";
 import PerimesReportScreen from "@/components/PerimesReportScreen";
 import VisitPriority from "@/components/VisitPriority";
+import AgendaGlass from "@/components/AgendaGlass";
 import { onIncomingFile } from "@/lib/incomingFile";
 import * as sync from "@/lib/sync";
 import * as geo from "@/lib/geo";
@@ -376,6 +377,8 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
   // Import d'un bon : depuis la fiche client (client connu) ou depuis l'accueil /
   // la recherche client (client retrouvé d'après le bon, puis confirmé).
   const [bonOrigin, setBonOrigin] = useState<"hub" | "home" | "client">("hub");
+  // Semaine à ouvrir dans le planning quand on vient de l'agenda de l'accueil.
+  const [planningDate, setPlanningDate] = useState<Date | null>(null);
   // Fichier à analyser : choisi via un bouton « Importer », ou ouvert dans l'app
   // depuis Mail (partager → Commande).
   const [incomingFile, setIncomingFile] = useState<File | null>(null);
@@ -702,7 +705,7 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
             Nouvelle commande
           </button>
           {/* Mène au planning (avant : doublon exact de « Nouvelle commande ») */}
-          <button onClick={() => { setDone(null); setCart({}); setClient(null); setNote(""); setResumePrompt(null); setAppliedPromos({}); setStep("home"); }}
+          <button onClick={() => { setDone(null); setCart({}); setClient(null); setNote(""); setResumePrompt(null); setAppliedPromos({}); setPlanningDate(null); setStep("home"); }}
             style={{ display: "flex", alignItems: "center", gap: 8, padding: "14px 24px", background: C.bg, color: C.muted, border: `1px solid ${C.border}`, borderRadius: 12, fontSize: 15, cursor: "pointer", fontFamily: "inherit" }}>
             <Icon name="calendar" size={16} /> Mon planning
           </button>
@@ -757,7 +760,7 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
 
         {/* Voir planning — visible sur l'écran de recherche client (pas de client sélectionné) */}
         {step === "client" && (
-          <button onClick={() => setStep("home")}
+          <button onClick={() => { setPlanningDate(null); setStep("home"); }}
             style={{ display: "flex", alignItems: "center", gap: 6, height: 36, padding: "0 14px", borderRadius: 10, background: C.bg, border: `1px solid ${C.border}`, cursor: "pointer", fontFamily: "inherit", fontSize: 13, fontWeight: 600, color: C.textSec }}>
             <Icon name="calendar" size={15} /> Planning
           </button>
@@ -923,10 +926,11 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
       {/* ── Étapes ── */}
       {step === "home" && (
         <HomeScreen session={session} onNewOrder={() => setStep("client")} onOpenClient={(c) => selectClient(c, "planning")} onToast={onToast}
-          onImportBon={() => pickBonFile("home")} />
+          initialDate={planningDate} />
       )}
 
-      {step === "client" && <ClientStep session={session} onSelect={selectClient} onImportBon={() => pickBonFile("client")} />}
+      {step === "client" && <ClientStep session={session} onSelect={selectClient} onImportBon={() => pickBonFile("client")}
+        onOpenPlanning={(d) => { setPlanningDate(d); setStep("home"); }} />}
 
       {step === "hub" && client && (
         <ClientHub
@@ -1085,16 +1089,21 @@ function sameDay(a: Date, b: Date): boolean {
   return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
 }
 
-function HomeScreen({ session, onNewOrder, onOpenClient, onToast, onImportBon }: {
-  session: odoo.OdooSession; onNewOrder: () => void; onImportBon: () => void;
+function HomeScreen({ session, onNewOrder, onOpenClient, onToast, initialDate }: {
+  session: odoo.OdooSession; onNewOrder: () => void;
+  initialDate?: Date | null;   // ouvert depuis l'agenda de l'accueil : cette semaine-là
   onOpenClient: (client: any) => void;
   onToast: (msg: string, type?: "success" | "error" | "info") => void;
 }) {
   const [events, setEvents] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
-  const [weekOffset, setWeekOffset] = useState(0); // 0 = semaine en cours, ±1 = semaine précédente/suivante
+  const [weekOffset, setWeekOffset] = useState(() => initialDate
+    ? Math.round((startOfWeek(initialDate).getTime() - startOfWeek(new Date()).getTime()) / (7 * 86400000))
+    : 0); // 0 = semaine en cours, ±1 = semaine précédente/suivante
   // Vue Semaine (cartes par jour) ou Mois (grille compacte). Retenue sur l'appareil.
   const [view, setView] = useState<"week" | "month">(() => {
+    // Arrivée depuis un jour de l'agenda de l'accueil : sa semaine, en détail.
+    if (initialDate) return "week";
     try { return localStorage.getItem("wms_planning_view") === "month" ? "month" : "week"; } catch { return "week"; }
   });
   const [monthOffset, setMonthOffset] = useState(0);
@@ -1450,10 +1459,6 @@ function HomeScreen({ session, onNewOrder, onOpenClient, onToast, onImportBon }:
             style={{ width: 32, height: 32, borderRadius: "50%", background: C.white, border: `1px solid ${C.border}`, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: C.textSec, boxShadow: C.shadow }}>
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M9 18l6-6-6-6"/></svg>
           </button>
-          <button onClick={onImportBon} title="Importer un bon de commande (PDF ou photo)"
-            style={{ display: "flex", alignItems: "center", gap: 6, height: 34, padding: "0 14px", borderRadius: 999, background: C.white, color: C.tealDark, border: `1.5px solid ${C.tealMid}`, cursor: "pointer", fontFamily: "inherit", fontSize: 13, fontWeight: 700, boxShadow: C.shadow }}>
-            <Icon name="file" size={15} /> Importer un bon
-          </button>
 
           <button onClick={() => setNewAdminRdv(true)} title="Nouveau rendez-vous"
             style={{ display: "flex", alignItems: "center", gap: 6, height: 34, padding: "0 14px", borderRadius: 999, background: C.teal, color: "#fff", border: "none", cursor: "pointer", fontFamily: "inherit", fontSize: 13, fontWeight: 700, boxShadow: "0 8px 18px rgba(13,148,136,0.25)" }}>
@@ -1462,9 +1467,6 @@ function HomeScreen({ session, onNewOrder, onOpenClient, onToast, onImportBon }:
           </button>
         </div>
       </div>
-
-      {/* Clients dont la visite est due selon leur rythme (CA N-1) — repliable */}
-      <VisitPriority session={session} onOpenClient={onOpenClient} />
 
       {/* Vue mois — grille compacte : 3 RDV max par jour, clic sur un jour = sa semaine */}
       {view === "month" && (
@@ -1670,7 +1672,9 @@ function Row({ icon, label }: { icon: string; label: string }) {
 // ═══════════════════════════════════════════════════════════════════════════
 // ÉTAPE 1 — Sélection client
 // ═══════════════════════════════════════════════════════════════════════════
-function ClientStep({ session, onSelect, onImportBon }: { session: odoo.OdooSession; onSelect: (c: any) => void; onImportBon: () => void }) {
+function ClientStep({ session, onSelect, onImportBon, onOpenPlanning }: {
+  session: odoo.OdooSession; onSelect: (c: any) => void; onImportBon: () => void; onOpenPlanning: (d: Date) => void;
+}) {
   const [q, setQ] = useState("");
   const [results, setResults] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
@@ -1744,13 +1748,21 @@ function ClientStep({ session, onSelect, onImportBon }: { session: odoo.OdooSess
   // repli sur le cache hors ligne et la liste « clients proches ».
   const displayed = dedupeClients(q.length >= 2 ? results : (locMode ? nearby : []));
 
+  // Agenda + clients prioritaires : affichés tant qu'on ne cherche pas.
+  const showWidgets = q.trim().length < 2 && !locMode;
+
   return (
-    <div style={{ flex: 1, display: "flex", flexDirection: "column" as const, alignItems: "center", justifyContent: "center", padding: 40 }}>
+    <div style={{ flex: 1, display: "flex", flexDirection: "column" as const, alignItems: "center", justifyContent: showWidgets ? "flex-start" : "center",
+      padding: showWidgets ? "32px 24px 40px" : 40, overflowY: "auto" as const,
+      // Fond coloré doux : sans lui, l'effet verre des cartes ne se voit pas.
+      background: "radial-gradient(circle at 12% 18%, rgba(45,212,191,0.30), transparent 42%), radial-gradient(circle at 88% 26%, rgba(125,211,252,0.28), transparent 44%), radial-gradient(circle at 55% 100%, rgba(253,186,116,0.22), transparent 50%), #eef3f6" }}>
       <div style={{ width: "100%", maxWidth: 560 }}>
-        <div style={{ textAlign: "center", marginBottom: 32 }}>
-          <div style={{ width: 72, height: 72, borderRadius: 20, background: C.tealSoft, border: `1.5px solid ${C.tealMid}`, display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 16px" }}>
-            <Icon name="user" size={34} color={C.teal} />
-          </div>
+        <div style={{ textAlign: "center", marginBottom: showWidgets ? 20 : 32 }}>
+          {!showWidgets && (
+            <div style={{ width: 72, height: 72, borderRadius: 20, background: C.tealSoft, border: `1.5px solid ${C.tealMid}`, display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 16px" }}>
+              <Icon name="user" size={34} color={C.teal} />
+            </div>
+          )}
           <div style={{ fontSize: 26, fontWeight: 800, color: C.text }}>Choisir un client</div>
           <div style={{ fontSize: 14, color: C.muted, marginTop: 6 }}>Recherche par nom, référence ou ville</div>
         </div>
@@ -1834,6 +1846,13 @@ function ClientStep({ session, onSelect, onImportBon }: { session: odoo.OdooSess
           )}
         </div>
       </div>
+
+      {showWidgets && (
+        <div style={{ width: "100%", maxWidth: 1040, marginTop: 6, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(400px, 1fr))", gap: 18, alignItems: "start" }}>
+          <AgendaGlass session={session} onOpenPlanning={onOpenPlanning} />
+          <VisitPriority session={session} onOpenClient={onSelect} />
+        </div>
+      )}
     </div>
   );
 }

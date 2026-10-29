@@ -12,6 +12,7 @@
 import { useEffect, useState } from "react";
 import * as odoo from "@/lib/odoo";
 import * as sync from "@/lib/sync";
+import { GLASS } from "@/components/glass";
 
 const C = {
   white: "#fff", text: "#0f172a", textSec: "#334155", muted: "#94a3b8", border: "#e2e8f0",
@@ -106,52 +107,58 @@ export default function VisitPriority({ session, onOpenClient }: {
     return () => { cancelled = true; };
   }, [session]);
 
-  if (error) return null;   // discret : le planning reste utilisable
   const toPlan = items?.filter(p => !p.next).length ?? 0;
+  const shown = items ? (open ? items : items.slice(0, 5)) : [];
 
   return (
-    <div style={{ marginBottom: 18 }}>
-      <button onClick={() => setOpen(o => !o)} disabled={!items?.length}
-        style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", minHeight: 48, padding: "0 16px", borderRadius: 14,
-          border: `1px solid ${toPlan ? "#fed7aa" : C.border}`, background: toPlan ? C.orangeSoft : C.white, boxShadow: C.shadow,
-          cursor: items?.length ? "pointer" : "default", fontFamily: "inherit", textAlign: "left" as const }}>
-        <span style={{ width: 9, height: 9, borderRadius: "50%", background: toPlan ? C.orange : C.teal, flexShrink: 0 }} />
-        <span style={{ fontSize: 14, fontWeight: 800, color: C.text }}>
-          {items === null ? "Clients à visiter…"
-            : !items.length ? "Aucun client à visiter en priorité"
-            : `${toPlan} client${toPlan > 1 ? "s" : ""} à visiter en priorité`}
-        </span>
-        {items && items.length > toPlan && (
-          <span style={{ fontSize: 12, color: C.muted, fontWeight: 600 }}>· {items.length - toPlan} déjà planifié{items.length - toPlan > 1 ? "s" : ""}</span>
+    <div style={{ ...GLASS, padding: 18, display: "flex", flexDirection: "column" as const, minHeight: 0 }}>
+      <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginBottom: 12 }}>
+        <div style={{ fontSize: 17, fontWeight: 800, color: C.text }}>À visiter en priorité</div>
+        {!!toPlan && (
+          <span style={{ fontSize: 12, fontWeight: 800, color: "#fff", background: C.orange, borderRadius: 999, padding: "2px 9px" }}>{toPlan}</span>
         )}
-        {!!items?.length && <span style={{ marginLeft: "auto", color: C.muted }}>{open ? "▴" : "▾"}</span>}
-      </button>
+      </div>
 
-      {open && items && items.length > 0 && (
-        <div style={{ marginTop: 8, display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: 8, maxHeight: 340, overflowY: "auto" as const }}>
-          {items.map(p => {
-            const late = p.lateDays > 0;
-            return (
-              <button key={p.client.id} onClick={() => onOpenClient(p.client)}
-                style={{ textAlign: "left" as const, padding: "10px 12px", borderRadius: 12, border: `1px solid ${C.border}`, background: C.white, cursor: "pointer", fontFamily: "inherit",
-                  borderLeft: `4px solid ${p.next ? C.teal : late ? C.red : C.orange}`, opacity: p.next ? 0.7 : 1 }}>
-                <div style={{ fontSize: 13.5, fontWeight: 800, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>{p.client.name}</div>
-                <div style={{ fontSize: 11.5, color: C.muted, marginTop: 1 }}>
-                  {[p.client.city, `CA N-1 ${fmtEUR(p.ca)}`, p.rule.label].filter(Boolean).join(" · ")}
-                </div>
-                <div style={{ fontSize: 12, fontWeight: 700, marginTop: 4, color: p.next ? C.tealDark : late ? C.red : C.orange }}>
-                  {p.next ? `RDV prévu le ${fmtDay(p.next)}`
-                    : !p.lastVisit ? `Aucune visite depuis ${HISTORY_MONTHS} mois`
-                    : late ? `En retard de ${p.lateDays} j`
-                    : `À prévoir avant le ${fmtDay(p.due)}`}
-                  {p.lastVisit && (
-                    <span style={{ color: C.muted, fontWeight: 600 }}>{" · "}dernière visite {fmtDay(p.lastVisit)}</span>
-                  )}
-                </div>
-              </button>
-            );
-          })}
-        </div>
+      {error && <div style={{ fontSize: 13, color: C.muted }}>{error === "Hors ligne" ? "Indisponible hors ligne." : error}</div>}
+      {!error && items === null && <div style={{ fontSize: 13, color: C.muted }}>…</div>}
+      {!error && items?.length === 0 && (
+        <div style={{ fontSize: 13, color: C.muted, lineHeight: 1.5 }}>Tous tes clients sont à jour de leurs visites.</div>
+      )}
+
+      <div style={{ display: "flex", flexDirection: "column" as const, gap: 6, overflowY: "auto" as const, maxHeight: open ? 420 : undefined }}>
+        {shown.map(p => {
+          const late = p.lateDays > 0;
+          const color = p.next ? C.tealDark : (late || !p.lastVisit) ? C.red : C.orange;
+          return (
+            <button key={p.client.id} onClick={() => onOpenClient(p.client)}
+              style={{ display: "flex", alignItems: "center", gap: 10, textAlign: "left" as const, padding: "9px 12px", borderRadius: 14, border: "none",
+                background: "rgba(255,255,255,0.7)", cursor: "pointer", fontFamily: "inherit", opacity: p.next ? 0.65 : 1 }}>
+              <span style={{ width: 4, alignSelf: "stretch", borderRadius: 2, background: color, flexShrink: 0 }} />
+              <span style={{ flex: 1, minWidth: 0 }}>
+                <span style={{ display: "block", fontSize: 13.5, fontWeight: 800, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>{p.client.name}</span>
+                <span style={{ display: "block", fontSize: 11.5, color: C.muted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>
+                  {[p.client.city, fmtEUR(p.ca), p.rule.label].filter(Boolean).join(" · ")}
+                </span>
+              </span>
+              <span style={{ fontSize: 11.5, fontWeight: 800, color, textAlign: "right" as const, flexShrink: 0 }}>
+                {p.next ? `RDV ${fmtDay(p.next)}`
+                  : !p.lastVisit ? `> ${HISTORY_MONTHS} mois`
+                  : late ? `+${p.lateDays} j`
+                  : `avant ${fmtDay(p.due)}`}
+                {p.lastVisit && !p.next && (
+                  <span style={{ display: "block", fontSize: 10.5, fontWeight: 600, color: C.muted }}>vu le {fmtDay(p.lastVisit)}</span>
+                )}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+
+      {items && items.length > 5 && (
+        <button onClick={() => setOpen(o => !o)}
+          style={{ marginTop: 10, alignSelf: "flex-start", background: "none", border: "none", padding: "6px 0", cursor: "pointer", fontFamily: "inherit", fontSize: 13, fontWeight: 700, color: C.teal }}>
+          {open ? "Réduire" : `Voir tout (${items.length})`}
+        </button>
       )}
     </div>
   );
