@@ -50,10 +50,49 @@ export function isWorkingDay(d: Date): boolean {
 const nextWorkingDay = (d: Date) => { let x = addDays(d, 1); while (!isWorkingDay(x)) x = addDays(x, 1); return x; };
 const prevWorkingDay = (d: Date) => { let x = addDays(d, -1); while (!isWorkingDay(x)) x = addDays(x, -1); return x; };
 
-export interface ShippingPlan { expedition: Date; delivery: Date }
+export interface ShippingPlan {
+  expedition: Date;   // date d'expédition prévue (écrite sur le devis)
+  delivery: Date;     // livraison qui en découle (J+1 ouvré, jours de fermeture sautés)
+  earliest: Date;     // première date d'expédition possible
+  visibleFrom: Date;  // la logistique voit la commande 2 jours ouvrés avant l'expédition
+  chosen: boolean;    // date d'expédition modifiée par le délégué
+}
+
+// Jour de livraison acceptable pour ce client : ouvré et pas un jour de fermeture.
+export function isDeliverable(d: Date, closedWeekdays: number[] = []): boolean {
+  return isWorkingDay(d) && !closedWeekdays.includes(d.getDay());
+}
+
+const LOGISTICS_LEAD_DAYS = 2;
 
 // closedWeekdays : jours de fermeture du client, au format Date.getDay() (1 = lundi).
-export function planShipping(now: Date, closedWeekdays: number[] = []): ShippingPlan {
+// wantedExpedition : date d'expédition choisie par le délégué (sinon calculée).
+// Une date trop proche ou non ouvrée est avancée au premier jour possible.
+export function planShipping(now: Date, closedWeekdays: number[] = [], wantedExpedition?: Date | null): ShippingPlan {
+  const base = planDefault(now, closedWeekdays);
+  const earliest = earliestShip(now);
+  let expedition = base.expedition;
+  let delivery = base.delivery;
+  const chosen = !!wantedExpedition;
+  if (wantedExpedition) {
+    expedition = startOfDay(wantedExpedition);
+    if (expedition < earliest) expedition = earliest;
+    while (!isWorkingDay(expedition)) expedition = addDays(expedition, 1);
+    delivery = nextWorkingDay(expedition);
+    for (let i = 0; i < 14 && closedWeekdays.includes(delivery.getDay()); i++) delivery = nextWorkingDay(delivery);
+  }
+  let visibleFrom = expedition;
+  for (let i = 0; i < LOGISTICS_LEAD_DAYS; i++) visibleFrom = prevWorkingDay(visibleFrom);
+  return { expedition, delivery, earliest, visibleFrom, chosen };
+}
+
+function earliestShip(now: Date): Date {
+  const today = startOfDay(now);
+  const minutes = now.getHours() * 60 + now.getMinutes();
+  return !isWorkingDay(today) || minutes >= CUTOFF_MINUTES ? nextWorkingDay(today) : today;
+}
+
+function planDefault(now: Date, closedWeekdays: number[]): { expedition: Date; delivery: Date } {
   const today = startOfDay(now);
   const minutes = now.getHours() * 60 + now.getMinutes();
   const ship = !isWorkingDay(today) ? nextWorkingDay(today)

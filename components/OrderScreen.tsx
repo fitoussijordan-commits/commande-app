@@ -14,7 +14,7 @@ import AgendaGlass from "@/components/AgendaGlass";
 import { resolveClientFamily } from "@/lib/perimes";
 import { orderMeta, isMea, isImplantation, offerNames, type OrderMeta } from "@/lib/orderOffers";
 import { loadBlockingTags, clientBlockingTags, loadClosedDayTags, clientClosedWeekdays, type BlockingTag, type ClosedDayTag } from "@/lib/clientFlags";
-import { planShipping, toOdooDate, isDirectLogistics } from "@/lib/delivery";
+import { planShipping, toOdooDate, isDirectLogistics, type ShippingPlan } from "@/lib/delivery";
 import { onIncomingFile } from "@/lib/incomingFile";
 import * as sync from "@/lib/sync";
 import * as geo from "@/lib/geo";
@@ -450,7 +450,11 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
   const [closedDayTags, setClosedDayTags] = useState<ClosedDayTag[]>([]);
   useEffect(() => { loadClosedDayTags(session).then(setClosedDayTags).catch(() => {}); }, [session]);
   const directLogistics = isDirectLogistics(session) && !clientBlocked;
-  const shippingPlan = client ? planShipping(new Date(), clientClosedWeekdays(client, closedDayTags)) : null;
+  // Date d'expédition modifiée par le délégué (null = calculée). Remise à zéro
+  // quand on change de client.
+  const [wantedExpedition, setWantedExpedition] = useState<Date | null>(null);
+  useEffect(() => { setWantedExpedition(null); }, [client?.id]);
+  const shippingPlan = client ? planShipping(new Date(), clientClosedWeekdays(client, closedDayTags), wantedExpedition) : null;
   const blockLabel = clientBlocks.map(t => t.name).join(" · ");
 
   // Écran d'où l'on a ouvert le rapport Périmés, pour y revenir.
@@ -655,7 +659,7 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
       const tagIds = [validatedTagId, transmiseId].filter((x): x is number => x !== null);
       const tagVals = tagIds.length ? { tag_ids: [[6, 0, tagIds]] } : {};
       // Date calculée AU MOMENT de la validation (l'heure compte : coupure 14 h 30).
-      const plan = planShipping(new Date(), clientClosedWeekdays(client, closedDayTags));
+      const plan = planShipping(new Date(), clientClosedWeekdays(client, closedDayTags), wantedExpedition);
       const shipVals = directLogistics ? { [EXPEDITION_FIELD]: toOdooDate(plan.expedition) } : {};
       const orderNote = clientBlocked
         ? `CLIENT ${blockLabel.toUpperCase()} — commande à valider par le service client.${note ? `\n${note}` : ""}`
@@ -1100,7 +1104,7 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
           appliedPromos={appliedPromos}
           giftItems={giftItems} setGiftItems={setGiftItems} freeTypes={freeTypes}
           eventDiscount={eventDiscount} setEventDiscount={setEventDiscount}
-          shipping={directLogistics ? shippingPlan : null} />
+          shipping={directLogistics ? shippingPlan : null} onChangeExpedition={setWantedExpedition} />
       )}
 
       {showAppointment && client && (
@@ -2620,9 +2624,10 @@ function ClientHistory({ session, client }: { session: odoo.OdooSession; client:
 // ═══════════════════════════════════════════════════════════════════════════
 // ÉTAPE 2 — Catalogue + Panier persistant
 // ═══════════════════════════════════════════════════════════════════════════
-function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submitting, note, setNote, client, priceItems, onToast, appliedPromos, giftItems, setGiftItems, freeTypes, eventDiscount, setEventDiscount, shipping }: {
+function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submitting, note, setNote, client, priceItems, onToast, appliedPromos, giftItems, setGiftItems, freeTypes, eventDiscount, setEventDiscount, shipping, onChangeExpedition }: {
   // Commande transmise directement à la logistique : dates prévues (sinon null).
-  shipping?: { expedition: Date; delivery: Date } | null;
+  shipping?: ShippingPlan | null;
+  onChangeExpedition?: (d: Date | null) => void;
   session: odoo.OdooSession; cart: Record<number, CartItem>;
   onQtyChange: (p: any, q: number, price?: number, group?: string) => void; freeItems: FreeItem[];
   onValidate: () => void; submitting: boolean;
@@ -3408,15 +3413,33 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
         {/* Bloc récap sombre — note + total + validation */}
         <div style={{ padding: "0 12px 12px" }}>
           <div style={{ background: "#0f172a", borderRadius: 18, padding: "14px 14px 16px", boxShadow: "0 12px 28px rgba(15,23,42,0.35)" }}>
-            {shipping && (
-              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10, padding: "8px 10px", borderRadius: 10, background: "rgba(45,212,191,0.12)", color: "#5eead4", fontSize: 11.5, fontWeight: 700, lineHeight: 1.4 }}>
-                <Icon name="package" size={14} />
-                <span>
-                  Transmise à la logistique · expédition {shipping.expedition.toLocaleDateString("fr-FR", { weekday: "short", day: "numeric", month: "short" })}
-                  {" "}· livraison {shipping.delivery.toLocaleDateString("fr-FR", { weekday: "short", day: "numeric", month: "short" })}
-                </span>
-              </div>
-            )}
+            {shipping && (() => {
+              const d = (x: Date) => x.toLocaleDateString("fr-FR", { weekday: "short", day: "numeric", month: "short" });
+              return (
+                <div style={{ marginBottom: 10, padding: "9px 10px", borderRadius: 10, background: "rgba(45,212,191,0.12)", color: "#5eead4", fontSize: 11.5, fontWeight: 700, lineHeight: 1.5 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" as const }}>
+                    <Icon name="package" size={14} />
+                    <span>Transmise à la logistique · expédition</span>
+                    {/* Date d'expédition modifiable (jamais avant la première date possible) */}
+                    <input type="date" value={toOdooDate(shipping.expedition)} min={toOdooDate(shipping.earliest)}
+                      onChange={e => {
+                        const v = e.target.value;
+                        onChangeExpedition?.(v ? new Date(`${v}T12:00:00`) : null);
+                      }}
+                      style={{ height: 30, padding: "0 6px", borderRadius: 8, border: "1px solid rgba(94,234,212,0.5)", background: "rgba(255,255,255,0.08)", color: "#fff", fontFamily: "inherit", fontSize: 12, fontWeight: 700, colorScheme: "dark" as const }} />
+                    {shipping.chosen && (
+                      <button onClick={() => onChangeExpedition?.(null)}
+                        style={{ background: "none", border: "none", padding: 0, color: "rgba(255,255,255,0.6)", fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", textDecoration: "underline" }}>
+                        date auto
+                      </button>
+                    )}
+                  </div>
+                  <div style={{ fontSize: 10.5, fontWeight: 600, color: "rgba(255,255,255,0.6)", marginTop: 3 }}>
+                    Livraison {d(shipping.delivery)} · visible en logistique dès le {d(shipping.visibleFrom)}
+                  </div>
+                </div>
+              );
+            })()}
             <textarea value={note} onChange={e => setNote(e.target.value)} placeholder="Note pour la commande..."
               rows={2} style={{ width: "100%", boxSizing: "border-box" as const, marginBottom: 12, padding: "9px 11px", border: "1px solid rgba(255,255,255,0.12)", borderRadius: 10, fontSize: 12, fontFamily: "inherit", resize: "none" as const, background: "rgba(255,255,255,0.06)", color: "#fff", outline: "none" }} />
 
