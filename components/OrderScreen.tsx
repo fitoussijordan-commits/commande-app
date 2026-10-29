@@ -422,6 +422,8 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
   // Import d'un bon : depuis la fiche client (client connu) ou depuis l'accueil /
   // la recherche client (client retrouvé d'après le bon, puis confirmé).
   const [bonOrigin, setBonOrigin] = useState<"hub" | "home" | "client">("hub");
+  // Écran d'où l'on a ouvert le rapport Périmés, pour y revenir.
+  const [reportOrigin, setReportOrigin] = useState<"client" | "perime">("client");
   // Semaine à ouvrir dans le planning quand on vient de l'agenda de l'accueil.
   const [planningDate, setPlanningDate] = useState<Date | null>(null);
   // Fichier à analyser : choisi via un bouton « Importer », ou ouvert dans l'app
@@ -777,7 +779,7 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
         {step !== "client" && (
           <button onClick={() => {
               if (step === "bon") setStep(bonOrigin);
-              else if (step === "perimesReport") setStep(client ? "perime" : "home");
+              else if (step === "perimesReport") setStep(reportOrigin);
               else if (step === "catalog" || step === "history" || step === "perime" || step === "assistant") setStep("hub");
               else if (step === "hub") setStep(clientOrigin === "planning" ? "home" : "client");
               else setStep("client");
@@ -811,6 +813,13 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
           <button onClick={() => { setPlanningDate(null); setStep("home"); }}
             style={{ display: "flex", alignItems: "center", gap: 6, height: 36, padding: "0 14px", borderRadius: 10, background: C.bg, border: `1px solid ${C.border}`, cursor: "pointer", fontFamily: "inherit", fontSize: 13, fontWeight: 600, color: C.textSec }}>
             <Icon name="calendar" size={15} /> Planning
+          </button>
+        )}
+        {/* Rapport Périmés (tous clients + export Excel), accessible dès l'accueil */}
+        {step === "client" && (
+          <button onClick={() => { setReportOrigin("client"); setStep("perimesReport"); }}
+            style={{ display: "flex", alignItems: "center", gap: 6, height: 36, padding: "0 14px", borderRadius: 10, background: C.bg, border: `1px solid ${C.border}`, cursor: "pointer", fontFamily: "inherit", fontSize: 13, fontWeight: 600, color: C.textSec }}>
+            <Icon name="package" size={15} /> Périmés
           </button>
         )}
 
@@ -1015,7 +1024,7 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
       {step === "perime" && client && (
         <PerimeScreen session={session} client={client} priceItems={priceItems}
           freeTypes={freeTypes} onToast={onToast} onDone={() => setStep("hub")}
-          onOpenReport={() => setStep("perimesReport")} />
+          onOpenReport={() => { setReportOrigin("perime"); setStep("perimesReport"); }} />
       )}
 
       {step === "catalog" && client && (
