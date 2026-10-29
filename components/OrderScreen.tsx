@@ -130,6 +130,23 @@ function getCatCode(product: any): string {
   return ref.length >= 3 ? ref.substring(1, 3) : "";
 }
 
+// Produit phare illustrant chaque gamme dans le menu (photo Odoo, en cache hors
+// ligne). Par nom ; à défaut, premier produit de vente de la gamme.
+const GAMME_HERO: Record<string, RegExp> = {
+  "01": /cr[eè]me purifiante/i,
+  "02": /cr[eè]me r[ée]g[ée]n[ée]rante/i,
+  "03": /lait corporel|huile de soin|cr[eè]me.*corps/i,
+  "04": /dentifrice|savon|gel douche/i,
+  "05": /med\b|dentifrice|cr[eè]me/i,
+  "06": /rouge [àa] l[eè]vres|mascara|fond de teint/i,
+};
+
+function gammeHero(products: any[], cat: SmartCat): any | null {
+  const inCat = products.filter(p => matchesCat(p, cat) && isSaleProduct(p));
+  const re = GAMME_HERO[cat.code];
+  return (re && inCat.find(p => re.test(String(p.name || "")))) || inCat[0] || null;
+}
+
 function matchesCat(product: any, cat: SmartCat): boolean {
   return getCatCode(product) === cat.code;
 }
@@ -2871,10 +2888,14 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
         {smartCats.map(cat => {
           const count = allProducts.filter(p => matchesCat(p, cat) && isSaleProduct(p) && (!stockOnly || inStock(p))).length;
           const active = activeCatId === cat.id;
+          const hero = gammeHero(allProducts, cat);
           return (
             <button key={cat.id} onClick={() => setActiveCatId(cat.id)}
               style={{ width: "100%", padding: "10px 10px", background: active ? C.tealSoft : "transparent", border: "none", borderLeft: `3px solid ${active ? C.teal : "transparent"}`, cursor: "pointer", textAlign: "left" as const, fontFamily: "inherit", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6, transition: "all 0.1s" }}>
               <span style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: active ? 700 : 400, color: active ? C.tealDark : C.textSec }}>
+                <span style={{ width: 34, height: 34, borderRadius: 9, background: "#fff", border: `1px solid ${active ? C.tealMid : C.border}`, display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden", flexShrink: 0 }}>
+                  {hero && <ProductImage id={hero.id} networkUrl={imgUrl(hero.id)} style={{ width: 30, height: 30, objectFit: "contain" }} />}
+                </span>
                 {cat.label}
               </span>
               {count > 0 && <span style={{ fontSize: 10, fontWeight: 700, color: active ? C.teal : C.muted, background: active ? C.tealMid : C.bg, borderRadius: 5, padding: "1px 5px", flexShrink: 0 }}>{count}</span>}
