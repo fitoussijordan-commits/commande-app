@@ -54,7 +54,6 @@ export interface ShippingPlan {
   expedition: Date;   // date d'expédition prévue (écrite sur le devis)
   delivery: Date;     // livraison qui en découle (J+1 ouvré, jours de fermeture sautés)
   earliest: Date;     // première date d'expédition possible
-  visibleFrom: Date;  // la logistique voit la commande 2 jours ouvrés avant l'expédition
   chosen: boolean;    // date d'expédition modifiée par le délégué
 }
 
@@ -62,8 +61,6 @@ export interface ShippingPlan {
 export function isDeliverable(d: Date, closedWeekdays: number[] = []): boolean {
   return isWorkingDay(d) && !closedWeekdays.includes(d.getDay());
 }
-
-const LOGISTICS_LEAD_DAYS = 2;
 
 // closedWeekdays : jours de fermeture du client, au format Date.getDay() (1 = lundi).
 // wantedExpedition : date d'expédition choisie par le délégué (sinon calculée).
@@ -81,9 +78,7 @@ export function planShipping(now: Date, closedWeekdays: number[] = [], wantedExp
     delivery = nextWorkingDay(expedition);
     for (let i = 0; i < 14 && closedWeekdays.includes(delivery.getDay()); i++) delivery = nextWorkingDay(delivery);
   }
-  let visibleFrom = expedition;
-  for (let i = 0; i < LOGISTICS_LEAD_DAYS; i++) visibleFrom = prevWorkingDay(visibleFrom);
-  return { expedition, delivery, earliest, visibleFrom, chosen };
+  return { expedition, delivery, earliest, chosen };
 }
 
 function earliestShip(now: Date): Date {

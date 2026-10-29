@@ -3435,7 +3435,7 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
                     )}
                   </div>
                   <div style={{ fontSize: 10.5, fontWeight: 600, color: "rgba(255,255,255,0.6)", marginTop: 3 }}>
-                    Livraison {d(shipping.delivery)} · visible en logistique dès le {d(shipping.visibleFrom)}
+                    Livraison prévue {d(shipping.delivery)}
                   </div>
                 </div>
               );
