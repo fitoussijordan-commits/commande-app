@@ -725,7 +725,7 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
         {step !== "client" && (
           <button onClick={() => {
               if (step === "bon") setStep(bonOrigin);
-              else if (step === "perimesReport") setStep("home");
+              else if (step === "perimesReport") setStep(client ? "perime" : "home");
               else if (step === "catalog" || step === "history" || step === "perime" || step === "assistant") setStep("hub");
               else if (step === "hub") setStep(clientOrigin === "planning" ? "home" : "client");
               else setStep("client");
@@ -922,7 +922,7 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
       {/* ── Étapes ── */}
       {step === "home" && (
         <HomeScreen session={session} onNewOrder={() => setStep("client")} onOpenClient={(c) => selectClient(c, "planning")} onToast={onToast}
-          onImportBon={() => pickBonFile("home")} onPerimesReport={() => setStep("perimesReport")} />
+          onImportBon={() => pickBonFile("home")} />
       )}
 
       {step === "client" && <ClientStep session={session} onSelect={selectClient} onImportBon={() => pickBonFile("client")} />}
@@ -961,7 +961,8 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
 
       {step === "perime" && client && (
         <PerimeScreen session={session} client={client} priceItems={priceItems}
-          freeTypes={freeTypes} onToast={onToast} onDone={() => setStep("hub")} />
+          freeTypes={freeTypes} onToast={onToast} onDone={() => setStep("hub")}
+          onOpenReport={() => setStep("perimesReport")} />
       )}
 
       {step === "catalog" && client && (
@@ -1083,8 +1084,8 @@ function sameDay(a: Date, b: Date): boolean {
   return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
 }
 
-function HomeScreen({ session, onNewOrder, onOpenClient, onToast, onImportBon, onPerimesReport }: {
-  session: odoo.OdooSession; onNewOrder: () => void; onImportBon: () => void; onPerimesReport: () => void;
+function HomeScreen({ session, onNewOrder, onOpenClient, onToast, onImportBon }: {
+  session: odoo.OdooSession; onNewOrder: () => void; onImportBon: () => void;
   onOpenClient: (client: any) => void;
   onToast: (msg: string, type?: "success" | "error" | "info") => void;
 }) {
@@ -1396,10 +1397,7 @@ function HomeScreen({ session, onNewOrder, onOpenClient, onToast, onImportBon, o
             style={{ display: "flex", alignItems: "center", gap: 6, height: 34, padding: "0 14px", borderRadius: 999, background: C.white, color: C.tealDark, border: `1.5px solid ${C.tealMid}`, cursor: "pointer", fontFamily: "inherit", fontSize: 13, fontWeight: 700, boxShadow: C.shadow }}>
             <Icon name="file" size={15} /> Importer un bon
           </button>
-          <button onClick={onPerimesReport} title="Périmés — toutes les reprises" aria-label="Périmés, toutes les reprises"
-            style={{ width: 34, height: 34, borderRadius: 999, background: C.white, color: C.tealDark, border: `1.5px solid ${C.tealMid}`, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", boxShadow: C.shadow }}>
-            <Icon name="package" size={16} />
-          </button>
+
           <button onClick={() => setNewAdminRdv(true)} title="Nouveau rendez-vous"
             style={{ display: "flex", alignItems: "center", gap: 6, height: 34, padding: "0 14px", borderRadius: 999, background: C.teal, color: "#fff", border: "none", cursor: "pointer", fontFamily: "inherit", fontSize: 13, fontWeight: 700, boxShadow: "0 8px 18px rgba(13,148,136,0.25)" }}>
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M12 5v14M5 12h14"/></svg>

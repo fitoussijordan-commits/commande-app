@@ -132,8 +132,8 @@ en masse au bouton « Télécharger les données ».)
   préchargement garde TOUTES les listes pour que ça marche hors ligne.
 - **Rapport périmés** : BC de reprise repérés par l'étiquette `crm.tag`
   « Reprise périmé » (créée au besoin par `getPerimeTagIds`) ou, pour les
-  anciens, `client_order_ref` PERIM-. Écran `PerimesReportScreen` (bouton icône
-  de l'accueil) et export Excel `/api/perimes/export` partagent
+  anciens, `client_order_ref` PERIM-. Écran `PerimesReportScreen` (bouton « Tous les clients »
+  de l'écran Retour périmés) et export Excel `/api/perimes/export` partagent
   `lib/perimesReport.ts`. Sur iPad l'Excel part par mail (l'app ne sait pas
   enregistrer un fichier). Liens Excel en formule HYPERLINK : les liens objet
   d'exceljs débordaient sur les autres onglets.

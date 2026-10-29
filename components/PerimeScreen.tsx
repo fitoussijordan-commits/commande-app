@@ -45,13 +45,14 @@ function OdooLink({ session, id, label }: { session: odoo.OdooSession; id?: numb
 
 type Mode = "return" | "exchange";
 
-export default function PerimeScreen({ session, client, priceItems, freeTypes, onToast, onDone }: {
+export default function PerimeScreen({ session, client, priceItems, freeTypes, onToast, onDone, onOpenReport }: {
   session: odoo.OdooSession;
   client: any;
   priceItems: any[];
   freeTypes: sync.FreeType[];
   onToast: (m: string, t?: "success" | "error" | "info") => void;
   onDone: () => void;
+  onOpenReport: () => void;   // écran Périmés tous clients (+ export Excel)
 }) {
   const [mode, setMode] = useState<Mode>("return");
   const [q, setQ] = useState("");
@@ -320,7 +321,13 @@ export default function PerimeScreen({ session, client, priceItems, freeTypes, o
       <div style={{ maxWidth: 640, margin: "0 auto" }}>
 
         <div style={{ fontSize: 13, color: C.muted, marginBottom: 4 }}>{client.name}</div>
-        <div style={{ fontSize: 22, fontWeight: 800, color: C.text, marginBottom: 2 }}>Retour périmés</div>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 2 }}>
+          <div style={{ flex: 1, fontSize: 22, fontWeight: 800, color: C.text }}>Retour périmés</div>
+          <button onClick={onOpenReport} title="Toutes les reprises, tous clients — export Excel"
+            style={{ height: 36, padding: "0 12px", borderRadius: 10, border: `1.5px solid ${C.tealMid}`, background: C.white, color: C.tealDark, fontSize: 12.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+            Tous les clients ↗
+          </button>
+        </div>
         <div style={{ fontSize: 12, color: C.muted, marginBottom: 12 }}>
           Rebut : <strong style={{ color: C.textSec }}>{locationLabel}</strong>
           {statut && <> · Statut : <strong style={{ color: C.textSec }}>{statut}</strong> — reprise {Math.round(bareme.taux * 100)} %</>}
