@@ -11,7 +11,7 @@ import QtyPad from "@/components/QtyPad";
 import PerimesReportScreen from "@/components/PerimesReportScreen";
 import VisitPriority from "@/components/VisitPriority";
 import AgendaGlass from "@/components/AgendaGlass";
-import { resolveClientFamily } from "@/lib/perimes";
+import { resolveClientFamily, odooRecordUrl } from "@/lib/perimes";
 import { orderMeta, isMea, isImplantation, offerNames, type OrderMeta } from "@/lib/orderOffers";
 import { loadBlockingTags, clientBlockingTags, loadClosedDayTags, clientClosedWeekdays, type BlockingTag, type ClosedDayTag } from "@/lib/clientFlags";
 import { planShipping, toOdooDate, toOdooDatetime, isDirectLogistics, type ShippingPlan } from "@/lib/delivery";
@@ -450,6 +450,29 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
   const [closedDayTags, setClosedDayTags] = useState<ClosedDayTag[]>([]);
   useEffect(() => { loadClosedDayTags(session).then(setClosedDayTags).catch(() => {}); }, [session]);
   const directLogistics = isDirectLogistics(session) && !clientBlocked;
+  // Devis du client saisis mais pas encore confirmés (non transmis à la logistique),
+  // hors reprises de périmés : le commercial peut les joindre à sa commande.
+  const [pendingOrders, setPendingOrders] = useState<any[]>([]);
+  const [joinIds, setJoinIds] = useState<number[]>([]);
+  const [showPending, setShowPending] = useState(false);
+  useEffect(() => {
+    setPendingOrders([]); setJoinIds([]); setShowPending(false);
+    if (!client || step !== "catalog") return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const family = await resolveClientFamily(session, client).catch(() => [client.id]);
+        const rows = await odoo.searchRead(session, "sale.order",
+          [["partner_id", "child_of", family], ["state", "in", ["draft", "sent"]],
+           "|", ["client_order_ref", "=", false], ["client_order_ref", "not like", "PERIM-"]],
+          ["id", "name", "date_order", "amount_total", "user_id", "state"], 30, "date_order desc");
+        if (!cancelled) setPendingOrders(rows);
+      } catch { /* hors ligne : pas d'info, pas de pastille */ }
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [client?.id, step === "catalog", session]);
+
   // Date d'expédition modifiée par le délégué (null = calculée). Remise à zéro
   // quand on change de client.
   const [wantedExpedition, setWantedExpedition] = useState<Date | null>(null);
@@ -661,9 +684,18 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
       // Date calculée AU MOMENT de la validation (l'heure compte : coupure 14 h 30).
       const plan = planShipping(new Date(), clientClosedWeekdays(client, closedDayTags), wantedExpedition);
       const shipVals = directLogistics ? { [EXPEDITION_FIELD]: toOdooDate(plan.expedition) } : {};
-      const orderNote = clientBlocked
+      let orderNote = clientBlocked
         ? `CLIENT ${blockLabel.toUpperCase()} — commande à valider par le service client.${note ? `\n${note}` : ""}`
         : (note || "");
+      // Commandes en attente que le commercial a choisi de joindre à celle-ci :
+      // champ « Commandes jointes » s'il existe, et toujours citées dans la note.
+      const joined = pendingOrders.filter(o => joinIds.includes(o.id));
+      let joinVals: any = {};
+      if (joined.length) {
+        orderNote = `${orderNote}${orderNote ? "\n" : ""}Commandes jointes : ${joined.map(o => o.name).join(", ")}`;
+        const m = await orderMeta(session).catch(() => null);
+        if (m?.joinedField) joinVals = { [m.joinedField]: [[6, 0, joined.map(o => o.id)]] };
+      }
 
       const pricelistId = client.property_product_pricelist?.[0] || false;
 
@@ -680,6 +712,7 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
         note: orderNote,
         ...tagVals,
         ...shipVals,
+        ...joinVals,
         order_line: [
           // Ordre d'ajout : les lignes d'une même MEA restent groupées dans le devis.
           ...orderedCart(cart).map(item => {
@@ -873,6 +906,47 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
 
         {/* Pastille réseau + données + file d'envoi (remplace l'ancien bandeau permanent) */}
         <OfflineBar session={session} onToast={onToast} />
+
+        {/* Commandes du client en attente (saisies, non transmises) — à joindre ? */}
+        {step === "catalog" && pendingOrders.length > 0 && (
+          <div style={{ position: "relative" as const }}>
+            <button onClick={() => setShowPending(v => !v)}
+              title="Commandes de ce client saisies mais pas encore transmises"
+              style={{ display: "flex", alignItems: "center", gap: 6, height: 36, padding: "0 12px", borderRadius: 10, cursor: "pointer", fontFamily: "inherit", fontSize: 12.5, fontWeight: 700,
+                background: joinIds.length ? C.tealSoft : C.orangeSoft, color: joinIds.length ? C.tealDark : C.orange, border: `1px solid ${joinIds.length ? C.tealMid : "#fed7aa"}` }}>
+              <Icon name="file" size={14} />
+              {pendingOrders.length} en attente{joinIds.length ? ` · ${joinIds.length} jointe${joinIds.length > 1 ? "s" : ""}` : ""}
+            </button>
+            {showPending && (
+              <div style={{ position: "absolute" as const, top: 42, right: 0, width: 340, zIndex: 320, background: C.white, borderRadius: 14, boxShadow: C.shadowXl, border: `1px solid ${C.border}`, padding: 12 }}>
+                <div style={{ fontSize: 13, fontWeight: 800, color: C.text, marginBottom: 2 }}>Commandes en attente</div>
+                <div style={{ fontSize: 11.5, color: C.muted, marginBottom: 10 }}>Saisies pour ce client, pas encore transmises. Coche celles à joindre à la commande en cours.</div>
+                <div style={{ display: "flex", flexDirection: "column" as const, gap: 6, maxHeight: 300, overflowY: "auto" as const }}>
+                  {pendingOrders.map(o => {
+                    const on = joinIds.includes(o.id);
+                    return (
+                      <label key={o.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 10px", borderRadius: 10, border: `1px solid ${on ? C.tealMid : C.border}`, background: on ? C.tealSoft : C.bg, cursor: "pointer" }}>
+                        <input type="checkbox" checked={on} onChange={() => setJoinIds(ids => on ? ids.filter(x => x !== o.id) : [...ids, o.id])}
+                          style={{ width: 20, height: 20, accentColor: C.teal, flexShrink: 0 }} />
+                        <span style={{ flex: 1, minWidth: 0 }}>
+                          <span style={{ display: "block", fontSize: 12.5, fontWeight: 800, color: C.text }}>
+                            <a href={odooRecordUrl(session, "sale.order", o.id)} target="_blank" rel="noopener noreferrer" onClick={e => e.stopPropagation()}
+                              style={{ color: C.teal, textDecoration: "underline" }}>{o.name} ↗</a>
+                          </span>
+                          <span style={{ display: "block", fontSize: 11, color: C.muted }}>
+                            {String(o.date_order || "").slice(0, 10).split("-").reverse().join("/")}
+                            {Array.isArray(o.user_id) ? ` · ${o.user_id[1]}` : ""}
+                          </span>
+                        </span>
+                        <span style={{ fontSize: 12.5, fontWeight: 800, color: C.tealDark, flexShrink: 0 }}>{fmtPrice(o.amount_total || 0)}</span>
+                      </label>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Voir planning — visible sur l'écran de recherche client (pas de client sélectionné) */}
         {step === "client" && (

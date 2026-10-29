@@ -17,6 +17,7 @@ export interface OrderMeta {
   typeField?: string;                   // « Type de commande »
   typeKind?: "selection" | "many2one";
   implantValues: (string | number)[];   // valeurs du type correspondant à une implantation
+  joinedField?: string;                 // many2many « Commandes jointes » (vers sale.order)
 }
 
 let _meta: OrderMeta | null = null;
@@ -37,6 +38,9 @@ export async function orderMeta(session: odoo.OdooSession): Promise<OrderMeta> {
     const label = String(f.string || "");
     if (!meta.offersField && /offres?\s+command/i.test(label) && (f.type === "many2many" || f.type === "one2many")) {
       meta.offersField = name; meta.offersRelation = f.relation;
+    }
+    if (!meta.joinedField && /commandes?\s+jointes?/i.test(label) && f.type === "many2many" && f.relation === "sale.order") {
+      meta.joinedField = name;
     }
     if (!meta.typeField && /^type\s+de\s+commande/i.test(label) && (f.type === "selection" || f.type === "many2one")) {
       meta.typeField = name; meta.typeKind = f.type;
