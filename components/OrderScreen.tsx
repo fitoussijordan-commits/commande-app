@@ -13,7 +13,8 @@ import VisitPriority from "@/components/VisitPriority";
 import AgendaGlass from "@/components/AgendaGlass";
 import { resolveClientFamily } from "@/lib/perimes";
 import { orderMeta, isMea, isImplantation, offerNames, type OrderMeta } from "@/lib/orderOffers";
-import { loadBlockingTags, clientBlockingTags, type BlockingTag } from "@/lib/clientFlags";
+import { loadBlockingTags, clientBlockingTags, loadClosedDayTags, clientClosedWeekdays, type BlockingTag, type ClosedDayTag } from "@/lib/clientFlags";
+import { planShipping, toOdooDate, isDirectLogistics } from "@/lib/delivery";
 import { onIncomingFile } from "@/lib/incomingFile";
 import * as sync from "@/lib/sync";
 import * as geo from "@/lib/geo";
@@ -315,6 +316,19 @@ function computeFreeItems(cart: Record<number, CartItem>, rules: FreeRule[]): Fr
 // Résout l'id de l'étiquette Odoo "Validé DC" (crm.tag, utilisée sur sale.order.tag_ids)
 // — mise en cache au niveau module pour ne la chercher qu'une fois par session.
 let _validatedTagIdCache: number | null | undefined = undefined;
+// Étiquette « Transmise » (crm.tag) : commande partie directement à la logistique.
+let _transmiseTagIdCache: number | null | undefined = undefined;
+async function getTransmiseTagId(session: odoo.OdooSession): Promise<number | null> {
+  if (_transmiseTagIdCache !== undefined) return _transmiseTagIdCache;
+  try {
+    const tags = await odoo.searchRead(session, "crm.tag", [["name", "ilike", "transmis"]], ["id", "name"], 20);
+    _transmiseTagIdCache = tags.find((t: any) => /^transmise?s?$/i.test(String(t.name || "").trim()))?.id ?? null;
+  } catch { return null; }
+  return _transmiseTagIdCache ?? null;
+}
+
+const EXPEDITION_FIELD = "x_studio_date_dexpdition_prvue";   // « Date d'expédition prévue »
+
 async function getValidatedTagId(session: odoo.OdooSession): Promise<number | null> {
   if (_validatedTagIdCache !== undefined) return _validatedTagIdCache;
   try {
@@ -430,6 +444,13 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
   useEffect(() => { loadBlockingTags(session).then(setBlockingTags).catch(() => {}); }, [session]);
   const clientBlocks = client ? clientBlockingTags(client, blockingTags) : [];
   const clientBlocked = clientBlocks.length > 0;
+
+  // Commande transmise directement à la logistique (délégués en test) : étiquette
+  // « Transmise » + date d'expédition prévue. Jamais pour un client bloqué.
+  const [closedDayTags, setClosedDayTags] = useState<ClosedDayTag[]>([]);
+  useEffect(() => { loadClosedDayTags(session).then(setClosedDayTags).catch(() => {}); }, [session]);
+  const directLogistics = isDirectLogistics(session) && !clientBlocked;
+  const shippingPlan = client ? planShipping(new Date(), clientClosedWeekdays(client, closedDayTags)) : null;
   const blockLabel = clientBlocks.map(t => t.name).join(" · ");
 
   // Écran d'où l'on a ouvert le rapport Périmés, pour y revenir.
@@ -627,7 +648,15 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
       if (validatedTagId === null && !clientBlocked) {
         onToast("Étiquette « Validé » introuvable dans Odoo — commande créée sans étiquette", "info");
       }
-      const tagVals = validatedTagId ? { tag_ids: [[6, 0, [validatedTagId]]] } : {};
+      const transmiseId = directLogistics ? await getTransmiseTagId(session) : null;
+      if (directLogistics && transmiseId === null) {
+        onToast("Étiquette « Transmise » introuvable dans Odoo — commande non marquée transmise", "info");
+      }
+      const tagIds = [validatedTagId, transmiseId].filter((x): x is number => x !== null);
+      const tagVals = tagIds.length ? { tag_ids: [[6, 0, tagIds]] } : {};
+      // Date calculée AU MOMENT de la validation (l'heure compte : coupure 14 h 30).
+      const plan = planShipping(new Date(), clientClosedWeekdays(client, closedDayTags));
+      const shipVals = directLogistics ? { [EXPEDITION_FIELD]: toOdooDate(plan.expedition) } : {};
       const orderNote = clientBlocked
         ? `CLIENT ${blockLabel.toUpperCase()} — commande à valider par le service client.${note ? `\n${note}` : ""}`
         : (note || "");
@@ -646,6 +675,7 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
         ...(pricelistId ? { pricelist_id: pricelistId } : {}),
         note: orderNote,
         ...tagVals,
+        ...shipVals,
         order_line: [
           // Ordre d'ajout : les lignes d'une même MEA restent groupées dans le devis.
           ...orderedCart(cart).map(item => {
@@ -699,7 +729,15 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
       // 1) Devis principal
       let mainId: number;
       try {
-        mainId = await odoo.create(session, "sale.order", mainPayload);
+        try {
+          mainId = await odoo.create(session, "sale.order", mainPayload);
+        } catch (e1: any) {
+          // Champ « Date d'expédition prévue » absent de cette base : on crée sans.
+          if (odoo.isNetworkError(e1) || !(EXPEDITION_FIELD in mainPayload) || !String(e1?.message || "").includes(EXPEDITION_FIELD)) throw e1;
+          delete mainPayload[EXPEDITION_FIELD];
+          mainId = await odoo.create(session, "sale.order", mainPayload);
+          onToast("Champ « Date d'expédition prévue » introuvable — devis créé sans", "info");
+        }
       } catch (e: any) {
         if (odoo.isNetworkError(e)) {
           // Réseau indisponible → on met la commande en file de synchro locale.
@@ -1061,7 +1099,8 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
           note={note} setNote={setNote} client={client} priceItems={priceItems} onToast={onToast}
           appliedPromos={appliedPromos}
           giftItems={giftItems} setGiftItems={setGiftItems} freeTypes={freeTypes}
-          eventDiscount={eventDiscount} setEventDiscount={setEventDiscount} />
+          eventDiscount={eventDiscount} setEventDiscount={setEventDiscount}
+          shipping={directLogistics ? shippingPlan : null} />
       )}
 
       {showAppointment && client && (
@@ -2581,7 +2620,9 @@ function ClientHistory({ session, client }: { session: odoo.OdooSession; client:
 // ═══════════════════════════════════════════════════════════════════════════
 // ÉTAPE 2 — Catalogue + Panier persistant
 // ═══════════════════════════════════════════════════════════════════════════
-function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submitting, note, setNote, client, priceItems, onToast, appliedPromos, giftItems, setGiftItems, freeTypes, eventDiscount, setEventDiscount }: {
+function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submitting, note, setNote, client, priceItems, onToast, appliedPromos, giftItems, setGiftItems, freeTypes, eventDiscount, setEventDiscount, shipping }: {
+  // Commande transmise directement à la logistique : dates prévues (sinon null).
+  shipping?: { expedition: Date; delivery: Date } | null;
   session: odoo.OdooSession; cart: Record<number, CartItem>;
   onQtyChange: (p: any, q: number, price?: number, group?: string) => void; freeItems: FreeItem[];
   onValidate: () => void; submitting: boolean;
@@ -3367,6 +3408,15 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
         {/* Bloc récap sombre — note + total + validation */}
         <div style={{ padding: "0 12px 12px" }}>
           <div style={{ background: "#0f172a", borderRadius: 18, padding: "14px 14px 16px", boxShadow: "0 12px 28px rgba(15,23,42,0.35)" }}>
+            {shipping && (
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10, padding: "8px 10px", borderRadius: 10, background: "rgba(45,212,191,0.12)", color: "#5eead4", fontSize: 11.5, fontWeight: 700, lineHeight: 1.4 }}>
+                <Icon name="package" size={14} />
+                <span>
+                  Transmise à la logistique · expédition {shipping.expedition.toLocaleDateString("fr-FR", { weekday: "short", day: "numeric", month: "short" })}
+                  {" "}· livraison {shipping.delivery.toLocaleDateString("fr-FR", { weekday: "short", day: "numeric", month: "short" })}
+                </span>
+              </div>
+            )}
             <textarea value={note} onChange={e => setNote(e.target.value)} placeholder="Note pour la commande..."
               rows={2} style={{ width: "100%", boxSizing: "border-box" as const, marginBottom: 12, padding: "9px 11px", border: "1px solid rgba(255,255,255,0.12)", borderRadius: 10, fontSize: 12, fontFamily: "inherit", resize: "none" as const, background: "rgba(255,255,255,0.06)", color: "#fff", outline: "none" }} />
 

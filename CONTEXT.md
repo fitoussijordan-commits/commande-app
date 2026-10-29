@@ -134,6 +134,13 @@ en masse au bouton « Télécharger les données ».)
   (step `home`). Sous la recherche : cartes « verre » iOS (`components/glass.ts`)
   — `AgendaGlass` (semaine/mois, ouvre le planning sur la semaine choisie) et
   `VisitPriority`. Le fond coloré de l'écran est nécessaire à l'effet verre.
+- **Commandes transmises directement à la logistique** (`lib/delivery.ts`) : pour
+  les délégués de `DIRECT_LOGISTICS_USERS` (test : Jordan seul), le devis reçoit
+  l'étiquette « Transmise » (+ « Validé ») et `x_studio_date_dexpdition_prvue`.
+  Expédition le jour même avant 14 h 30, sinon jour ouvré suivant ; week-end /
+  férié = jour ouvré suivant avant 14 h 30 ; livraison J+1 ouvré ; étiquettes
+  client « Fermé le <jour> » repoussent la livraison (expédition calée la veille).
+  Jamais pour un client bloqué. Pas de confirmation automatique (à venir).
 - **Clients bloqués** (`lib/clientFlags.ts`) : étiquettes `res.partner.category_id`
   « Bloqué compta » et « Redressement judiciaire » (repérées par leur nom). Bandeau
   rouge (fiche, catalogue, import), devis créé SANS l'étiquette « Validé » et note
