@@ -9,6 +9,7 @@ import * as odoo from "@/lib/odoo";
 import * as db from "@/lib/localdb";
 import * as loyalty from "@/lib/loyalty";
 import * as perimes from "@/lib/perimes";
+import { descToText } from "@/lib/text";
 
 // Champs produits — identiques à ceux consommés dans OrderScreen (favoris, MEA, recherche).
 // x_type_de_produit_id : type de produit Odoo (échantillon, testeur, travel size…).
@@ -395,12 +396,32 @@ export async function transmitToLogistics(session: odoo.OdooSession, orderId: nu
   }
 }
 
-// Commandes jointes : même date d'expédition prévue que la commande en cours,
-// sinon la logistique ne les prépare pas ensemble.
-export async function alignJoinedExpedition(session: odoo.OdooSession, ids: number[], field: string, date: string): Promise<string | undefined> {
+// Commandes jointes : traitées comme la commande en cours pour partir ensemble —
+// même date d'expédition prévue, étiquettes « Validé DC » + « Transmise »
+// AJOUTÉES (sans retirer les leurs), puis confirmées avec la note et la date
+// prévue sur leur bon de préparation.
+export async function transmitJoined(
+  session: odoo.OdooSession, ids: number[], field: string, date: string,
+  tagIds: number[], scheduledDate?: string,
+): Promise<string | undefined> {
   if (!ids.length) return;
-  try { await odoo.write(session, "sale.order", ids, { [field]: date }); }
-  catch (e: any) { return `date d'expédition non reportée sur les commandes jointes : ${e?.message || e}`; }
+  const errors: string[] = [];
+  try {
+    await odoo.write(session, "sale.order", ids, {
+      [field]: date,
+      ...(tagIds.length ? { tag_ids: tagIds.map(id => [4, id]) } : {}),
+    });
+  } catch (e: any) {
+    return `commandes jointes non mises à jour : ${e?.message || e}`;
+  }
+  const rows = await odoo.searchRead(session, "sale.order", [["id", "in", ids]], ["id", "name", "note", "state"], ids.length)
+    .catch(() => [] as any[]);
+  for (const o of rows) {
+    if (o.state !== "draft" && o.state !== "sent") continue;   // déjà confirmée
+    const t = await transmitToLogistics(session, o.id, descToText(String(o.note || "")), scheduledDate);
+    if (t.error) errors.push(`${o.name} : ${t.error}`);
+  }
+  return errors.length ? `commandes jointes — ${errors.join(" ; ")}` : undefined;
 }
 
 export async function queueOrder(
@@ -408,7 +429,7 @@ export async function queueOrder(
   total: number,
   payloads: any[],
   label?: string,
-  transmit?: { pickingNote: string; scheduledDate?: string; joinedIds?: number[]; expeditionDate?: string },   // commande directe logistique : confirmée au rejeu
+  transmit?: { pickingNote: string; scheduledDate?: string; joinedIds?: number[]; expeditionDate?: string; tagIds?: number[] },   // commande directe logistique : confirmée au rejeu
 ): Promise<{ localRef: string; id: number }> {
   const localRef = `LOCAL-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   const id = await db.enqueueOrder({ localRef, label: label || `Commande — ${clientName}`, clientName, total, payloads, ...(transmit ? { transmit } : {}) });
@@ -554,7 +575,8 @@ export async function flushQueue(
             const t = await transmitToLogistics(session, resultIds[0], order.transmit.pickingNote, order.transmit.scheduledDate);
             if (t.error) transmitError = t.error;
             if (order.transmit.joinedIds?.length && order.transmit.expeditionDate) {
-              const j = await alignJoinedExpedition(session, order.transmit.joinedIds, "x_studio_date_dexpdition_prvue", order.transmit.expeditionDate);
+              const j = await transmitJoined(session, order.transmit.joinedIds, "x_studio_date_dexpdition_prvue",
+                order.transmit.expeditionDate, order.transmit.tagIds || [], order.transmit.scheduledDate);
               if (j) transmitError = transmitError ? `${transmitError} ; ${j}` : j;
             }
           }

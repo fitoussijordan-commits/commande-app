@@ -795,7 +795,7 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
           const payloads = freePayload ? [mainPayload, freePayload] : [mainPayload];
           await sync.queueOrder(client.name, cartTotal, payloads, undefined,
             directLogistics ? { pickingNote: orderNote, scheduledDate: toOdooDatetime(plan.expedition),
-              joinedIds: joined.map(o => o.id), expeditionDate: toOdooDate(plan.expedition) } : undefined);
+              joinedIds: joined.map(o => o.id), expeditionDate: toOdooDate(plan.expedition), tagIds } : undefined);
           removeDraftForClient(client.id);
           refreshPendingDrafts();
           setAppliedPromos({});
@@ -817,8 +817,9 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
         const t = await sync.transmitToLogistics(session, mainId, orderNote, toOdooDatetime(plan.expedition));
         if (t.error) onToast(`Devis #${mainId} créé, mais ${t.error}`, "error");
         else onToast(`Commande confirmée et transmise${t.pickings.length ? ` — ${t.pickings.join(", ")}` : ""}`, "success");
-        // Commandes jointes : même date d'expédition, pour partir ensemble.
-        const j = await sync.alignJoinedExpedition(session, joined.map(o => o.id), EXPEDITION_FIELD, toOdooDate(plan.expedition));
+        // Commandes jointes : même date, Validé DC + Transmise, confirmées — pour partir ensemble.
+        const j = await sync.transmitJoined(session, joined.map(o => o.id), EXPEDITION_FIELD,
+          toOdooDate(plan.expedition), tagIds, toOdooDatetime(plan.expedition));
         if (j) onToast(j, "error");
       }
 
