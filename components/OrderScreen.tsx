@@ -143,12 +143,14 @@ function matchesCat(product: any, cat: SmartCat): boolean {
 // au pluriel ou mal accentué tombe quand même dans la bonne catégorie.
 const TYPE_CAT_PREFIX = "type:";
 
-// `also` : repli quand le type Odoo n'est pas renseigné — par le nom ou la
-// référence (PLV en 6xxxxxx dans cette base).
+// `also` : repli quand le type Odoo n'est pas renseigné — par la référence ou le
+// nom. Premier chiffre de la référence : 1 vente, 3 testeur, 5 échantillon,
+// 6 PLV, 7 offre MEA, 8 gratuité allemande.
 const PRODUCT_TYPE_GROUPS: { id: string; label: string; patterns: RegExp[]; also?: (p: any) => boolean }[] = [
   { id: "testeurs",    label: "Testeurs",     patterns: [/test/i],
-    also: p => /\btest(eur|er)s?\b/i.test(String(p.name || "")) },
-  { id: "echantillons", label: "Échantillons", patterns: [/[ée]chantillon/i] },
+    also: p => /^3/.test(String(p.default_code || "").trim()) || /\btest(eur|er)s?\b/i.test(String(p.name || "")) },
+  { id: "echantillons", label: "Échantillons", patterns: [/[ée]chantillon/i],
+    also: p => /^5/.test(String(p.default_code || "").trim()) },
   { id: "travel",      label: "Travel size",  patterns: [/travel/i] },
   { id: "miniatures",  label: "Miniatures",   patterns: [/miniature/i] },
   { id: "accessoires", label: "Accessoires",  patterns: [/\bsacs?\b/i, /[ée]ponge/i, /accessoire/i] },
