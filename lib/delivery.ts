@@ -102,6 +102,13 @@ function planDefault(now: Date, closedWeekdays: number[]): { expedition: Date; d
 
 export const toOdooDate = key;
 
+// Datetime Odoo (UTC naïf) à `hour` heure locale le jour donné — pour la date
+// prévue du bon de préparation (stock.picking.scheduled_date).
+export function toOdooDatetime(day: Date, hour = 8): string {
+  const local = new Date(day.getFullYear(), day.getMonth(), day.getDate(), hour, 0, 0);
+  return local.toISOString().slice(0, 19).replace("T", " ");
+}
+
 // Délégués dont les commandes partent DIRECTEMENT à la logistique (étiquette
 // « Transmise » + date d'expédition prévue). Phase de test : Jordan seul.
 const DIRECT_LOGISTICS_USERS = [/jordan\s+fitoussi/i];

@@ -14,7 +14,7 @@ import AgendaGlass from "@/components/AgendaGlass";
 import { resolveClientFamily } from "@/lib/perimes";
 import { orderMeta, isMea, isImplantation, offerNames, type OrderMeta } from "@/lib/orderOffers";
 import { loadBlockingTags, clientBlockingTags, loadClosedDayTags, clientClosedWeekdays, type BlockingTag, type ClosedDayTag } from "@/lib/clientFlags";
-import { planShipping, toOdooDate, isDirectLogistics, type ShippingPlan } from "@/lib/delivery";
+import { planShipping, toOdooDate, toOdooDatetime, isDirectLogistics, type ShippingPlan } from "@/lib/delivery";
 import { onIncomingFile } from "@/lib/incomingFile";
 import * as sync from "@/lib/sync";
 import * as geo from "@/lib/geo";
@@ -747,7 +747,7 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
           // Réseau indisponible → on met la commande en file de synchro locale.
           const payloads = freePayload ? [mainPayload, freePayload] : [mainPayload];
           await sync.queueOrder(client.name, cartTotal, payloads, undefined,
-            directLogistics ? { pickingNote: orderNote } : undefined);
+            directLogistics ? { pickingNote: orderNote, scheduledDate: toOdooDatetime(plan.expedition) } : undefined);
           removeDraftForClient(client.id);
           refreshPendingDrafts();
           setAppliedPromos({});
@@ -766,7 +766,7 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
       // 1 bis) Commande directe logistique : confirmation automatique + note de la
       // commande recopiée sur le bon de préparation (la logistique ne lit que celle-là).
       if (directLogistics) {
-        const t = await sync.transmitToLogistics(session, mainId, orderNote);
+        const t = await sync.transmitToLogistics(session, mainId, orderNote, toOdooDatetime(plan.expedition));
         if (t.error) onToast(`Devis #${mainId} créé, mais ${t.error}`, "error");
         else onToast(`Commande confirmée et transmise${t.pickings.length ? ` — ${t.pickings.join(", ")}` : ""}`, "success");
       }
