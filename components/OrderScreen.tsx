@@ -455,8 +455,22 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
   const [pendingOrders, setPendingOrders] = useState<any[]>([]);
   const [joinIds, setJoinIds] = useState<number[]>([]);
   const [showPending, setShowPending] = useState(false);
+  // Contenu d'une commande en attente, déplié dans la liste (sans passer par Odoo).
+  const [openPending, setOpenPending] = useState<number | null>(null);
+  const [pendingLines, setPendingLines] = useState<Record<number, any[] | "loading" | "error">>({});
+  const togglePendingLines = async (id: number) => {
+    if (openPending === id) { setOpenPending(null); return; }
+    setOpenPending(id);
+    if (pendingLines[id] && pendingLines[id] !== "error") return;
+    setPendingLines(m => ({ ...m, [id]: "loading" }));
+    try {
+      const rows = await odoo.searchRead(session, "sale.order.line",
+        [["order_id", "=", id]], ["id", "name", "product_id", "product_uom_qty", "price_subtotal", "display_type"], 0, "sequence, id");
+      setPendingLines(m => ({ ...m, [id]: rows }));
+    } catch { setPendingLines(m => ({ ...m, [id]: "error" })); }
+  };
   useEffect(() => {
-    setPendingOrders([]); setJoinIds([]); setShowPending(false);
+    setPendingOrders([]); setJoinIds([]); setShowPending(false); setOpenPending(null); setPendingLines({});
     if (!client || step !== "catalog") return;
     let cancelled = false;
     (async () => {
@@ -928,8 +942,10 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
                 <div style={{ display: "flex", flexDirection: "column" as const, gap: 6, maxHeight: 300, overflowY: "auto" as const }}>
                   {pendingOrders.map(o => {
                     const on = joinIds.includes(o.id);
+                    const lines = pendingLines[o.id];
                     return (
-                      <label key={o.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 10px", borderRadius: 10, border: `1px solid ${on ? C.tealMid : C.border}`, background: on ? C.tealSoft : C.bg, cursor: "pointer" }}>
+                      <div key={o.id}>
+                      <label style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 10px", borderRadius: 10, border: `1px solid ${on ? C.tealMid : C.border}`, background: on ? C.tealSoft : C.bg, cursor: "pointer" }}>
                         <input type="checkbox" checked={on} onChange={() => setJoinIds(ids => on ? ids.filter(x => x !== o.id) : [...ids, o.id])}
                           style={{ width: 20, height: 20, accentColor: C.teal, flexShrink: 0 }} />
                         <span style={{ flex: 1, minWidth: 0 }}>
@@ -943,7 +959,32 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
                           </span>
                         </span>
                         <span style={{ fontSize: 12.5, fontWeight: 800, color: C.tealDark, flexShrink: 0 }}>{fmtPrice(o.amount_total || 0)}</span>
+                        {/* Voir le contenu sans quitter l'app */}
+                        <button onClick={e => { e.preventDefault(); e.stopPropagation(); void togglePendingLines(o.id); }}
+                          title="Voir le contenu" aria-label="Voir le contenu"
+                          style={{ width: 32, height: 32, flexShrink: 0, borderRadius: 8, border: `1px solid ${C.border}`, background: C.white, cursor: "pointer", color: C.textSec, fontSize: 13 }}>
+                          {openPending === o.id ? "▴" : "▾"}
+                        </button>
                       </label>
+                      {openPending === o.id && (
+                        <div style={{ margin: "4px 0 2px 30px", padding: "6px 8px", borderLeft: `2px solid ${C.tealMid}`, display: "flex", flexDirection: "column" as const, gap: 3 }}>
+                          {lines === "loading" && <div style={{ fontSize: 11.5, color: C.muted }}>Chargement…</div>}
+                          {lines === "error" && <div style={{ fontSize: 11.5, color: C.red }}>Contenu indisponible (hors ligne ?)</div>}
+                          {Array.isArray(lines) && lines.length === 0 && <div style={{ fontSize: 11.5, color: C.muted }}>Commande vide.</div>}
+                          {Array.isArray(lines) && lines.map(l => l.display_type ? (
+                            <div key={l.id} style={{ fontSize: 10.5, fontWeight: 800, color: C.tealDark, textTransform: "uppercase" as const, marginTop: 4 }}>{l.name}</div>
+                          ) : (
+                            <div key={l.id} style={{ display: "flex", gap: 8, fontSize: 11.5, color: C.textSec }}>
+                              <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>
+                                {Array.isArray(l.product_id) ? l.product_id[1] : l.name}
+                              </span>
+                              <span style={{ color: C.muted, flexShrink: 0 }}>× {l.product_uom_qty}</span>
+                              <span style={{ fontWeight: 700, flexShrink: 0, minWidth: 64, textAlign: "right" as const }}>{fmtPrice(l.price_subtotal || 0)}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                      </div>
                     );
                   })}
                 </div>
