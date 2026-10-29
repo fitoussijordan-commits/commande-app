@@ -130,6 +130,11 @@ en masse au bouton « Télécharger les données ».)
   `base = "pricelist"` + `base_pricelist_id`. `resolveBaseLists` rattache les règles
   de la liste de base ; sans ça la remise partirait du prix catalogue. Le
   préchargement garde TOUTES les listes pour que ça marche hors ligne.
+- **Transfert de rebut des périmés = suivi, pas logistique.** Les produits repris
+  ne reviennent PAS physiquement (détruits chez le client). Le transfert est gardé
+  volontairement : lots rattachés, et surtout plafond « déjà repris » (livré −
+  déjà repris, lu dans ces transferts) qui empêche de reprendre deux fois un lot.
+  Ne pas le supprimer sans reporter ce plafond sur les BC.
 - **Rapport périmés** : BC de reprise repérés par l'étiquette `crm.tag`
   « Reprise périmé » (créée au besoin par `getPerimeTagIds`) ou, pour les
   anciens, `client_order_ref` PERIM-. Écran `PerimesReportScreen` (bouton « Tous les clients »
