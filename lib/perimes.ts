@@ -26,6 +26,7 @@ export interface PerimeLine {
   source: PriceSource;
   invoiceDate?: string;
   orderName?: string;   // commande d'origine, pour vérifier un prix douteux
+  orderId?: number;     // id de cette commande, pour l'ouvrir dans Odoo
   suspicious?: boolean; // prix retrouvé incohérent avec le catalogue
   lot?: string;
   lotId?: number;       // id du lot Odoo EXISTANT — à réutiliser, pas à recréer
@@ -115,7 +116,7 @@ export async function findPaidPriceByLot(
   clientIds: number | number[],
   productId: number,
   lot: string,
-): Promise<{ netUnit: number; date: string; orderName: string; lotId: number } | null> {
+): Promise<{ netUnit: number; date: string; orderName: string; orderId?: number; lotId: number } | null> {
   const wanted = normalizeLot(lot);
   if (!wanted) return null;
 
@@ -136,14 +137,14 @@ export async function findPaidPriceByLot(
   const prices = await resolveNetPrices(session, hits.map((h: any) => h.move_id?.[0]));
   for (const h of hits) {          // déjà triés du plus récent au plus ancien
     const p = prices.get(h.move_id?.[0]);
-    if (p) return { netUnit: p.netUnit, date: String(h.date || "").slice(0, 10), orderName: p.orderName, lotId: h.lot_id?.[0] };
+    if (p) return { netUnit: p.netUnit, date: String(h.date || "").slice(0, 10), orderName: p.orderName, orderId: p.orderId, lotId: h.lot_id?.[0] };
   }
   return null;
 }
 
 // Prix unitaire net (remise déduite) de la ligne de vente à l'origine de chaque
 // mouvement. Le pont stock → vente est stock.move.sale_line_id.
-export interface PaidLine { netUnit: number; gross: number; discount: number; orderName: string }
+export interface PaidLine { netUnit: number; gross: number; discount: number; orderName: string; orderId?: number }
 
 async function resolveNetPrices(
   session: odoo.OdooSession,
@@ -190,6 +191,7 @@ async function resolveNetPrices(
       netUnit: Math.round(netUnit * 100) / 100,
       gross, discount,
       orderName: String(sol.order_id?.[1] || ""),
+      orderId: sol.order_id?.[0],
     });
   }
   return out;
@@ -273,6 +275,7 @@ export interface LotHit {
   netUnit: number | null;   // null = ligne de vente introuvable
   date: string;
   orderName: string;
+  orderId?: number;
 }
 
 export async function searchDeliveredLots(
@@ -484,6 +487,7 @@ async function buildLotHits(
         netUnit: p ? p.netUnit : null,
         date: String(r.date || "").slice(0, 10),
         orderName: p?.orderName || "",
+        orderId: p?.orderId,
       } as LotHit;
     })
     .filter((x): x is LotHit => x !== null);
@@ -722,13 +726,33 @@ export async function createRebutPicking(
 export async function recentReprises(
   session: odoo.OdooSession,
   clientId?: number,
-  limit = 10,
+  limit = 100,
 ): Promise<any[]> {
   const domain: any[] = [["client_order_ref", "like", "PERIM-"]];
   if (clientId) domain.push(["partner_id", "child_of", clientId]);
   return odoo.searchRead(session, "sale.order", domain,
     ["id", "name", "date_order", "amount_total", "state", "partner_id", "client_order_ref"],
     limit, "id desc");
+}
+
+// Détail d'un BC de reprise (historique déroulant) : lignes reprises (négatives)
+// et produits d'échange, tels qu'Odoo les a enregistrés.
+export async function repriseLines(session: odoo.OdooSession, orderId: number): Promise<any[]> {
+  return odoo.searchRead(session, "sale.order.line",
+    [["order_id", "=", orderId], ["display_type", "=", false]],
+    ["id", "name", "product_id", "product_uom_qty", "price_unit", "price_subtotal"], 0, "sequence, id");
+}
+
+// Lien direct vers un enregistrement Odoo. Le format /web#… reste accepté par les
+// versions récentes, qui le redirigent vers leurs nouvelles URL.
+export function odooRecordUrl(session: odoo.OdooSession, model: string, id: number): string {
+  return `${session.config.url.replace(/\/$/, "")}/web#id=${id}&model=${model}&view_type=form`;
+}
+
+// Gratuités allemandes : références commençant par 8 (ex. 8010116 Baume lacté
+// nettoyant). Jamais reprises ni proposées en échange — retirées des listes.
+export function isGermanFreebie(p: any): boolean {
+  return /^8/.test(String(p?.default_code || "").trim());
 }
 
 // Retrouve le lot EXISTANT d'un produit par son nom. Sans ça, passer lot_name à
@@ -880,6 +904,16 @@ export function buildExchangeOrderPayload(opts: {
 }): any {
   const noteLines = opts.returns.map(
     r => `• ${r.product.name}${r.lot ? ` (lot ${r.lot})` : ""} × ${r.qty}`);
+  // Solde ramené à 0 : ni facturation en plus, ni avoir. Écart positif = reprise
+  // non utilisée en échange ; négatif = échange au-delà de la reprise, offert.
+  const adj = balanceAdjustment(opts.returns, opts.exchanges);
+  // Sans article de service, pas de ligne d'ajustement possible : on ramène à 0
+  // par une remise sur l'échange, ou en réduisant le prix des lignes reprises
+  // (l'arrondi par ligne peut alors laisser 1 centime — cas de repli seulement).
+  const exchDiscount = !opts.serviceProductId && adj < 0 && exchangesValue(opts.exchanges) > 0
+    ? Math.round(10000 * (-adj / exchangesValue(opts.exchanges))) / 100 : 0;
+  const returnScale = !opts.serviceProductId && adj > 0 && returnsValue(opts.returns) > 0
+    ? exchangesValue(opts.exchanges) / returnsValue(opts.returns) : 1;
   return {
     partner_id: opts.clientId,
     state: "draft",
@@ -897,7 +931,7 @@ export function buildExchangeOrderPayload(opts: {
       ...opts.returns.map(r => [0, 0, {
         product_id: opts.serviceProductId || r.product.id,
         product_uom_qty: -Math.abs(r.qty),
-        price_unit: r.unitPrice,
+        price_unit: Math.round(r.unitPrice * returnScale * 100) / 100,
         name: `Reprise périmé — ${r.product.name}`
           + (r.lot ? ` — lot ${r.lot}` : "")
           + (r.product.default_code ? ` [${r.product.default_code}]` : ""),
@@ -906,11 +940,30 @@ export function buildExchangeOrderPayload(opts: {
       ...opts.exchanges.map(e => [0, 0, {
         product_id: e.product.id,
         product_uom_qty: e.qty,
-        price_unit: e.unitPrice,
+        price_unit: Math.round(e.unitPrice * 100) / 100,
+        ...(exchDiscount > 0 ? { discount: exchDiscount } : {}),
         ...(opts.freeType ? { type_gratuit: opts.freeType } : {}),
       }]),
+      ...(opts.serviceProductId && adj !== 0 ? [[0, 0, {
+        product_id: opts.serviceProductId,
+        product_uom_qty: 1,
+        price_unit: adj,
+        name: adj > 0
+          ? "Ajustement reprise périmés — reprise non restituée, BC ramené à 0"
+          : "Ajustement reprise périmés — échange offert au-delà de la reprise, BC ramené à 0",
+      }]] : []),
     ],
   };
+}
+
+// Écart à compenser pour un BC à 0 € (montants arrondis par ligne, comme Odoo).
+// > 0 : la reprise dépasse l'échange ; < 0 : l'échange dépasse la reprise.
+export function balanceAdjustment(returns: PerimeLine[], exchanges: ExchangeLine[]): number {
+  const r2 = (n: number) => Math.round(n * 100) / 100;
+  // Prix unitaire arrondi d'abord : c'est ce qu'Odoo enregistre (7,024 → 7,02).
+  const ret = returns.reduce((s, l) => s + r2(Math.abs(l.qty) * r2(l.unitPrice)), 0);
+  const exc = exchanges.reduce((s, l) => s + r2(l.qty * r2(l.unitPrice)), 0);
+  return r2(ret - exc);
 }
 
 // Valeur totale des produits repris (positive).

@@ -19,6 +19,30 @@ const C = {
 const fmt = (n: number) =>
   new Intl.NumberFormat("fr-FR", { style: "currency", currency: "EUR" }).format(n);
 
+// Prix catalogue barré quand le prix affiché est plus bas (remise client, ex. −17 %).
+function Struck({ list, price }: { list: number; price: number }) {
+  if (!list || list - price < 0.01) return null;
+  return (
+    <span style={{ fontSize: 10.5, color: C.muted, fontWeight: 600, marginLeft: 5 }}>
+      <span style={{ textDecoration: "line-through" }}>{fmt(list)}</span>{" "}−{Math.round((1 - price / list) * 100)} %
+    </span>
+  );
+}
+
+// Lien vers une commande Odoo (ouvre Odoo à côté de l'app). stopPropagation :
+// le lien vit parfois dans une ligne elle-même cliquable.
+function OdooLink({ session, id, label }: { session: odoo.OdooSession; id?: number; label: string }) {
+  if (!label) return null;
+  if (!id) return <span>{label}</span>;
+  return (
+    <a href={perimes.odooRecordUrl(session, "sale.order", id)} target="_blank" rel="noopener noreferrer"
+      onClick={e => e.stopPropagation()}
+      style={{ color: C.teal, fontWeight: 700, textDecoration: "underline" }}>
+      {label} ↗
+    </a>
+  );
+}
+
 type Mode = "return" | "exchange";
 
 export default function PerimeScreen({ session, client, priceItems, freeTypes, onToast, onDone }: {
@@ -44,6 +68,10 @@ export default function PerimeScreen({ session, client, priceItems, freeTypes, o
   const [lotNote, setLotNote] = useState("");
   const [lastResult, setLastResult] = useState<{ orderName: string; pickingName: string | null; stockError: string } | null>(null);
   const [recent, setRecent] = useState<any[]>([]);
+  // Historique déroulant : fermé par défaut, lignes de tous les BC chargées à l'ouverture.
+  const [showHistory, setShowHistory] = useState(false);
+  const [historyLines, setHistoryLines] = useState<Record<number, any[]> | null>(null);
+  const [openOrder, setOpenOrder] = useState<number | null>(null);
   // Toutes les fiches res.partner du même client (société, adresses, doublons de
   // même code). Résolu une fois à l'ouverture, réutilisé par chaque recherche.
   const [family, setFamily] = useState<number[]>([client.id]);
@@ -64,7 +92,25 @@ export default function PerimeScreen({ session, client, priceItems, freeTypes, o
   const loadRecent = () => {
     perimes.recentReprises(session, client.id).then(setRecent).catch(() => setRecent([]));
   };
-  useEffect(() => { loadRecent(); }, [client.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { loadRecent(); setHistoryLines(null); }, [client.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const toggleHistory = async () => {
+    const next = !showHistory;
+    setShowHistory(next);
+    if (!next || historyLines || !recent.length) return;
+    try {
+      const rows = await odoo.searchRead(session, "sale.order.line",
+        [["order_id", "in", recent.map(o => o.id)], ["display_type", "=", false]],
+        ["order_id", "name", "product_id", "product_uom_qty", "price_unit", "price_subtotal"], 0, "id");
+      const by: Record<number, any[]> = {};
+      for (const r of rows) (by[r.order_id[0]] ||= []).push(r);
+      setHistoryLines(by);
+    } catch { setHistoryLines({}); }
+  };
+  // Valeur reprise d'un BC = lignes négatives, hors ligne d'ajustement du solde.
+  const repriseValue = (lines: any[]) => -lines
+    .filter(l => (l.price_subtotal || 0) < 0 && !/^Ajustement reprise/i.test(l.name || ""))
+    .reduce((s, l) => s + (l.price_subtotal || 0), 0);
 
   const bareme = perimes.baremeFor(client);
   const statut = perimes.statutLabel(client);
@@ -86,7 +132,8 @@ export default function PerimeScreen({ session, client, priceItems, freeTypes, o
     if (mode === "return") {
       setLotNote("");
       perimes.searchDeliveredLots(session, family, text.trim())
-        .then(async hits => {
+        .then(async raw => {
+          const hits = raw.filter(h => !perimes.isGermanFreebie(h.product));
           setLotHits(hits);
           if (hits.length) return;
           // Aucun lot livré à ce client : ce lot existe-t-il seulement ?
@@ -116,7 +163,8 @@ export default function PerimeScreen({ session, client, priceItems, freeTypes, o
           }
           // Hors ligne : lots préchargés pour ce client.
           try {
-            const cached = await perimes.searchCachedLots(client.id, text.trim());
+            const cached = (await perimes.searchCachedLots(client.id, text.trim()))
+              .filter(h => !perimes.isGermanFreebie(h.product));
             setLotHits(cached);
             setLotNote(cached.length
               ? "Hors ligne — lots issus du dernier préchargement de cette fiche."
@@ -132,9 +180,9 @@ export default function PerimeScreen({ session, client, priceItems, freeTypes, o
         ["&", ["sale_ok", "=", true], "|",
           ["name", "ilike", text.trim()], ["default_code", "ilike", text.trim()]],
         ["id", "name", "default_code", "lst_price", "product_tmpl_id"], 30, "name");
-      setResults(r);
+      setResults(r.filter((p: any) => !perimes.isGermanFreebie(p)));
     } catch {
-      try { setResults(await sync.searchCachedProducts(text.trim(), 30)); }
+      try { setResults((await sync.searchCachedProducts(text.trim(), 30)).filter(p => !perimes.isGermanFreebie(p))); }
       catch { setResults([]); }
     }
     setSearching(false);
@@ -159,6 +207,7 @@ export default function PerimeScreen({ session, client, priceItems, freeTypes, o
           source: "facture" as const,
           invoiceDate: hit.date,
           orderName: hit.orderName,
+          orderId: hit.orderId,
           lotId: hit.lotId,
           suspicious: perimes.isPaidPriceSuspicious(hit.netUnit, x.product.lst_price || 0),
         };
@@ -182,6 +231,7 @@ export default function PerimeScreen({ session, client, priceItems, freeTypes, o
       source: known ? "facture" as const : "catalogue" as const,
       invoiceDate: known ? h.date : undefined,
       orderName: known ? h.orderName : undefined,
+      orderId: known ? h.orderId : undefined,
       suspicious: known && perimes.isPaidPriceSuspicious(base, h.product.lst_price || 0),
     }]);
     setQ(""); setResults([]); setLotHits([]); setLotNote("");
@@ -209,7 +259,9 @@ export default function PerimeScreen({ session, client, priceItems, freeTypes, o
 
   const returnsTotal = perimes.returnsValue(returns);
   const exchangesTotal = perimes.exchangesValue(exchanges);
-  const balance = returnsTotal - exchangesTotal;
+  // BC toujours à 0 € : l'écart est porté par une ligne d'ajustement (voir
+  // perimes.buildExchangeOrderPayload). > 0 : reprise non restituée ; < 0 : échange offert.
+  const adjustment = perimes.balanceAdjustment(returns, exchanges);
 
   const validate = async () => {
     if (sansReprise) { onToast("Statut sans droit à reprise", "error"); return; }
@@ -336,22 +388,54 @@ export default function PerimeScreen({ session, client, priceItems, freeTypes, o
           </div>
         )}
 
-        {/* Reprises déjà enregistrées pour ce client */}
-        {recent.length > 0 && returns.length === 0 && (
+        {/* Historique des périmés de ce client : bouton déroulant */}
+        {recent.length > 0 && (
           <div style={{ marginBottom: 14 }}>
-            <div style={{ fontSize: 10, fontWeight: 800, color: C.muted, textTransform: "uppercase" as const, letterSpacing: "0.06em", marginBottom: 5 }}>
-              Reprises déjà créées pour ce client
-            </div>
-            <div style={{ display: "flex", flexDirection: "column" as const, gap: 4 }}>
-              {recent.map(o => (
-                <div key={o.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 11px", background: C.white, border: `1px solid ${C.border}`, borderRadius: 9, fontSize: 12 }}>
-                  <strong style={{ color: C.text }}>{o.name}</strong>
-                  <span style={{ color: C.muted, fontSize: 11 }}>{String(o.date_order || "").slice(0, 10)}</span>
-                  <span style={{ color: C.muted, fontSize: 11 }}>· {o.state === "draft" ? "Devis" : o.state === "sale" ? "Confirmé" : o.state}</span>
-                  <span style={{ marginLeft: "auto", fontWeight: 700, color: o.amount_total < 0 ? C.orange : C.tealDark }}>{fmt(o.amount_total || 0)}</span>
-                </div>
-              ))}
-            </div>
+            <button onClick={toggleHistory}
+              style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", minHeight: 44, padding: "0 12px", background: C.white, border: `1px solid ${C.border}`, borderRadius: 10, cursor: "pointer", fontFamily: "inherit", fontSize: 13, fontWeight: 700, color: C.textSec }}>
+              Historique des périmés ({recent.length})
+              {historyLines && (
+                <span style={{ fontWeight: 600, color: C.muted, fontSize: 12 }}>
+                  · repris au total {fmt(recent.reduce((s, o) => s + repriseValue(historyLines[o.id] || []), 0))}
+                </span>
+              )}
+              <span style={{ marginLeft: "auto", color: C.muted }}>{showHistory ? "▴" : "▾"}</span>
+            </button>
+            {showHistory && (
+              <div style={{ display: "flex", flexDirection: "column" as const, gap: 4, marginTop: 6 }}>
+                {!historyLines && <div style={{ fontSize: 12, color: C.muted, padding: "6px 2px" }}>Chargement…</div>}
+                {recent.map(o => {
+                  const ls = historyLines?.[o.id] || [];
+                  const open = openOrder === o.id;
+                  return (
+                    <div key={o.id} style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 9 }}>
+                      <button onClick={() => setOpenOrder(open ? null : o.id)}
+                        style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", minHeight: 40, padding: "8px 11px", background: "none", border: "none", cursor: "pointer", fontFamily: "inherit", fontSize: 12, textAlign: "left" as const }}>
+                        <OdooLink session={session} id={o.id} label={o.name} />
+                        <span style={{ color: C.muted, fontSize: 11 }}>{String(o.date_order || "").slice(0, 10)}</span>
+                        <span style={{ color: C.muted, fontSize: 11 }}>· {o.state === "draft" ? "Devis" : o.state === "sale" ? "Confirmé" : o.state}</span>
+                        <span style={{ marginLeft: "auto", fontWeight: 700, color: C.orange }}>
+                          {historyLines ? `repris ${fmt(repriseValue(ls))}` : fmt(o.amount_total || 0)}
+                        </span>
+                        <span style={{ color: C.muted }}>{open ? "▴" : "▾"}</span>
+                      </button>
+                      {open && (
+                        <div style={{ padding: "0 11px 9px", display: "flex", flexDirection: "column" as const, gap: 3 }}>
+                          {ls.length === 0 && <div style={{ fontSize: 11, color: C.muted }}>{historyLines ? "Aucune ligne." : "Chargement…"}</div>}
+                          {ls.map(l => (
+                            <div key={l.id} style={{ display: "flex", gap: 8, fontSize: 11, color: C.textSec }}>
+                              <span style={{ flex: 1, minWidth: 0 }}>{l.name}</span>
+                              <span style={{ color: C.muted }}>× {Math.abs(l.product_uom_qty)}</span>
+                              <span style={{ fontWeight: 700, color: (l.price_subtotal || 0) < 0 ? C.orange : C.tealDark, minWidth: 70, textAlign: "right" as const }}>{fmt(l.price_subtotal || 0)}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
         )}
 
@@ -377,9 +461,13 @@ export default function PerimeScreen({ session, client, priceItems, freeTypes, o
                 <button key={`${h.product.id}-${h.lot}`} onClick={() => addFromLot(h)}
                   style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", background: C.greenSoft, border: `1px solid ${C.green}44`, borderRadius: 10, cursor: "pointer", fontFamily: "inherit", textAlign: "left" as const }}>
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: 13, fontWeight: 700, color: C.text }}>{h.product.name}</div>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: C.text }}>
+                      {h.product.default_code && <span style={{ fontFamily: "monospace", color: C.muted, fontWeight: 600, marginRight: 6 }}>{h.product.default_code}</span>}
+                      {h.product.name}
+                    </div>
                     <div style={{ fontSize: 10.5, color: C.muted }}>
                       Lot <strong style={{ color: C.textSec }}>{h.lot}</strong> · livré le {h.date}
+                      {h.orderName && <> · <OdooLink session={session} id={h.orderId} label={h.orderName} /></>}
                       {" · "}
                       <strong style={{ color: h.deliveredQty > 0 ? C.green : C.red }}>
                         {h.deliveredQty > 0 ? `${h.deliveredQty} reprenable${h.deliveredQty > 1 ? "s" : ""}` : "déjà tout repris"}
@@ -390,7 +478,7 @@ export default function PerimeScreen({ session, client, priceItems, freeTypes, o
                     {h.netUnit != null ? (
                       <>
                         <div style={{ fontSize: 13, fontWeight: 800, color: C.green }}>{fmt(h.netUnit)}</div>
-                        <div style={{ fontSize: 9.5, color: C.muted }}>payé</div>
+                        <div style={{ fontSize: 9.5, color: C.muted }}>payé<Struck list={h.product.lst_price || 0} price={h.netUnit} /></div>
                       </>
                     ) : (
                       <div style={{ fontSize: 10.5, color: C.orange, fontWeight: 700 }}>prix inconnu</div>
@@ -427,7 +515,15 @@ export default function PerimeScreen({ session, client, priceItems, freeTypes, o
             {lines.map((l, i) => (
               <div key={l.product.id} style={{ background: mode === "return" ? C.orangeSoft : C.greenSoft, border: `1px solid ${mode === "return" ? C.orange : C.green}33`, borderRadius: 12, padding: "10px 12px" }}>
                 <div style={{ display: "flex", alignItems: "flex-start", gap: 8, marginBottom: 8 }}>
-                  <div style={{ flex: 1, minWidth: 0, fontSize: 13, fontWeight: 700, color: C.text }}>{l.product.name}</div>
+                  <div style={{ flex: 1, minWidth: 0, fontSize: 13, fontWeight: 700, color: C.text }}>
+                    {l.product.name}
+                    {l.product.default_code && <div style={{ fontSize: 10.5, fontFamily: "monospace", color: C.muted, fontWeight: 600 }}>Réf. {l.product.default_code}</div>}
+                    {mode === "exchange" && (
+                      <div style={{ fontSize: 10.5, fontWeight: 600, color: C.muted }}>
+                        Prix client {fmt(l.unitPrice)}<Struck list={l.product.lst_price || 0} price={l.unitPrice} />
+                      </div>
+                    )}
+                  </div>
                   <button onClick={() => mode === "return"
                     ? setReturns(p => p.filter((_, j) => j !== i))
                     : setExchanges(p => p.filter((_, j) => j !== i))}
@@ -489,9 +585,10 @@ export default function PerimeScreen({ session, client, priceItems, freeTypes, o
                         {!facture ? `Prix catalogue ${fmt(r.basePrice)} — estimé`
                           : r.basePrice === 0 ? "Produit offert à l'origine — reprise 0 €"
                           : `Prix payé ${fmt(r.basePrice)}`}
+                        {facture && r.basePrice > 0 && <Struck list={r.product.lst_price || 0} price={r.basePrice} />}
                       </span>
                       {facture && r.invoiceDate && <span style={{ color: C.muted }}>livré le {r.invoiceDate}</span>}
-                      {facture && r.orderName && <span style={{ color: C.muted }}>· {r.orderName}</span>}
+                      {facture && r.orderName && <span style={{ color: C.muted }}>· commande <OdooLink session={session} id={r.orderId} label={r.orderName} /></span>}
                       <span style={{ color: C.muted }}>· reprise {Math.round(bareme.taux * 100)} %{!facture && bareme.rsf > 0 ? ` (RSF ${(bareme.rsf * 100).toFixed(2).replace(/\.?0+$/, "")} %)` : ""}</span>
                       {!facture && <span style={{ color: C.muted }}>· saisis le n° de lot pour le prix réel</span>}
                     </div>
@@ -527,12 +624,25 @@ export default function PerimeScreen({ session, client, priceItems, freeTypes, o
         <div style={{ background: "#0f172a", borderRadius: 16, padding: "14px 16px" }}>
           <Row label="Valeur des périmés repris" value={`−${fmt(returnsTotal)}`} color="#fb923c" />
           <Row label="Produits d'échange" value={fmt(exchangesTotal)} color="#5eead4" />
+          {adjustment !== 0 && (
+            <Row label={adjustment > 0 ? "Ajustement (reprise non restituée)" : "Ajustement (échange offert)"}
+              value={`${adjustment > 0 ? "+" : "−"}${fmt(Math.abs(adjustment))}`} color="rgba(255,255,255,0.7)" />
+          )}
           <div style={{ borderTop: "1px solid rgba(255,255,255,0.12)", marginTop: 8, paddingTop: 8, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
             <span style={{ fontSize: 13, fontWeight: 700, color: "#fff" }}>Solde du BC</span>
-            <span style={{ fontSize: 19, fontWeight: 800, color: balance >= 0 ? "#5eead4" : "#fb923c" }}>
-              {fmt(-balance)}
-            </span>
+            <span style={{ fontSize: 19, fontWeight: 800, color: "#5eead4" }}>{fmt(0)}</span>
           </div>
+          {/* Le BC est toujours à 0 : on signale ce que l'ajustement absorbe. */}
+          {returns.length > 0 && adjustment > 0.005 && (
+            <div style={{ fontSize: 11, color: "#fdba74", marginTop: 6, lineHeight: 1.45 }}>
+              Il reste {fmt(adjustment)} de reprise à utiliser — ajoute des produits d&apos;échange, sinon ils sont perdus.
+            </div>
+          )}
+          {adjustment < -0.005 && (
+            <div style={{ fontSize: 11, color: "#fdba74", marginTop: 6, lineHeight: 1.45 }}>
+              L&apos;échange dépasse la reprise de {fmt(-adjustment)} — offert, rien n&apos;est facturé en plus.
+            </div>
+          )}
 
           <button onClick={validate} disabled={submitting || returns.length === 0 || sansReprise}
             style={{ width: "100%", marginTop: 12, padding: "13px 0", borderRadius: 999, border: "none", fontSize: 14, fontWeight: 800, fontFamily: "inherit",
