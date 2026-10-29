@@ -50,9 +50,10 @@ export async function preloadCatalog(
 
   // 1. Produits vendables
   onProgress?.({ step: "Catalogue produits", done: 0, total: steps });
+  // Vendables + testeurs (réf. en 3), comme le catalogue en ligne.
   const products = await odoo.searchRead(
     session, "product.product",
-    [["sale_ok", "=", true]],
+    ["|", ["sale_ok", "=", true], ["default_code", "=like", "3%"]],
     PRODUCT_FIELDS,
     0, "name"
   );

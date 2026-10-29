@@ -164,8 +164,10 @@ const TYPE_CAT_PREFIX = "type:";
 // nom. Premier chiffre de la référence : 1 vente, 3 testeur, 5 échantillon,
 // 6 PLV, 7 offre MEA, 8 gratuité allemande.
 const PRODUCT_TYPE_GROUPS: { id: string; label: string; patterns: RegExp[]; also?: (p: any) => boolean }[] = [
-  { id: "testeurs",    label: "Testeurs",     patterns: [/test/i],
-    also: p => /^3/.test(String(p.default_code || "").trim()) || /\btest(eur|er)s?\b/i.test(String(p.name || "")) },
+  // Testeurs : référence en 3 seulement. Pas de repli par le nom : les PLV
+  // « Module-Conseil testeur », « Présentoir … + 4 testeurs » y tombaient.
+  { id: "testeurs",    label: "Testeurs",     patterns: [],
+    also: p => /^3/.test(String(p.default_code || "").trim()) },
   { id: "echantillons", label: "Échantillons", patterns: [/[ée]chantillon/i],
     also: p => /^5/.test(String(p.default_code || "").trim()) },
   { id: "travel",      label: "Travel size",  patterns: [/travel/i] },
@@ -2738,8 +2740,10 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
   // Chargement initial : tous les produits vendables actifs
   const loadAll = useCallback(async (q: string) => {
     setProdLoading(true);
+    // Vendables + testeurs (réf. en 3), même si « Peut être vendu » est décoché :
+    // on les commande souvent en gratuité.
     const domain: any[] = [
-      ["sale_ok", "=", true],
+      "|", ["sale_ok", "=", true], ["default_code", "=like", "3%"],
       ["active", "=", true],
     ];
     if (q.trim().length >= 2) {
@@ -2751,14 +2755,16 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
     try {
       let p: any[];
       try {
+        // Limite 0 = TOUT le catalogue. Avant : 500 par ordre alphabétique, donc
+        // les produits en fin d'alphabet (« Testeur… », « Sérum… ») manquaient.
         p = await odoo.searchRead(session, "product.product", domain,
-          [...BASE_FIELDS, "x_type_de_produit_id"], 500, "name");
+          [...BASE_FIELDS, "x_type_de_produit_id"], q.trim().length >= 2 ? 500 : 0, "name");
       } catch (e) {
         // Filet de sécurité : un champ personnalisé absent de l'instance fait planter
         // TOUTE la requête (cf. l'incident `sequence` sur pricelist). Plutôt que de
         // vider le catalogue, on retente sans le champ — on perd juste le regroupement.
         if (odoo.isNetworkError(e) || odoo.isSessionExpired(e)) throw e;
-        p = await odoo.searchRead(session, "product.product", domain, BASE_FIELDS, 500, "name");
+        p = await odoo.searchRead(session, "product.product", domain, BASE_FIELDS, q.trim().length >= 2 ? 500 : 0, "name");
       }
       // Produits en stock en premier, puis les autres
       p.sort((a: any, b: any) => (b.virtual_available || 0) - (a.virtual_available || 0));
