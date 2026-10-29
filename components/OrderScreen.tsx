@@ -1761,7 +1761,7 @@ function ClientStep({ session, onSelect, onImportBon, onOpenPlanning }: {
           {showWidgets && (
             // eslint-disable-next-line @next/next/no-img-element
             <img src="/logo-accueil.png" alt="Dr. Hauschka" width={150}
-              style={{ display: "block", height: "auto", margin: "0 auto 16px" }} />
+              style={{ display: "block", height: "auto", margin: "0 auto 6px" }} />
           )}
           {!showWidgets && (
             <div style={{ width: 72, height: 72, borderRadius: 20, background: C.tealSoft, border: `1.5px solid ${C.tealMid}`, display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 16px" }}>
