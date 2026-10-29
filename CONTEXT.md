@@ -134,6 +134,10 @@ en masse au bouton « Télécharger les données ».)
   (step `home`). Sous la recherche : cartes « verre » iOS (`components/glass.ts`)
   — `AgendaGlass` (semaine/mois, ouvre le planning sur la semaine choisie) et
   `VisitPriority`. Le fond coloré de l'écran est nécessaire à l'effet verre.
+- **Premier chiffre de la référence produit** : 1 vente, 3 testeur, 5 échantillon,
+  6 PLV, 7 offre MEA, 8 gratuité allemande. Sert aux gammes du catalogue (vente
+  seule), aux sections Testeurs / Échantillons / PLV et à l'exclusion des
+  gratuités allemandes dans les périmés.
 - **Clients à visiter en priorité** (`components/VisitPriority.tsx`) :
   rythme selon le CA N-1 `x_ca_n_1` (≥ 20 k€ mensuel, 10–20 k€ tous les 2 mois,
   < 10 k€ tous les 4 mois — constante `RULES`). Clients = ceux dont le commercial
