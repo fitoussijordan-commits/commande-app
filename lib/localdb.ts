@@ -130,16 +130,20 @@ export type QueuedOrderStatus = "pending" | "syncing" | "synced" | "error";
 // Type d'élément en file : commande, note client, ou RDV.
 export type QueuedKind = "order" | "note" | "appointment" | "perime";
 
-// Une action Odoo à rejouer : create, write (modif), ou appel de méthode.
+// Une action Odoo à rejouer : create, write (modif), appel de méthode, ou ajout
+// en tête d'un champ HTML (relu au rejeu : ne pas écraser ce qui a changé entre-temps).
 export interface QueuedAction {
-  op: "create" | "write" | "callMethod";
+  op: "create" | "write" | "callMethod" | "prependHtml";
   model: string;
-  // create : values ; write : ids + values ; callMethod : method + args + kwargs
+  // create : values ; write : ids + values ; callMethod : method + args + kwargs ;
+  // prependHtml : ids[0] + field + html
   values?: any;
   ids?: number[];
   method?: string;
   args?: any[];
   kwargs?: any;
+  field?: string;
+  html?: string;
 }
 
 export interface QueuedOrder {

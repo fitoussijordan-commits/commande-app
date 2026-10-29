@@ -2,6 +2,7 @@
 import { useState, useEffect, useRef } from "react";
 import * as odoo from "@/lib/odoo";
 import * as sync from "@/lib/sync";
+import { descToText } from "@/lib/text";
 
 const C = {
   bg: "#f8fafc", white: "#fff", text: "#0f172a", textSec: "#334155",
@@ -11,18 +12,10 @@ const C = {
   shadowXl: "0 20px 25px rgba(0,0,0,0.10), 0 8px 10px rgba(0,0,0,0.04)",
 };
 
-// Odoo stocke le corps des messages en HTML — on l'affiche en texte simple.
-function stripHtml(html: string): string {
-  return html.replace(/<[^>]+>/g, " ").replace(/&nbsp;/g, " ").replace(/\s+/g, " ").trim();
-}
-function fmtDate(iso: string): string {
-  try {
-    const d = new Date(iso.replace(" ", "T") + "Z"); // Odoo renvoie du UTC naïf
-    return d.toLocaleDateString("fr-FR") + " à " + d.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
-  } catch { return iso; }
-}
-
-interface PastNote { id: number; body: string; date: string; author: string }
+// Notes DC : champ HTML de la fiche client (x_studio_notes_dc_), et non plus le
+// chatter. Chaque note est ajoutée EN TÊTE avec sa date et son auteur ; les
+// notes précédentes, saisies dans l'app ou dans Odoo, sont conservées.
+const escapeHtml = (t: string) => t.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
 interface Props {
   session: odoo.OdooSession;
@@ -35,7 +28,7 @@ export default function ClientNoteModal({ session, client, onClose, onToast }: P
   const [text, setText] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
-  const [pastNotes, setPastNotes] = useState<PastNote[]>([]);
+  const [pastNotes, setPastNotes] = useState("");   // contenu actuel des Notes DC, en texte
   const [loadingHistory, setLoadingHistory] = useState(true);
 
   const [recording, setRecording] = useState(false);
@@ -46,12 +39,8 @@ export default function ClientNoteModal({ session, client, onClose, onToast }: P
   useEffect(() => {
     (async () => {
       try {
-        const rows = await odoo.searchRead(session, "mail.message",
-          [["res_id", "=", client.id], ["model", "=", "res.partner"], ["message_type", "in", ["comment"]]],
-          ["id", "body", "date", "author_id"], 15, "date desc");
-        setPastNotes(rows
-          .map((r: any) => ({ id: r.id, body: stripHtml(r.body || ""), date: r.date, author: Array.isArray(r.author_id) ? r.author_id[1] : "" }))
-          .filter((r: PastNote) => r.body.length > 0));
+        const rows = await odoo.searchRead(session, "res.partner", [["id", "=", client.id]], [sync.CLIENT_NOTES_FIELD], 1);
+        setPastNotes(descToText(String(rows[0]?.[sync.CLIENT_NOTES_FIELD] || "")).trim());
       } catch {}
       setLoadingHistory(false);
     })();
@@ -103,18 +92,18 @@ export default function ClientNoteModal({ session, client, onClose, onToast }: P
     setSaving(true);
     try {
       if (recording) { recognitionRef.current?.stop(); setRecording(false); }
-      // Note interne (pas d'e-mail envoyé) sur le chatter de la fiche client.
-      const body = text.trim().replace(/\n/g, "<br/>");
+      // Ajoutée en tête des Notes DC, datée et signée.
+      const now = new Date();
+      const stamp = `${now.toLocaleDateString("fr-FR")} ${now.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}`;
+      const html = `<p><strong>${stamp} — ${escapeHtml(session.name || "")}</strong><br/>`
+        + `${escapeHtml(text.trim()).replace(/\n/g, "<br/>")}</p>`;
       try {
-        await odoo.callMethod(session, "res.partner", "message_post", [[client.id]], {
-          body,
-          message_type: "comment",
-          subtype_xmlid: "mail.mt_note",
-        });
-        onToast("Note enregistrée sur la fiche client", "success");
-      } catch {
-        // Hors ligne → mise en file, envoyée à Odoo au retour du réseau.
-        await sync.queueNote(client.id, client.name || "client", body);
+        await sync.prependHtmlField(session, "res.partner", client.id, sync.CLIENT_NOTES_FIELD, html);
+        onToast("Note ajoutée aux Notes DC de la fiche client", "success");
+      } catch (e: any) {
+        if (!odoo.isNetworkError(e)) throw e;   // champ absent, droits… : on l'affiche
+        // Hors ligne → mise en file, ajoutée au retour du réseau.
+        await sync.queueClientNote(client.id, client.name || "client", html);
         onToast("Note enregistrée hors ligne — sera envoyée au retour du réseau", "info");
       }
       onClose();
@@ -147,16 +136,11 @@ export default function ClientNoteModal({ session, client, onClose, onToast }: P
           {/* Historique des notes précédentes */}
           {loadingHistory ? (
             <div style={{ fontSize: 12, color: C.muted, padding: "8px 0" }}>Chargement de l'historique…</div>
-          ) : pastNotes.length > 0 ? (
+          ) : pastNotes ? (
             <div style={{ marginBottom: 16 }}>
-              <div style={{ fontSize: 11, fontWeight: 700, color: C.muted, textTransform: "uppercase" as const, letterSpacing: "0.05em", marginBottom: 8 }}>Historique</div>
-              <div style={{ display: "flex", flexDirection: "column" as const, gap: 8, maxHeight: 180, overflowY: "auto" as const }}>
-                {pastNotes.map(n => (
-                  <div key={n.id} style={{ background: C.bg, borderRadius: 10, padding: "8px 10px" }}>
-                    <div style={{ fontSize: 12, color: C.textSec, lineHeight: 1.4 }}>{n.body}</div>
-                    <div style={{ fontSize: 10, color: C.muted, marginTop: 4 }}>{n.author} · {fmtDate(n.date)}</div>
-                  </div>
-                ))}
+              <div style={{ fontSize: 11, fontWeight: 700, color: C.muted, textTransform: "uppercase" as const, letterSpacing: "0.05em", marginBottom: 8 }}>Notes DC</div>
+              <div style={{ background: C.bg, borderRadius: 10, padding: "10px 12px", maxHeight: 200, overflowY: "auto" as const, fontSize: 12.5, color: C.textSec, lineHeight: 1.5, whiteSpace: "pre-wrap" as const }}>
+                {pastNotes}
               </div>
             </div>
           ) : (

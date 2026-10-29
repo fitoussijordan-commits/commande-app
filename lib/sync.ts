@@ -376,18 +376,24 @@ export async function queueOrder(
   return { localRef, id };
 }
 
-// Enfile une note client (message_post sur res.partner).
-export async function queueNote(clientId: number, clientName: string, body: string): Promise<number> {
+// Notes DC de la fiche client (res.partner.x_studio_notes_dc_, champ HTML Studio).
+export const CLIENT_NOTES_FIELD = "x_studio_notes_dc_";
+
+// Ajoute `html` EN TÊTE d'un champ HTML, en relisant la valeur actuelle juste
+// avant d'écrire : un autre commercial (ou le bureau) a pu le modifier entre-temps.
+export async function prependHtmlField(session: odoo.OdooSession, model: string, id: number, field: string, html: string): Promise<void> {
+  const rows = await odoo.searchRead(session, model, [["id", "=", id]], [field], 1);
+  const current = String(rows[0]?.[field] || "");
+  const empty = !current.replace(/<[^>]*>/g, "").trim();
+  await odoo.write(session, model, [id], { [field]: empty ? html : html + current });
+}
+
+// Enfile une note DC (ajout en tête du champ Notes DC de la fiche client).
+export async function queueClientNote(clientId: number, clientName: string, html: string): Promise<number> {
   return db.enqueueAction({
     kind: "note",
     label: `Note — ${clientName}`,
-    actions: [{
-      op: "callMethod",
-      model: "res.partner",
-      method: "message_post",
-      args: [[clientId]],
-      kwargs: { body, message_type: "comment", subtype_xmlid: "mail.mt_note" },
-    }],
+    actions: [{ op: "prependHtml", model: "res.partner", ids: [clientId], field: CLIENT_NOTES_FIELD, html }],
   });
 }
 
@@ -491,6 +497,8 @@ export async function flushQueue(
               await odoo.write(session, a.model, a.ids || [], a.values || {});
             } else if (a.op === "callMethod") {
               await odoo.callMethod(session, a.model, a.method!, a.args || [], a.kwargs || {});
+            } else if (a.op === "prependHtml") {
+              await prependHtmlField(session, a.model, (a.ids || [])[0], a.field!, a.html || "");
             }
           }
         }
