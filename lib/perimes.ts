@@ -1132,9 +1132,14 @@ export function newLocalRef(): string {
 // « Geste co périmé » + « Validé DC ». Recherchées par libellé et non par id :
 // les ids de crm.tag diffèrent d'une base à l'autre, et un id codé en dur
 // étiquetterait silencieusement la mauvaise chose.
-const TAG_PATTERNS: { label: string; match: RegExp }[] = [
+export const REPRISE_TAG = "Reprise périmé";
+
+const TAG_PATTERNS: { label: string; match: RegExp; create?: boolean }[] = [
   { label: "Geste co périmé", match: /geste\s*co.*p[ée]rim/i },
   { label: "Validé DC",       match: /^valid[ée]\s*dc$/i },
+  // Étiquette du rapport des périmés (écran « Périmés » + export Excel) : c'est
+  // par elle qu'on filtre les BC de reprise. Créée si elle n'existe pas encore.
+  { label: REPRISE_TAG, match: /^reprise\s*p[ée]rim[ée]?s?$/i, create: true },
 ];
 
 let _perimeTagCache: { ids: number[]; missing: string[] } | undefined;
@@ -1151,7 +1156,12 @@ export async function getPerimeTagIds(
     const missing: string[] = [];
     for (const p of TAG_PATTERNS) {
       const hit = tags.find((t: any) => p.match.test(String(t.name || "").trim()));
-      if (hit) ids.push(hit.id); else missing.push(p.label);
+      if (hit) { ids.push(hit.id); continue; }
+      if (p.create) {
+        try { ids.push(await odoo.create(session, "crm.tag", { name: p.label })); continue; }
+        catch (e) { if (odoo.isNetworkError(e)) throw e; }   // droits insuffisants : signalé ci-dessous
+      }
+      missing.push(p.label);
     }
     _perimeTagCache = { ids, missing };
     return _perimeTagCache;

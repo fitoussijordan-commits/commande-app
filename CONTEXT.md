@@ -130,6 +130,13 @@ en masse au bouton « Télécharger les données ».)
   `base = "pricelist"` + `base_pricelist_id`. `resolveBaseLists` rattache les règles
   de la liste de base ; sans ça la remise partirait du prix catalogue. Le
   préchargement garde TOUTES les listes pour que ça marche hors ligne.
+- **Rapport périmés** : BC de reprise repérés par l'étiquette `crm.tag`
+  « Reprise périmé » (créée au besoin par `getPerimeTagIds`) ou, pour les
+  anciens, `client_order_ref` PERIM-. Écran `PerimesReportScreen` (bouton icône
+  de l'accueil) et export Excel `/api/perimes/export` partagent
+  `lib/perimesReport.ts`. Sur iPad l'Excel part par mail (l'app ne sait pas
+  enregistrer un fichier). Liens Excel en formule HYPERLINK : les liens objet
+  d'exceljs débordaient sur les autres onglets.
 - **Import de bons (`/api/bon-commande`)** : Claude ne fait que LIRE le document ;
   produits et client sont rapprochés par l'app (EAN, référence, puis suggestions à
   confirmer). Coût ≈ 3 à 6 c par bon (Opus 5.5, effort bas).

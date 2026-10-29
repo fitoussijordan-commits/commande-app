@@ -8,6 +8,7 @@ import PerimeScreen from "@/components/PerimeScreen";
 import AssistantScreen from "@/components/AssistantScreen";
 import BonCommandeScreen, { ImportedLine } from "@/components/BonCommandeScreen";
 import QtyPad from "@/components/QtyPad";
+import PerimesReportScreen from "@/components/PerimesReportScreen";
 import { onIncomingFile } from "@/lib/incomingFile";
 import * as sync from "@/lib/sync";
 import * as geo from "@/lib/geo";
@@ -324,7 +325,7 @@ function ProductImage({ id, networkUrl, style }: { id: number; networkUrl: strin
 
 // ═══════════════════════════════════════════════════════════════════════════
 export default function OrderScreen({ session, onBack, onToast, desktop }: Props) {
-  const [step, setStep] = useState<"home" | "client" | "hub" | "catalog" | "history" | "perime" | "assistant" | "bon">("client");
+  const [step, setStep] = useState<"home" | "client" | "hub" | "catalog" | "history" | "perime" | "assistant" | "bon" | "perimesReport">("client");
   const [client, setClient] = useState<any>(null);
   const [priceItems, setPriceItems] = useState<PriceItem[]>([]); // items pricelist du client
   const [cart, setCart] = useState<Record<number, CartItem>>({});
@@ -724,6 +725,7 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
         {step !== "client" && (
           <button onClick={() => {
               if (step === "bon") setStep(bonOrigin);
+              else if (step === "perimesReport") setStep("home");
               else if (step === "catalog" || step === "history" || step === "perime" || step === "assistant") setStep("hub");
               else if (step === "hub") setStep(clientOrigin === "planning" ? "home" : "client");
               else setStep("client");
@@ -744,6 +746,7 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
           {step === "perime" && "Retour périmés"}
           {step === "assistant" && "Assistant"}
           {step === "bon" && "Import bon de commande"}
+          {step === "perimesReport" && "Périmés — tous clients"}
         </div>
 
         <div style={{ flex: 1 }} />
@@ -919,7 +922,7 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
       {/* ── Étapes ── */}
       {step === "home" && (
         <HomeScreen session={session} onNewOrder={() => setStep("client")} onOpenClient={(c) => selectClient(c, "planning")} onToast={onToast}
-          onImportBon={() => pickBonFile("home")} />
+          onImportBon={() => pickBonFile("home")} onPerimesReport={() => setStep("perimesReport")} />
       )}
 
       {step === "client" && <ClientStep session={session} onSelect={selectClient} onImportBon={() => pickBonFile("client")} />}
@@ -946,6 +949,8 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
       {step === "assistant" && (
         <AssistantScreen session={session} client={client} />
       )}
+
+      {step === "perimesReport" && <PerimesReportScreen session={session} onToast={onToast} />}
 
       {step === "bon" && (bonOrigin !== "hub" || client) && (
         <BonCommandeScreen session={session} client={client} priceItems={priceItems}
@@ -1078,8 +1083,8 @@ function sameDay(a: Date, b: Date): boolean {
   return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
 }
 
-function HomeScreen({ session, onNewOrder, onOpenClient, onToast, onImportBon }: {
-  session: odoo.OdooSession; onNewOrder: () => void; onImportBon: () => void;
+function HomeScreen({ session, onNewOrder, onOpenClient, onToast, onImportBon, onPerimesReport }: {
+  session: odoo.OdooSession; onNewOrder: () => void; onImportBon: () => void; onPerimesReport: () => void;
   onOpenClient: (client: any) => void;
   onToast: (msg: string, type?: "success" | "error" | "info") => void;
 }) {
@@ -1390,6 +1395,10 @@ function HomeScreen({ session, onNewOrder, onOpenClient, onToast, onImportBon }:
           <button onClick={onImportBon} title="Importer un bon de commande (PDF ou photo)"
             style={{ display: "flex", alignItems: "center", gap: 6, height: 34, padding: "0 14px", borderRadius: 999, background: C.white, color: C.tealDark, border: `1.5px solid ${C.tealMid}`, cursor: "pointer", fontFamily: "inherit", fontSize: 13, fontWeight: 700, boxShadow: C.shadow }}>
             <Icon name="file" size={15} /> Importer un bon
+          </button>
+          <button onClick={onPerimesReport} title="Périmés — toutes les reprises" aria-label="Périmés, toutes les reprises"
+            style={{ width: 34, height: 34, borderRadius: 999, background: C.white, color: C.tealDark, border: `1.5px solid ${C.tealMid}`, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", boxShadow: C.shadow }}>
+            <Icon name="package" size={16} />
           </button>
           <button onClick={() => setNewAdminRdv(true)} title="Nouveau rendez-vous"
             style={{ display: "flex", alignItems: "center", gap: 6, height: 34, padding: "0 14px", borderRadius: 999, background: C.teal, color: "#fff", border: "none", cursor: "pointer", fontFamily: "inherit", fontSize: 13, fontWeight: 700, boxShadow: "0 8px 18px rgba(13,148,136,0.25)" }}>
