@@ -2615,7 +2615,14 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
 
   // ── MEA / Offres ─────────────────────────────────────────────────────────
   const MEA_CAT_ID = "__mea__";
+  // Devis d'implantation : mêmes modèles de devis Odoo que les MEA, séparés par
+  // leur nom (« Devis d'implantation - INSTITUT », « … - RETAIL »…).
+  const DEVIS_CAT_ID = "__devis__";
+  const isImplantTemplate = (t: any) => /implantation/i.test(String(t?.name || ""));
+
   const [meaTemplates, setMeaTemplates] = useState<any[]>([]);
+  const isOfferView = activeCatId === MEA_CAT_ID || activeCatId === DEVIS_CAT_ID;
+  const shownTemplates = meaTemplates.filter((t: any) => isImplantTemplate(t) === (activeCatId === DEVIS_CAT_ID));
   const [meaLoading, setMeaLoading] = useState(false);
   const [applyingMea, setApplyingMea] = useState<number | null>(null);
 
@@ -2948,6 +2955,13 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
               <Icon name="gift" size={13} /> MEA
             </span>
           </button>
+          <button
+            onClick={() => { setActiveCatId(DEVIS_CAT_ID); loadMeaTemplates(); }}
+            style={{ width: "100%", padding: "10px 10px", background: activeCatId === DEVIS_CAT_ID ? C.orangeSoft : "transparent", border: "none", borderLeft: `3px solid ${activeCatId === DEVIS_CAT_ID ? C.orange : "transparent"}`, cursor: "pointer", textAlign: "left" as const, fontFamily: "inherit", display: "flex", alignItems: "center", gap: 7, transition: "all 0.1s" }}>
+            <span style={{ fontSize: 12, fontWeight: activeCatId === DEVIS_CAT_ID ? 700 : 400, color: activeCatId === DEVIS_CAT_ID ? C.orange : C.textSec, display: "flex", alignItems: "center", gap: 6 }}>
+              <Icon name="file" size={13} /> Devis d&apos;implantation
+            </span>
+          </button>
         </div>
       </div>
 
@@ -2993,17 +3007,17 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
         <div style={{ flex: 1, overflowY: "auto" as const, padding: 14 }}>
 
           {/* ── Vue MEA ── */}
-          {activeCatId === MEA_CAT_ID ? (
+          {isOfferView ? (
             meaLoading ? (
               <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: 200, color: C.muted }}>Chargement…</div>
-            ) : meaTemplates.length === 0 ? (
+            ) : shownTemplates.length === 0 ? (
               <div style={{ textAlign: "center", padding: 60, color: C.muted }}>
                 <div style={{ marginBottom: 10 }}><Icon name="file" size={32} color={C.border} /></div>
-                <div>Aucun modèle de devis trouvé</div>
+                <div>{activeCatId === DEVIS_CAT_ID ? "Aucun devis d'implantation" : "Aucune MEA trouvée"}</div>
               </div>
             ) : (
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))", gap: 10 }}>
-                {meaTemplates.map((t) => {
+                {shownTemplates.map((t) => {
                   const isApplying = applyingMea === t.id;
                   const lineCount = t.sale_order_template_line_ids?.length || 0;
                   return (
