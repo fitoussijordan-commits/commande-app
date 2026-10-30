@@ -115,10 +115,29 @@ async function shrinkImage(file: File): Promise<{ data: string; mediaType: strin
 // Type réel du fichier, lu dans ses premiers octets. Un bon enregistré depuis un
 // mail ou un logiciel de pharmacie arrive souvent SANS extension (« BC Phi
 // GERBAUD ») : le navigateur ne lui donne alors aucun type, alors que c'est un PDF.
-async function sniffKind(file: File): Promise<"pdf" | "image" | null> {
+type FileKind = "pdf" | "image" | "docx" | "xlsx" | "csv" | "old-office";
+const OFFICE_MIME: Record<"docx" | "xlsx" | "csv", string> = {
+  docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  csv: "text/csv",
+};
+
+async function sniffKind(file: File): Promise<FileKind | null> {
   const b = new Uint8Array(await file.slice(0, 12).arrayBuffer());
   const ascii = String.fromCharCode(...Array.from(b));
+  const name = file.name.toLowerCase();
   if (ascii.startsWith("%PDF-")) return "pdf";
+  // Word / Excel récents = archive ZIP : on regarde ce qu'elle contient.
+  if (ascii.startsWith("PK\x03\x04")) {
+    const head = new TextDecoder("latin1").decode(await file.slice(0, Math.min(file.size, 4_000_000)).arrayBuffer());
+    if (head.includes("word/")) return "docx";
+    if (head.includes("xl/")) return "xlsx";
+    if (name.endsWith(".docx")) return "docx";
+    if (name.endsWith(".xlsx")) return "xlsx";
+  }
+  // .doc / .xls (ancien format Office) : non lisibles, on le dit.
+  if (b[0] === 0xd0 && b[1] === 0xcf && b[2] === 0x11 && b[3] === 0xe0) return "old-office";
+  if (name.endsWith(".csv") || file.type === "text/csv") return "csv";
   if (b[0] === 0xff && b[1] === 0xd8) return "image";                 // JPEG
   if (ascii.startsWith("\x89PNG")) return "image";                    // PNG
   if (ascii.startsWith("RIFF") && ascii.slice(8, 12) === "WEBP") return "image";
@@ -376,14 +395,14 @@ export default function BonCommandeScreen({ session, client, priceItems, onApply
   const [lignes, setLignes] = useState<Ligne[]>([]);
   const [searchFor, setSearchFor] = useState<number | null>(null);
   // Aperçu du document d'origine, pour vérifier les lignes sans changer d'app.
-  const [preview, setPreview] = useState<{ url: string; kind: "pdf" | "image" } | null>(null);
+  const [preview, setPreview] = useState<{ url: string; kind: "pdf" | "image" | "html"; html?: string } | null>(null);
   const [showPreview, setShowPreview] = useState(false);   // plein écran (portrait)
   const [onlyToCheck, setOnlyToCheck] = useState(false);
   const [padFor, setPadFor] = useState<number | null>(null);
   const wide = useWide();
 
   // Libère l'URL d'aperçu quand on change de document ou quitte l'écran.
-  useEffect(() => () => { if (preview) URL.revokeObjectURL(preview.url); }, [preview]);
+  useEffect(() => () => { if (preview?.url) URL.revokeObjectURL(preview.url); }, [preview]);
 
   const clientPrice = (p: any, qty: number) =>
     applyPricelist(p.lst_price || 0, p.id, p.product_tmpl_id?.[0] || 0, priceItems, Math.max(1, qty));
@@ -399,14 +418,21 @@ export default function BonCommandeScreen({ session, client, priceItems, onApply
       let payload: { data: string; mediaType: string };
       const kind = await sniffKind(file);
       // Blob retypé : un PDF sans extension n'a pas de type, et l'aperçu ne s'afficherait pas.
-      if (kind) setPreview({ url: URL.createObjectURL(new Blob([file], { type: kind === "pdf" ? "application/pdf" : file.type || "image/jpeg" })), kind });
+      if (kind === "pdf" || kind === "image") {
+        setPreview({ url: URL.createObjectURL(new Blob([file], { type: kind === "pdf" ? "application/pdf" : file.type || "image/jpeg" })), kind });
+      }
       if (kind === "pdf") {
         if (file.size > MAX_FILE_BYTES) throw new Error("PDF trop volumineux (3 Mo maximum)");
         payload = { data: await readAsBase64(file), mediaType: "application/pdf" };
       } else if (kind === "image") {
         payload = await shrinkImage(file);
+      } else if (kind === "docx" || kind === "xlsx" || kind === "csv") {
+        if (file.size > MAX_FILE_BYTES) throw new Error("Fichier trop volumineux (3 Mo maximum)");
+        payload = { data: await readAsBase64(file), mediaType: OFFICE_MIME[kind] };
+      } else if (kind === "old-office") {
+        throw new Error("Ancien format Word / Excel (.doc, .xls) : enregistre-le en .docx ou .xlsx, ou en PDF.");
       } else {
-        throw new Error("Ce fichier n'est ni un PDF ni une photo");
+        throw new Error("Format non reconnu — PDF, photo, Word (.docx), Excel (.xlsx) ou CSV");
       }
       const res = await fetch(apiUrl("/api/bon-commande"), {
         method: "POST",
@@ -417,6 +443,8 @@ export default function BonCommandeScreen({ session, client, priceItems, onApply
       const data = await res.json().catch(() => ({ error: `Réponse invalide (${res.status})` }));
       if (data.error) throw new Error(data.error);
       const lu: BonLu = data.bon;
+      // Word / Excel : le navigateur ne sait pas les afficher ; aperçu converti par le serveur.
+      if (data.previewHtml) setPreview({ url: "", kind: "html", html: data.previewHtml });
       setBon(lu);
       setLoading("catalogue");
       setLignes(await matchProducts(session, lu.lignes || []));
@@ -530,7 +558,7 @@ export default function BonCommandeScreen({ session, client, priceItems, onApply
         <div style={{ width: "100%", maxWidth: 560, textAlign: "center" as const }}>
           <div style={{ fontSize: 22, fontWeight: 800, color: C.text }}>Importer un bon de commande</div>
           <div style={{ fontSize: 14, color: C.muted, marginTop: 6, marginBottom: 24, lineHeight: 1.5 }}>
-            PDF reçu par mail ou photo du bon papier. {onSelectClient ? "Le client et les produits sont retrouvés d'après le bon" : "Les produits sont retrouvés par EAN ou référence"} ; tu vérifies avant d'ajouter au panier.
+            PDF, Word, Excel ou photo du bon papier. {onSelectClient ? "Le client et les produits sont retrouvés d'après le bon" : "Les produits sont retrouvés par EAN ou référence"} ; tu vérifies avant d'ajouter au panier.
           </div>
           <label style={{
             display: "flex", flexDirection: "column" as const, alignItems: "center", justifyContent: "center", gap: 10,
@@ -860,7 +888,11 @@ function ClientBar({ session, client, reasons, candidates, picking, bonClient, o
 
 // Aperçu du document. PDF dans un iframe (visionneuse intégrée du navigateur),
 // photo en image zoomable par pincement.
-function DocPreview({ preview }: { preview: { url: string; kind: "pdf" | "image" } }) {
+function DocPreview({ preview }: { preview: { url: string; kind: "pdf" | "image" | "html"; html?: string } }) {
+  // Word / Excel convertis : iframe sandboxée (aucun script ne s'exécute).
+  if (preview.kind === "html") {
+    return <iframe srcDoc={preview.html} sandbox="" title="Bon de commande" style={{ flex: 1, width: "100%", border: "none", background: C.white }} />;
+  }
   if (preview.kind === "pdf") {
     return <iframe src={preview.url} title="Bon de commande" style={{ flex: 1, width: "100%", border: "none", background: C.white }} />;
   }

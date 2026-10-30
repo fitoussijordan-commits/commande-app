@@ -17,6 +17,7 @@ import { z } from "zod";
 import { fetchT } from "@/lib/fetchTimeout";
 import { checkRateLimit } from "@/lib/rateLimiter";
 import { withCors, preflight } from "@/lib/cors";
+import { DOCX_MIME, XLSX_MIME, CSV_MIME, docxToText, xlsxToText, csvToText, previewPage, type Converted } from "@/lib/officeToText";
 
 export async function OPTIONS(req: NextRequest) {
   return preflight(req.headers.get("origin"));
@@ -112,8 +113,21 @@ export async function POST(req: NextRequest) {
     }
     const isPdf = mediaType === "application/pdf";
     const isImage = (IMAGE_TYPES as readonly string[]).includes(mediaType);
-    if (!isPdf && !isImage) {
-      return J({ error: `Format non pris en charge (${mediaType}) — PDF ou photo uniquement` }, { status: 415 });
+    const isOffice = [DOCX_MIME, XLSX_MIME, CSV_MIME].includes(mediaType);
+    if (!isPdf && !isImage && !isOffice) {
+      return J({ error: `Format non pris en charge (${mediaType}) — PDF, photo, Word, Excel ou CSV` }, { status: 415 });
+    }
+    // Word / Excel / CSV : convertis en texte (Claude ne les lit pas tels quels).
+    let converted: Converted | null = null;
+    if (isOffice) {
+      try {
+        const buf = Buffer.from(data, "base64");
+        converted = mediaType === DOCX_MIME ? await docxToText(buf)
+          : mediaType === XLSX_MIME ? await xlsxToText(buf)
+          : csvToText(buf);
+      } catch (e: any) {
+        return J({ error: `Fichier illisible : ${e?.message || "format inattendu"}` }, { status: 422 });
+      }
     }
 
     // 1. Authentifier le commercial (le dépôt est public : sans ça, la route
@@ -140,9 +154,11 @@ export async function POST(req: NextRequest) {
     }
 
     // 3. Lecture du document.
-    const doc: Anthropic.Beta.BetaContentBlockParam = isPdf
-      ? { type: "document", source: { type: "base64", media_type: "application/pdf", data } }
-      : { type: "image", source: { type: "base64", media_type: mediaType as typeof IMAGE_TYPES[number], data } };
+    const doc: Anthropic.Beta.BetaContentBlockParam = converted
+      ? { type: "text", text: `Bon de commande (${converted.label}) :\n<document>\n${converted.text}\n</document>` }
+      : isPdf
+        ? { type: "document", source: { type: "base64", media_type: "application/pdf", data } }
+        : { type: "image", source: { type: "base64", media_type: mediaType as typeof IMAGE_TYPES[number], data } };
 
     const client = new Anthropic({ timeout: AI_TIMEOUT, maxRetries: 1 });
     let msg;
@@ -179,7 +195,8 @@ export async function POST(req: NextRequest) {
       return J({ error: "Lecture incomplète — le bon est peut-être trop long. Découpe-le en plusieurs pages." }, { status: 422 });
     }
 
-    return J({ bon: msg.parsed_output });
+    // Aperçu pour l'app quand le navigateur ne sait pas afficher le fichier (Word, Excel).
+    return J({ bon: msg.parsed_output, ...(converted ? { previewHtml: previewPage(converted.previewHtml) } : {}) });
   } catch (e: any) {
     return J({ error: e?.message || "Erreur inconnue" }, { status: 500 });
   }
