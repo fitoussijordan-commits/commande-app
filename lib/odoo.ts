@@ -3,6 +3,7 @@
 // (authentification + lecture + création). Pas de dépendance au reste du WMS.
 
 import { apiUrl } from "@/lib/apiBase";
+import { syncOutlook, scheduleOutlookSync } from "@/lib/outlookSync";
 
 export interface OdooConfig { url: string; db: string; }
 export interface OdooSession { uid: number; name: string; login: string; sessionId: string; config: OdooConfig; }
@@ -100,17 +101,28 @@ export async function searchRead(session: OdooSession, model: string, domain: an
   return call(session, "/web/dataset/call_kw", { model, method: "search_read", args: [domain], kwargs: { fields, limit, order, context: FR_CTX } });
 }
 
+// Toute écriture sur un RDV relance la synchro Outlook (cf. lib/outlookSync).
+const afterWrite = <T,>(session: OdooSession, model: string, result: T): T => {
+  if (model === "calendar.event") scheduleOutlookSync(session, call);
+  return result;
+};
+
 export async function create(session: OdooSession, model: string, values: any) {
-  return call(session, "/web/dataset/call_kw", { model, method: "create", args: [values], kwargs: {} });
+  return afterWrite(session, model, await call(session, "/web/dataset/call_kw", { model, method: "create", args: [values], kwargs: {} }));
 }
 
 export async function write(session: OdooSession, model: string, ids: number[], values: any) {
-  return call(session, "/web/dataset/call_kw", { model, method: "write", args: [ids, values], kwargs: {} });
+  return afterWrite(session, model, await call(session, "/web/dataset/call_kw", { model, method: "write", args: [ids, values], kwargs: {} }));
 }
 
 export async function callMethod(session: OdooSession, model: string, method: string, args: any[] = [], kwargs: any = {}) {
-  return call(session, "/web/dataset/call_kw", { model, method, args, kwargs });
+  const res = await call(session, "/web/dataset/call_kw", { model, method, args, kwargs });
+  return /^(unlink|action_archive|action_unarchive)$/.test(method) ? afterWrite(session, model, res) : res;
 }
+
+// Synchro Outlook immédiate (ouverture de l'agenda) : true si des RDV ont
+// changé côté Outlook et qu'il faut recharger.
+export function syncOutlookNow(session: OdooSession) { return syncOutlook(session, call); }
 
 // Lit les valeurs possibles d'un champ selection (ex: type_gratuit sur
 // sale.order.line) → [{ value, label }]. Sert à peupler la liste des gratuités.

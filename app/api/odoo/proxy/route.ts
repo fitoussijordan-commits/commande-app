@@ -14,6 +14,7 @@ const ALLOWED_ENDPOINTS = [
   "/web/session/authenticate",
   "/web/session/destroy",
   "/web/dataset/call_kw",
+  "/microsoft_calendar/sync_data",   // synchro Outlook (lib/outlookSync)
 ];
 
 function isEndpointAllowed(endpoint: string): boolean {

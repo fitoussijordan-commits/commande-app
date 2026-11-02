@@ -1493,6 +1493,8 @@ function HomeScreen({ session, onNewOrder, onOpenClient, onToast, initialDate }:
   const [editingEvent, setEditingEvent] = useState<any>(null); // RDV en cours de modification
   const [cancelling, setCancelling] = useState(false);
   const [reloadKey, setReloadKey] = useState(0); // force le rechargement du planning
+  // Ouverture du planning : synchro Outlook, puis rechargement si Outlook a changé.
+  useEffect(() => { odoo.syncOutlookNow(session).then(changed => { if (changed) setReloadKey(k => k + 1); }); }, [session]);
   const [newAdminRdv, setNewAdminRdv] = useState(false); // nouveau RDV sans client (administratif)
 
   // ── Swipe tactile gauche/droite pour changer de semaine ──────────────────

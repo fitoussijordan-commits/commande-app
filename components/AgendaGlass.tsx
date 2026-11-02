@@ -33,6 +33,9 @@ export default function AgendaGlass({ session, onOpenPlanning }: {
   const [selected, setSelected] = useState(() => new Date());
   const [events, setEvents] = useState<any[]>([]);
   const [state, setState] = useState<"loading" | "ok" | "offline">("loading");
+  const [reloadKey, setReloadKey] = useState(0);
+  // Synchro Outlook à l'ouverture, puis rechargement si Outlook a changé.
+  useEffect(() => { odoo.syncOutlookNow(session).then(changed => { if (changed) setReloadKey(k => k + 1); }); }, [session]);
   const today = new Date();
 
   const chooseView = (v: "week" | "month") => {
@@ -89,7 +92,7 @@ export default function AgendaGlass({ session, onOpenPlanning }: {
       }
     })();
     return () => { cancelled = true; };
-  }, [session, days]);
+  }, [session, days, reloadKey]);
 
   const cancelled = (e: any) => Boolean(e.x_studio_annul) || e.active === false;
   const countOn = (d: Date) => events.filter(e => !cancelled(e) && sameDay(fromOdoo(e.start), d)).length;
