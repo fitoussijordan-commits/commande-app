@@ -1489,6 +1489,17 @@ function HomeScreen({ session, onNewOrder, onOpenClient, onToast, initialDate }:
   // Décale la période affichée (flèches et swipe), selon la vue.
   const shift = (delta: number) => view === "month" ? setMonthOffset(o => o + delta) : setWeekOffset(o => o + delta);
   const [selectedEvent, setSelectedEvent] = useState<any>(null); // RDV ouvert en aperçu
+  // Adresse complète du client lié au RDV (lien Waze) : le champ « lieu » ne
+  // contient souvent que la ville.
+  const [eventAddress, setEventAddress] = useState("");
+  useEffect(() => {
+    setEventAddress("");
+    const e = selectedEvent;
+    if (!e || e.res_model !== "res.partner" || !e.res_id) return;
+    odoo.searchRead(session, "res.partner", [["id", "=", e.res_id]], ["street", "zip", "city"], 1)
+      .then(([p]: any[]) => { if (p?.street) setEventAddress([p.street, [p.zip, p.city].filter(Boolean).join(" ")].filter(Boolean).join(", ")); })
+      .catch(() => {});
+  }, [selectedEvent, session]);
   const [openingClient, setOpeningClient] = useState(false);
   const [editingEvent, setEditingEvent] = useState<any>(null); // RDV en cours de modification
   const [cancelling, setCancelling] = useState(false);
@@ -1973,7 +1984,13 @@ function HomeScreen({ session, onNewOrder, onOpenClient, onToast, initialDate }:
               <div style={{ padding: "20px 24px", display: "flex", flexDirection: "column" as const, gap: 14 }}>
                 <Row icon="calendar" label={dateStr} />
                 <Row icon="clock" label={timeStr} />
-                {e.location && <Row icon="pin" label={e.location} />}
+                {(eventAddress || e.location) && (
+                  <a href={`https://waze.com/ul?q=${encodeURIComponent(eventAddress || e.location)}&navigate=yes`} target="_blank" rel="noopener noreferrer"
+                    style={{ display: "flex", alignItems: "center", gap: 12, textDecoration: "none" }}>
+                    <div style={{ flex: 1, minWidth: 0 }}><Row icon="pin" label={eventAddress || e.location} /></div>
+                    <span style={{ padding: "7px 12px", borderRadius: 999, background: "#33ccff", color: "#fff", fontSize: 12.5, fontWeight: 800, flexShrink: 0 }}>Waze</span>
+                  </a>
+                )}
                 {clientName && <Row icon="user" label={clientName + (clientRef ? `  ·  ${clientRef}` : "")} />}
                 {phone && <Row icon="phone" label={phone} />}
                 {notes && (
