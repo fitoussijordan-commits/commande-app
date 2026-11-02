@@ -12,7 +12,8 @@ import PerimesReportScreen from "@/components/PerimesReportScreen";
 import VisitPriority from "@/components/VisitPriority";
 import AgendaGlass from "@/components/AgendaGlass";
 import { resolveClientFamily, odooRecordUrl } from "@/lib/perimes";
-import { orderMeta, isMea, isImplantation, offerNames, type OrderMeta } from "@/lib/orderOffers";
+import { saleStep, snapQty, optionalProductFields } from "@/lib/productFields";
+import { orderMeta, isMea, isImplantation, offerNames, offerOptions, type OrderMeta } from "@/lib/orderOffers";
 import { loadBlockingTags, clientBlockingTags, loadClosedDayTags, clientClosedWeekdays, type BlockingTag, type ClosedDayTag } from "@/lib/clientFlags";
 import { planShipping, toOdooDate, toOdooDatetime, isDirectLogistics, type ShippingPlan } from "@/lib/delivery";
 import { onIncomingFile } from "@/lib/incomingFile";
@@ -59,6 +60,7 @@ const ICON_PATHS: Record<string, React.ReactNode> = {
   file: <><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><path d="M14 2v6h6M9 13h6M9 17h4"/></>,
   inbox: <><path d="M22 13h-6l-2 3h-4l-2-3H2"/><path d="M5 4h14l3 9v7H2v-7Z"/></>,
   check: <path d="M20 6 9 17l-5-5"/>,
+  list: <path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/>,
   wifiOff: <><path d="M2 2l20 20"/><path d="M5 10a13 13 0 0 1 4.2-2.6M12 4c3.8 0 7.3 1.5 10 4M8.5 13.5a8 8 0 0 1 2.3-1.3M12 8c2.7 0 5.2 1 7 2.8"/><circle cx="12" cy="18" r="1.3"/></>,
 };
 function Icon({ name, size = 18, color = "currentColor", strokeWidth = 2, style }: {
@@ -85,7 +87,8 @@ interface Props {
 // comme dans le logiciel du client (voir handleValidate).
 // seq : ordre d'ajout (l'objet panier, indexé par id produit, se trie tout seul
 // par id). group : MEA d'origine, pour regrouper ses lignes sous un séparateur.
-interface CartItem { product: any; qty: number; unitPrice: number; priceLocked?: boolean; bonBrut?: number; bonRemise?: number; seq?: number; group?: string; }
+// note : ligne de commentaire (display_type Odoo) — product = { id négatif, name = texte }.
+interface CartItem { product: any; qty: number; unitPrice: number; priceLocked?: boolean; bonBrut?: number; bonRemise?: number; seq?: number; group?: string; note?: "line_note" | "line_section"; }
 
 // Lignes du panier dans l'ordre d'ajout (paniers anciens sans seq : en tête).
 function orderedCart(cart: Record<number, CartItem>): CartItem[] {
@@ -94,7 +97,7 @@ function orderedCart(cart: Record<number, CartItem>): CartItem[] {
 // Remises Odoo (programmes de fidélité) : les lignes d'un devis d'implantation
 // n'y comptent pas — ni pour déclencher une promo, ni pour en recevoir la remise.
 function promoCart(cart: Record<number, CartItem>): Record<number, CartItem> {
-  return Object.fromEntries(Object.entries(cart).filter(([, i]) => !/implantation/i.test(i.group || ""))) as Record<number, CartItem>;
+  return Object.fromEntries(Object.entries(cart).filter(([, i]) => !i.note && !/implantation/i.test(i.group || ""))) as Record<number, CartItem>;
 }
 // Recherche : chaque mot tapé doit se retrouver dans le nom, la réf. ou l'EAN
 // (sans tenir compte des accents ni des majuscules).
@@ -313,6 +316,7 @@ function computeFreeItems(cart: Record<number, CartItem>, rules: FreeRule[]): Fr
     let total = 0;
     const matched: any[] = [];
     for (const item of Object.values(cart)) {
+      if (item.note) continue;
       const ref = item.product.default_code || "";
       if (rule.allProducts || rule.productRefs.includes(ref)) { total += item.qty; matched.push(item.product); }
     }
@@ -425,6 +429,11 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
   const [freeTypes, setFreeTypes] = useState<sync.FreeType[]>([]);
   // Remise événement Co (10/15%/libre) appliquée sur TOUT le panier (0 = aucune).
   const [eventDiscount, setEventDiscount] = useState(0);
+  // Remise par devis d'implantation ajouté (clé = nom du modèle = groupe du panier).
+  const [groupDiscounts, setGroupDiscounts] = useState<Record<string, number>>({});
+  // « Type de commande » et « Offres commandées » saisis dans l'app (champs Odoo).
+  const [orderType, setOrderType] = useState<string | number | "">("");
+  const [offerIds, setOfferIds] = useState<number[]>([]);
   const refreshPendingDrafts = useCallback(() => setPendingDrafts(listDrafts()), []);
 
   // D'où vient-on quand on ouvre une fiche client : recherche ou planning.
@@ -616,6 +625,9 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
     setAppliedPromos({});
     setGiftItems([]);
     setEventDiscount(0);
+    setGroupDiscounts({});
+    setOrderType("");
+    setOfferIds([]);
     manuallyRemovedRef.current.clear(); // nouvelle commande → réinitialise les retraits manuels
     setResumePrompt(loadDraftForClient(client.id));
     setStep("catalog");
@@ -648,16 +660,30 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
 
   // keepZero : ligne de MEA / devis d'implantation à 0 dans le modèle — gardée au
   // panier à 0 pour que le délégué choisisse la quantité (non envoyée à Odoo).
-  const setQty = (product: any, qty: number, unitPrice?: number, group?: string, keepZero?: boolean) => {
+  const setQty = (product: any, wanted: number, unitPrice?: number, group?: string, keepZero?: boolean) => {
     setCart(prev => {
-      if (qty < 0 || (qty === 0 && !keepZero)) { const n = { ...prev }; delete n[product.id]; return n; }
       const cur = prev[product.id];
+      // Quantité minimum (« par 2 ») : toujours un multiple du pas de vente.
+      const qty = snapQty(product, wanted, cur?.qty || 0);
+      if (qty < 0 || (qty === 0 && !keepZero)) { const n = { ...prev }; delete n[product.id]; return n; }
       if (cur?.priceLocked) return { ...prev, [product.id]: { ...cur, qty } };
       const price = unitPrice ?? cur?.unitPrice ?? product.lst_price ?? 0;
       // Une ligne déjà au panier garde sa place et sa MEA d'origine.
       const seq = cur?.seq ?? Math.max(0, ...Object.values(prev).map(i => i.seq || 0)) + 1;
       return { ...prev, [product.id]: { product, qty, unitPrice: price, seq, group: cur ? cur.group : group } };
     });
+  };
+
+  // Ligne de commentaire (ou titre de section) : id négatif, placée à la suite du panier.
+  const addNote = (text: string, kind: "line_note" | "line_section" = "line_note", group?: string) => {
+    setCart(prev => {
+      const id = Math.min(0, ...Object.keys(prev).map(Number)) - 1;
+      const seq = Math.max(0, ...Object.values(prev).map(i => i.seq || 0)) + 1;
+      return { ...prev, [id]: { product: { id, name: text }, qty: 0, unitPrice: 0, seq, group, note: kind } };
+    });
+  };
+  const setNoteText = (id: number, text: string) => {
+    setCart(prev => prev[id] ? { ...prev, [id]: { ...prev[id], product: { ...prev[id].product, name: text } } } : prev);
   };
 
   // Reprendre le brouillon proposé pour le client qu'on vient de sélectionner
@@ -725,6 +751,14 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
         if (m?.joinedField) joinVals = { [m.joinedField]: [[6, 0, joined.map(o => o.id)]] };
       }
 
+      // Type de commande / Offres commandées : champs repérés dans Odoo (orderMeta).
+      const metaVals: any = {};
+      if (orderType !== "" || offerIds.length) {
+        const m = await orderMeta(session).catch(() => null);
+        if (m?.typeField && orderType !== "") metaVals[m.typeField] = orderType;
+        if (m?.offersField && offerIds.length) metaVals[m.offersField] = [[6, 0, offerIds]];
+      }
+
       const pricelistId = client.property_product_pricelist?.[0] || false;
 
       // Remises additionnelles Odoo appliquées manuellement (bouton 🏷️) : % par produit du panier
@@ -741,11 +775,15 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
         ...tagVals,
         ...shipVals,
         ...joinVals,
+        ...metaVals,
         order_line: [
           // Ordre d'ajout : les lignes d'une même MEA restent groupées dans le devis.
-          ...orderedCart(cart).filter(item => item.qty > 0).map(item => {
-            // Remise ligne = remise promo Odoo + remise événement Co (cumul, plafonné à 100%).
-            const promoDisc = Math.min(100, (lineDiscounts[item.product.id] || 0) + (eventDiscount || 0));
+          ...orderedCart(cart).filter(item => item.note ? !!String(item.product.name || "").trim() : item.qty > 0).map(item => {
+            if (item.note) return [0, 0, { display_type: item.note, name: String(item.product.name).trim() }];
+            // Remise ligne = promo Odoo + remise événement Co + remise du devis
+            // d'implantation (cumul, plafonné à 100%).
+            const promoDisc = Math.min(100, (lineDiscounts[item.product.id] || 0) + (eventDiscount || 0)
+              + (item.group ? groupDiscounts[item.group] || 0 : 0));
             // Prix d'un bon importé avec remise : brut + % comme le logiciel du client.
             // Envoyé en net, Odoo l'arrondit à 2 décimales (22,8997 → 22,90) et le
             // total dérive de quelques centimes (549,60 au lieu de 549,59).
@@ -1253,7 +1291,10 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
           appliedPromos={appliedPromos}
           giftItems={giftItems} setGiftItems={setGiftItems} freeTypes={freeTypes}
           eventDiscount={eventDiscount} setEventDiscount={setEventDiscount}
-          shipping={directLogistics ? shippingPlan : null} onChangeExpedition={setWantedExpedition} />
+          shipping={directLogistics ? shippingPlan : null} onChangeExpedition={setWantedExpedition}
+          onAddNote={addNote} onNoteText={setNoteText}
+          groupDiscounts={groupDiscounts} setGroupDiscounts={setGroupDiscounts}
+          orderType={orderType} setOrderType={setOrderType} offerIds={offerIds} setOfferIds={setOfferIds} />
       )}
 
       {showAppointment && client && (
@@ -2381,7 +2422,7 @@ function ClientHistory({ session, client }: { session: odoo.OdooSession; client:
         // TOUTES les fiches du client (société, adresses, doublons du même code) :
         // une MEA passée sur l'adresse de livraison n'apparaissait pas.
         const [m, family] = await Promise.all([
-          orderMeta(session).catch(() => ({ implantValues: [] } as OrderMeta)),
+          orderMeta(session).catch(() => ({ implantValues: [], typeOptions: [] } as OrderMeta)),
           resolveClientFamily(session, client).catch(() => [client.id]),
         ]);
         if (cancelled) return;
@@ -2773,7 +2814,12 @@ function ClientHistory({ session, client }: { session: odoo.OdooSession; client:
 // ═══════════════════════════════════════════════════════════════════════════
 // ÉTAPE 2 — Catalogue + Panier persistant
 // ═══════════════════════════════════════════════════════════════════════════
-function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submitting, note, setNote, client, priceItems, onToast, appliedPromos, giftItems, setGiftItems, freeTypes, eventDiscount, setEventDiscount, shipping, onChangeExpedition }: {
+function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submitting, note, setNote, client, priceItems, onToast, appliedPromos, giftItems, setGiftItems, freeTypes, eventDiscount, setEventDiscount, shipping, onChangeExpedition, onAddNote, onNoteText, groupDiscounts, setGroupDiscounts, orderType, setOrderType, offerIds, setOfferIds }: {
+  onAddNote: (text: string, kind?: "line_note" | "line_section", group?: string) => void;
+  onNoteText: (id: number, text: string) => void;
+  groupDiscounts: Record<string, number>; setGroupDiscounts: React.Dispatch<React.SetStateAction<Record<string, number>>>;
+  orderType: string | number | ""; setOrderType: (v: string | number | "") => void;
+  offerIds: number[]; setOfferIds: React.Dispatch<React.SetStateAction<number[]>>;
   // Commande transmise directement à la logistique : dates prévues (sinon null).
   shipping?: ShippingPlan | null;
   onChangeExpedition?: (d: Date | null) => void;
@@ -2800,8 +2846,6 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
   // price fourni depuis la grille (prix client calculé) ; absent depuis le panier
   // (on garde alors le prix déjà enregistré sur la ligne).
   const [pad, setPad] = useState<{ product: any; price?: number } | null>(null);
-  // Modale « offrir » : produit à offrir (quantité + type de gratuité).
-  const [giftFor, setGiftFor] = useState<any | null>(null);
   // Panneau remise événement Co : masqué par défaut, ouvert au clic sur le bouton.
   const [showEventDisc, setShowEventDisc] = useState(false);
 
@@ -2847,6 +2891,23 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
   const shownTemplates = meaTemplates.filter((t: any) => isImplantTemplate(t) === (activeCatId === DEVIS_CAT_ID)
     && fold(String(t.name || "")).includes(fold(search).trim()));
   const [meaLoading, setMeaLoading] = useState(false);
+  // Champs « Type de commande » / « Offres commandées » de cette base Odoo.
+  const [meta, setMeta] = useState<OrderMeta | null>(null);
+  const [offers, setOffers] = useState<{ id: number; name: string }[]>([]);
+  useEffect(() => {
+    orderMeta(session).then(async m => { setMeta(m); setOffers(await offerOptions(session, m)); }).catch(() => {});
+  }, [session]);
+  // Vue liste : une ligne par article, le panier prend toute la largeur.
+  const [listView, setListView] = useState(false);
+  // Type de gratuité appliqué à toutes les gratuités (Coffre DC par défaut).
+  const [giftType, setGiftType] = useState(DEFAULT_FREE_TYPE);
+  const offerGift = (p: any) => {
+    setGiftItems(prev => {
+      const i = prev.findIndex(g => g.product.id === p.id);
+      if (i >= 0) return prev.map((g, j) => j === i ? { ...g, qty: g.qty + 1 } : g);
+      return [...prev, { product: p, qty: 1, type: freeTypes.some(t => t.value === giftType) || !freeTypes.length ? giftType : "" }];
+    });
+  };
   const [applyingMea, setApplyingMea] = useState<number | null>(null);
 
   // ── Favoris : produits déjà commandés par le client, triés par quantité ───
@@ -2882,7 +2943,7 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
       if (ids.length) {
         const prods = await odoo.searchRead(session, "product.product",
           [["id", "in", ids]],
-          ["id", "name", "default_code", "barcode", "lst_price", "product_tmpl_id", "virtual_available"],
+          ["id", "name", "default_code", "barcode", "lst_price", "product_tmpl_id", "virtual_available", ...await optionalProductFields(session)],
           ids.length);
         const enriched = prods.map((p: any) => ({ ...p, ...agg.get(p.id) }));
         enriched.sort((a: any, b: any) => (b.totalQty || 0) - (a.totalQty || 0));
@@ -2928,24 +2989,24 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
 
       let lines: any[];
       try {
-        // display_type = false : on écarte les lignes de section et de note du
-        // modèle Odoo, qui ne sont pas des produits à mettre au panier.
+        // Toutes les lignes, dans l'ordre du modèle : produits ET lignes de
+        // section / note (commentaires), reprises telles quelles dans le devis.
         lines = await odoo.searchRead(session, "sale.order.template.line",
-          [["id", "in", lineIds], ["product_id", "!=", false], ["display_type", "=", false]],
-          ["id", "product_id", "product_uom_qty"],
-          200);
+          [["id", "in", lineIds]],
+          ["id", "product_id", "product_uom_qty", "display_type", "name", "sequence"],
+          500, "sequence, id");
       } catch {
         // Hors ligne → lignes préchargées
         lines = await sync.getCachedMeaLines(lineIds);
       }
-      if (!lines.length) { onToast("Aucun produit dans cette offre", "error"); setApplyingMea(null); return; }
+      if (!lines.some((l: any) => l.product_id)) { onToast("Aucun produit dans cette offre", "error"); setApplyingMea(null); return; }
 
-      const productIds = lines.map((l: any) => l.product_id[0]);
+      const productIds = lines.filter((l: any) => l.product_id).map((l: any) => l.product_id[0]);
       let products: any[];
       try {
         products = await odoo.searchRead(session, "product.product",
           [["id", "in", productIds]],
-          ["id", "name", "default_code", "barcode", "lst_price", "product_tmpl_id", "virtual_available"],
+          ["id", "name", "default_code", "barcode", "lst_price", "product_tmpl_id", "virtual_available", ...await optionalProductFields(session)],
           productIds.length);
       } catch {
         // Hors ligne → produits depuis le catalogue préchargé
@@ -2957,19 +3018,31 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
 
       let added = 0;
       for (const line of lines) {
+        if (line.display_type === "line_section" || line.display_type === "line_note") {
+          if (line.name) onAddNote(String(line.name), line.display_type, template.name);
+          continue;
+        }
+        if (!line.product_id) continue;
         const product: any = productMap.get(line.product_id[0]);
         if (!product) continue;
         // Certaines offres utilisent un VRAI produit comme séparateur de rubrique
-        // (ex. « ----- Éléments de PLV optionnels : ----- », code so1, prix 0). Il a
-        // un product_id, donc display_type ne le filtre pas — mais il n'a aucun stock,
-        // ce qui déclenchait une fausse alerte de rupture.
-        if (isSeparatorProduct(product)) continue;
+        // (ex. « ----- Éléments de PLV optionnels : ----- », code so1, prix 0) :
+        // repris comme ligne de commentaire (sans stock, pas d'alerte de rupture).
+        if (isSeparatorProduct(product)) { onAddNote(String(line.name || product.name), "line_note", template.name); continue; }
         // Quantité du modèle telle quelle : 0 reste 0 (ligne optionnelle).
         const qty = Math.max(0, Math.round(line.product_uom_qty || 0));
         if (qty === 0 && cart[product.id]) continue;
         const clientPrice = applyPricelist(product.lst_price || 0, product.id, product.product_tmpl_id?.[0] || 0, priceItems, Math.max(1, qty));
         onQtyChange(product, (cart[product.id]?.qty || 0) + qty, clientPrice, template.name, true);
         added++;
+      }
+      // Implantation → type de commande « Implantation » ; MEA → coche l'offre du même nom.
+      if (isImplantTemplate(template)) {
+        if (orderType === "" && meta?.implantValues.length) setOrderType(meta.implantValues[0]);
+      } else {
+        const offer = offers.find(o => fold(o.name) === fold(template.name))
+          || offers.find(o => fold(template.name).includes(fold(o.name)) || fold(o.name).includes(fold(template.name)));
+        if (offer) setOfferIds(prev => prev.includes(offer.id) ? prev : [...prev, offer.id]);
       }
       onToast(`✅ ${template.name} — ${added} produit${added > 1 ? "s" : ""} ajouté${added > 1 ? "s" : ""}`, "success");
     } catch (e: any) { onToast("Erreur: " + e.message, "error"); }
@@ -2999,7 +3072,7 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
         // Limite 0 = TOUT le catalogue. Avant : 500 par ordre alphabétique, donc
         // les produits en fin d'alphabet (« Testeur… », « Sérum… ») manquaient.
         p = await odoo.searchRead(session, "product.product", domain,
-          [...BASE_FIELDS, "x_type_de_produit_id"], q.trim().length >= 2 ? 500 : 0, "name");
+          [...BASE_FIELDS, ...await optionalProductFields(session)], q.trim().length >= 2 ? 500 : 0, "name");
       } catch (e) {
         // Filet de sécurité : un champ personnalisé absent de l'instance fait planter
         // TOUTE la requête (cf. l'incident `sequence` sur pricelist). Plutôt que de
@@ -3083,7 +3156,7 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
   const lineDiscounts = loyalty.computeLineDiscounts(appliedPromos, promoCart(cart));
   const discountTotal = cartItems.reduce((s, i) => {
     // Remise promo Odoo + remise événement Co, cumulées (plafond 100%).
-    const pct = Math.min(100, (lineDiscounts[i.product.id] || 0) + (eventDiscount || 0));
+    const pct = Math.min(100, (lineDiscounts[i.product.id] || 0) + (eventDiscount || 0) + (i.group ? groupDiscounts[i.group] || 0 : 0));
     return s + (i.qty * i.unitPrice * pct) / 100;
   }, 0);
   const netTotal = cartTotal - discountTotal;
@@ -3093,17 +3166,21 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
   // créable : le stock bouge entre la visite et la livraison, et un devis n'est pas
   // une expédition. Les faux séparateurs (stock nul par nature) sont ignorés.
   const overStockItems = cartItems.filter(i => {
-    if (isSeparatorProduct(i.product)) return false;
+    if (i.note || isSeparatorProduct(i.product)) return false;
     const stock = Math.floor(i.product.virtual_available || 0);
     return i.qty > stock;
   });
   const hasStockIssue = overStockItems.length > 0;
+  // Produits de vente (réf. en 1) : nombre de références et quantité totale — suivis par les DC.
+  const saleLines = cartItems.filter(i => !i.note && i.qty > 0 && /^1/.test(String(i.product.default_code || "")));
+  const saleQty = saleLines.reduce((s, i) => s + i.qty, 0);
+  const giftQtyById = new Map<number, number>(giftItems.map(g => [g.product.id, g.qty]));
 
   return (
     <div style={{ flex: 1, display: "flex", overflow: "hidden", minHeight: 0 }}>
 
       {/* ── Sidebar catégories par mots-clés ── */}
-      <div style={{ width: 160, background: C.white, borderRight: `1px solid ${C.border}`, overflowY: "auto" as const, flexShrink: 0 }}>
+      <div style={{ width: 160, background: C.white, borderRight: `1px solid ${C.border}`, overflowY: "auto" as const, flexShrink: 0, display: listView ? "none" : "block" }}>
         <div style={{ padding: "12px 10px 6px", fontSize: 10, fontWeight: 700, color: C.muted, textTransform: "uppercase" as const, letterSpacing: "0.08em" }}>Gammes</div>
 
         {/* Tous */}
@@ -3180,8 +3257,8 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
         </div>
       </div>
 
-      {/* ── Zone produits ── */}
-      <div style={{ flex: 1, display: "flex", flexDirection: "column" as const, overflow: "hidden", minWidth: 0 }}>
+      {/* ── Zone produits ── (masquée en vue liste) */}
+      <div style={{ flex: 1, display: listView ? "none" : "flex", flexDirection: "column" as const, overflow: "hidden", minWidth: 0 }}>
         {/* Barre recherche avec croix */}
         <div style={{ padding: "10px 14px", background: C.white, borderBottom: `1px solid ${C.border}`, display: "flex", gap: 10, alignItems: "center" }}>
           <div style={{ position: "relative" as const, flex: 1 }}>
@@ -3296,6 +3373,9 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
                     <div style={{ padding: "8px 10px 10px" }}>
                       <div style={{ fontSize: 10.5, color: C.muted, fontFamily: "monospace", marginBottom: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>{p.default_code}{p.barcode ? ` · ${p.barcode}` : ""}</div>
                       <div style={{ fontSize: 12.5, fontWeight: 600, color: C.text, lineHeight: 1.3, height: 33, overflow: "hidden" }}>{p.name}</div>
+                      {saleStep(p) > 1 && (
+                        <div style={{ fontSize: 10, fontWeight: 700, color: C.tealDark, background: C.tealSoft, borderRadius: 5, padding: "1px 6px", marginTop: 3, display: "inline-block" }}>par {saleStep(p)}</div>
+                      )}
                       {activeCatId === FAV_CAT_ID && p.totalQty != null && (
                         <div style={{ fontSize: 10, fontWeight: 700, color: C.orange, background: C.orangeSoft, borderRadius: 5, padding: "2px 6px", marginTop: 3, display: "inline-block" }}>
                           {Math.round(p.totalQty)} commandé{Math.round(p.totalQty) > 1 ? "s" : ""} · {p.times} fois
@@ -3317,9 +3397,9 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
                         </button>
                         <button onClick={() => onQtyChange(p, qty + 1, clientPrice)} style={{ flex: 1, height: 44, background: "transparent", border: "none", cursor: "pointer", fontSize: 20, fontWeight: 700, color: C.teal, lineHeight: 1 }}>+</button>
                       </div>
-                      <button onClick={() => setGiftFor(p)} title="Offrir une gratuité"
-                        style={{ width: "100%", marginTop: 6, padding: "6px 0", background: C.greenSoft, color: C.green, border: `1px solid ${C.green}44`, borderRadius: 8, cursor: "pointer", fontFamily: "inherit", fontSize: 11, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", gap: 5 }}>
-                        <Icon name="gift" size={12} /> Offrir
+                      <button onClick={() => offerGift(p)} title="Offrir une unité (type de gratuité choisi dans le panier)"
+                        style={{ width: "100%", marginTop: 6, padding: "6px 0", background: giftQtyById.has(p.id) ? C.green : C.greenSoft, color: giftQtyById.has(p.id) ? "#fff" : C.green, border: `1px solid ${C.green}44`, borderRadius: 8, cursor: "pointer", fontFamily: "inherit", fontSize: 11, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", gap: 5 }}>
+                        <Icon name="gift" size={12} /> {giftQtyById.has(p.id) ? `Offert ×${giftQtyById.get(p.id)}` : "Offrir"}
                       </button>
                     </div>
                   </div>
@@ -3331,16 +3411,30 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
       </div>
 
       {/* ── Panier persistant (droite), largeur réglable par la poignée ── */}
-      <div style={{ width: cartW, position: "relative" as const, background: C.white, borderLeft: `1px solid ${C.border}`, display: "flex", flexDirection: "column" as const, flexShrink: 0 }}>
-        <div onPointerDown={startResize} title="Glisser pour élargir ou réduire le panier"
+      <div style={{ width: listView ? undefined : cartW, flex: listView ? 1 : undefined, minWidth: 0, position: "relative" as const, background: C.white, borderLeft: `1px solid ${C.border}`, display: "flex", flexDirection: "column" as const, flexShrink: 0 }}>
+        {!listView && <div onPointerDown={startResize} title="Glisser pour élargir ou réduire le panier"
           style={{ position: "absolute" as const, left: -12, top: 0, bottom: 0, width: 24, cursor: "col-resize", zIndex: 5, touchAction: "none" as const, display: "flex", alignItems: "center", justifyContent: "center" }}>
           <div style={{ width: 5, height: 44, borderRadius: 3, background: C.border, boxShadow: "0 0 0 2px #fff" }} />
-        </div>
+        </div>}
         {/* Header panier */}
         <div style={{ padding: "12px 14px", background: "#0f766e", color: "#fff" }}>
-          <div style={{ fontSize: 13, fontWeight: 700, display: "flex", alignItems: "center", gap: 7 }}><Icon name="cart" size={14} /> Panier — {client.name}</div>
+          <div style={{ fontSize: 13, fontWeight: 700, display: "flex", alignItems: "center", gap: 7 }}>
+            <Icon name="cart" size={14} />
+            <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>Panier — {client.name}</span>
+            {/* Ligne de commentaire */}
+            <button onClick={() => onAddNote("")} title="Ajouter une ligne de commentaire"
+              style={{ width: 30, height: 30, borderRadius: 8, background: "rgba(255,255,255,0.15)", border: "none", color: "#fff", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+              <Icon name="note" size={15} />
+            </button>
+            {/* Vue liste plein écran */}
+            <button onClick={() => setListView(v => !v)} title={listView ? "Revenir au catalogue" : "Vue liste : une ligne par article"}
+              style={{ width: 30, height: 30, borderRadius: 8, background: listView ? "#fff" : "rgba(255,255,255,0.15)", border: "none", color: listView ? "#0f766e" : "#fff", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+              <Icon name="list" size={15} />
+            </button>
+          </div>
           <div style={{ fontSize: 11, opacity: 0.85, marginTop: 2 }}>
             {cartCount} article{cartCount > 1 ? "s" : ""} · {fmtPrice(cartTotal)}
+            {saleLines.length > 0 && <span style={{ marginLeft: 6 }}>· vente : {saleLines.length} réf. / {saleQty} pcs</span>}
             {freeCount > 0 && <span style={{ marginLeft: 6, background: "rgba(255,255,255,0.2)", borderRadius: 5, padding: "1px 6px" }}>+{freeCount} offerts</span>}
           </div>
         </div>
@@ -3361,8 +3455,9 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
               // Pastille stock : rouge si la quantité dépasse le stock prévisionnel.
               const stockOk = isSeparatorProduct(item.product) || item.qty <= Math.floor(item.product.virtual_available || 0);
               const pct = lineDiscounts[item.product.id] || 0;
+              const groupPct = item.group ? groupDiscounts[item.group] || 0 : 0;
               const gross = item.qty * item.unitPrice;
-              const net = gross * (1 - pct / 100);
+              const net = gross * (1 - Math.min(100, pct + groupPct) / 100);
               // Prix catalogue d'origine (avant pricelist client) pour affichage barré.
               const catalog = item.product.lst_price || 0;
               const hasPricelistDiscount = catalog > 0 && catalog - item.unitPrice > 0.01;
@@ -3375,8 +3470,46 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
                       {sepLabel}
                     </span>
                     <span style={{ flex: 1, height: 1, background: item.group ? C.tealMid : C.border }} />
+                    {/* Devis d'implantation : remise modifiable, appliquée à toutes ses lignes */}
+                    {item.group && /implantation/i.test(item.group) && (
+                      <label style={{ display: "flex", alignItems: "center", gap: 3, fontSize: 10.5, fontWeight: 700, color: C.orange, flexShrink: 0 }}>
+                        Remise
+                        <input type="number" inputMode="decimal" min={0} max={100} placeholder="0"
+                          value={groupDiscounts[item.group] || ""}
+                          onChange={e => { const g = item.group!; const n = Math.max(0, Math.min(100, Number(e.target.value) || 0)); setGroupDiscounts(prev => ({ ...prev, [g]: n })); }}
+                          style={{ width: 44, height: 24, padding: "0 4px", borderRadius: 6, border: `1px solid ${C.orange}66`, fontSize: 11.5, fontWeight: 700, fontFamily: "inherit", color: C.text, textAlign: "right" as const }} />
+                        %
+                      </label>
+                    )}
                   </div>
                 )}
+                {item.note ? (
+                  /* Ligne de commentaire : texte libre, repris tel quel dans le devis */
+                  <div style={{ marginBottom: 8, display: "flex", alignItems: "center", gap: 6, padding: "4px 6px 4px 10px", borderLeft: `3px solid ${item.note === "line_section" ? C.tealDark : C.muted}`, background: C.bg, borderRadius: 6 }}>
+                    <input value={item.product.name} onChange={e => onNoteText(item.product.id, e.target.value)}
+                      autoFocus={!item.product.name} placeholder="Commentaire…"
+                      style={{ flex: 1, minWidth: 0, border: "none", background: "transparent", outline: "none", fontFamily: "inherit", fontSize: 12, fontStyle: item.note === "line_note" ? "italic" : "normal", fontWeight: item.note === "line_section" ? 800 : 500, color: C.textSec }} />
+                    <button onClick={() => onQtyChange(item.product, 0)} title="Supprimer le commentaire"
+                      style={{ flexShrink: 0, width: 24, height: 24, background: "transparent", border: "none", cursor: "pointer", color: C.muted, fontSize: 13 }}>✕</button>
+                  </div>
+                ) : listView ? (
+                  /* Vue liste : une ligne par article */
+                  <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "5px 6px", borderBottom: `1px solid ${C.border}` }}>
+                    <span title={stockOk ? "En stock" : `Stock insuffisant : ${Math.floor(item.product.virtual_available || 0)} dispo`}
+                      style={{ width: 8, height: 8, borderRadius: "50%", flexShrink: 0, background: stockOk ? C.green : C.red }} />
+                    <span style={{ width: 78, flexShrink: 0, fontSize: 11, fontFamily: "monospace", color: C.muted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>{item.product.default_code}</span>
+                    <span style={{ flex: 1, minWidth: 0, fontSize: 12.5, fontWeight: 600, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>{item.product.name}</span>
+                    <div style={{ display: "flex", alignItems: "center", gap: 3, flexShrink: 0 }}>
+                      <button onClick={() => onQtyChange(item.product, item.qty - 1)} style={{ width: 30, height: 30, borderRadius: 7, background: C.redSoft, border: "none", cursor: "pointer", color: C.red, fontSize: 15, fontWeight: 700 }}>−</button>
+                      <button onClick={() => setPad({ product: item.product })} style={{ minWidth: 38, height: 30, borderRadius: 7, background: "#fff", border: `1px solid ${C.border}`, cursor: "pointer", fontSize: 13, fontWeight: 800, color: C.text, fontFamily: "inherit" }}>{item.qty}</button>
+                      <button onClick={() => onQtyChange(item.product, item.qty + 1)} style={{ width: 30, height: 30, borderRadius: 7, background: C.tealSoft, border: "none", cursor: "pointer", color: C.teal, fontSize: 15, fontWeight: 700 }}>+</button>
+                    </div>
+                    <span style={{ width: 70, flexShrink: 0, textAlign: "right" as const, fontSize: 11.5, color: C.textSec }}>{fmtPrice(item.unitPrice)}</span>
+                    <span style={{ width: 44, flexShrink: 0, textAlign: "right" as const, fontSize: 11, fontWeight: 700, color: C.orange }}>{pct + groupPct > 0 ? `−${Math.min(100, pct + groupPct)}%` : ""}</span>
+                    <span style={{ width: 80, flexShrink: 0, textAlign: "right" as const, fontSize: 13, fontWeight: 800, color: C.text }}>{fmtPrice(net)}</span>
+                    <button onClick={() => onQtyChange(item.product, 0)} title="Retirer" style={{ flexShrink: 0, width: 24, height: 24, background: "transparent", border: "none", cursor: "pointer", color: C.muted, fontSize: 13 }}>✕</button>
+                  </div>
+                ) : (
                 <div style={{ marginBottom: 8, padding: "10px 10px", background: C.bg, borderRadius: 10 }}>
                   {/* Étage 1 : pastille stock + nom complet + croix de suppression rapide */}
                   <div style={{ display: "flex", alignItems: "flex-start", gap: 8, marginBottom: 2 }}>
@@ -3397,9 +3530,10 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
                     <span>{item.qty} × {fmtPrice(item.unitPrice)}</span>
                     {item.priceLocked && <span style={{ color: C.teal, fontWeight: 700 }}>prix fixé</span>}
                     {hasPricelistDiscount && <span style={{ textDecoration: "line-through" }}>{fmtPrice(catalog)}</span>}
-                    {(pricelistPct > 0 || pct > 0) && (
+                    {saleStep(item.product) > 1 && <span style={{ color: C.tealDark, fontWeight: 700 }}>par {saleStep(item.product)}</span>}
+                    {(pricelistPct > 0 || pct + groupPct > 0) && (
                       <span style={{ background: C.orangeSoft, color: C.orange, borderRadius: 5, padding: "1px 6px", fontWeight: 700 }}>
-                        −{Math.min(100, pricelistPct + pct)}%
+                        −{Math.min(100, pricelistPct + pct + groupPct)}%
                       </span>
                     )}
                   </div>
@@ -3414,7 +3548,7 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
                       <button onClick={() => onQtyChange(item.product, item.qty + 1)} style={{ width: 36, height: 36, borderRadius: 8, background: C.tealSoft, border: "none", cursor: "pointer", color: C.teal, fontSize: 17, fontWeight: 700, lineHeight: 1 }}>+</button>
                     </div>
                     <div style={{ textAlign: "right" as const }}>
-                      {pct > 0 ? (
+                      {pct + groupPct > 0 ? (
                         <>
                           <div style={{ fontSize: 10, color: C.muted, textDecoration: "line-through" }}>{fmtPrice(gross)}</div>
                           <div style={{ fontSize: 14, fontWeight: 800, color: C.orange }}>{fmtPrice(net)}</div>
@@ -3425,6 +3559,7 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
                     </div>
                   </div>
                 </div>
+                )}
                 </div>
               );
             })
@@ -3435,13 +3570,13 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
             <div style={{ margin: "8px 0", padding: "8px 10px", background: C.greenSoft, border: `1px solid ${C.green}44`, borderRadius: 10 }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
                 <span style={{ fontSize: 10, fontWeight: 700, color: C.green, textTransform: "uppercase" as const, letterSpacing: "0.05em", display: "flex", alignItems: "center", gap: 5 }}><Icon name="gift" size={11} /> Gratuités</span>
-                {/* Auto-complète Coffre DC sur toutes les lignes sans type */}
-                {giftItems.some(g => !g.type) && (
-                  <button onClick={() => setGiftItems(prev => prev.map(g => g.type ? g : { ...g, type: DEFAULT_FREE_TYPE }))}
-                    style={{ fontSize: 10, fontWeight: 700, color: "#fff", background: "#7c3aed", border: "none", borderRadius: 6, padding: "3px 8px", cursor: "pointer", fontFamily: "inherit" }}>
-                    Tout en Coffre DC
-                  </button>
-                )}
+                {/* Type pour TOUTES les gratuités (et les suivantes) — Coffre DC par défaut */}
+                <select value={giftType} title="Type de gratuité appliqué à toutes les lignes offertes"
+                  onChange={e => { const t = e.target.value; setGiftType(t); setGiftItems(prev => prev.map(g => ({ ...g, type: t }))); }}
+                  style={{ maxWidth: "60%", padding: "3px 6px", fontSize: 10.5, fontWeight: 700, borderRadius: 6, border: `1px solid ${C.green}`, background: "#fff", color: C.green, fontFamily: "inherit" }}>
+                  <option value="">— Type —</option>
+                  {freeTypes.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
+                </select>
               </div>
               {giftItems.map((g, i) => (
                 <div key={i} style={{ marginBottom: 6, paddingBottom: 8, borderBottom: i < giftItems.length - 1 ? `1px solid ${C.green}22` : "none" }}>
@@ -3581,6 +3716,34 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
                 </div>
               );
             })()}
+            {(meta?.typeField || (meta?.offersField && offers.length > 0)) && (
+              <div style={{ marginBottom: 10, display: "flex", flexDirection: "column" as const, gap: 6 }}>
+                {meta?.typeField && (
+                  <select value={String(orderType)} title="Type de commande"
+                    onChange={e => { const o = meta.typeOptions.find(x => String(x.value) === e.target.value); setOrderType(o ? o.value : ""); }}
+                    style={{ width: "100%", height: 34, padding: "0 8px", borderRadius: 10, border: "1px solid rgba(255,255,255,0.12)", background: "rgba(255,255,255,0.06)", color: "#fff", fontSize: 12, fontFamily: "inherit", colorScheme: "dark" as const }}>
+                    <option value="">Type de commande…</option>
+                    {meta.typeOptions.map(o => <option key={String(o.value)} value={String(o.value)}>{o.label}</option>)}
+                  </select>
+                )}
+                {meta?.offersField && offers.length > 0 && (
+                  <div style={{ display: "flex", flexWrap: "wrap" as const, gap: 5, alignItems: "center" }}>
+                    {offerIds.map(id => (
+                      <span key={id} style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "3px 4px 3px 8px", borderRadius: 999, background: "rgba(251,146,60,0.18)", color: "#fdba74", fontSize: 11, fontWeight: 700 }}>
+                        {offers.find(o => o.id === id)?.name || `Offre #${id}`}
+                        <button onClick={() => setOfferIds(prev => prev.filter(x => x !== id))} style={{ background: "none", border: "none", color: "#fdba74", cursor: "pointer", fontSize: 11, padding: "0 2px" }}>✕</button>
+                      </span>
+                    ))}
+                    <select value="" title="Offres commandées"
+                      onChange={e => { const id = Number(e.target.value); if (id) setOfferIds(prev => prev.includes(id) ? prev : [...prev, id]); }}
+                      style={{ flex: 1, minWidth: 120, height: 30, padding: "0 6px", borderRadius: 8, border: "1px solid rgba(255,255,255,0.12)", background: "rgba(255,255,255,0.06)", color: "rgba(255,255,255,0.75)", fontSize: 11.5, fontFamily: "inherit", colorScheme: "dark" as const }}>
+                      <option value="">+ Offre commandée…</option>
+                      {offers.filter(o => !offerIds.includes(o.id)).map(o => <option key={o.id} value={o.id}>{o.name}</option>)}
+                    </select>
+                  </div>
+                )}
+              </div>
+            )}
             <textarea value={note} onChange={e => setNote(e.target.value)} placeholder="Note pour la commande..."
               rows={2} style={{ width: "100%", boxSizing: "border-box" as const, marginBottom: 12, padding: "9px 11px", border: "1px solid rgba(255,255,255,0.12)", borderRadius: 10, fontSize: 12, fontFamily: "inherit", resize: "none" as const, background: "rgba(255,255,255,0.06)", color: "#fff", outline: "none" }} />
 
@@ -3624,20 +3787,6 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
           initial={cart[pad.product.id]?.qty || 0}
           onSet={n => onQtyChange(pad.product, n, pad.price)}
           onClose={() => setPad(null)}
-        />
-      )}
-
-      {/* ── Modale "Offrir une gratuité" ── */}
-      {giftFor && (
-        <GiftModal
-          product={giftFor}
-          freeTypes={freeTypes}
-          onClose={() => setGiftFor(null)}
-          onConfirm={(qty, type) => {
-            setGiftItems(prev => [...prev, { product: giftFor, qty, type }]);
-            setGiftFor(null);
-            onToast(`${qty}× ${giftFor.name} ajouté en gratuité`, "success");
-          }}
         />
       )}
 
@@ -3691,54 +3840,6 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
 // PAVÉ NUMÉRIQUE — saisie directe d'une quantité (fini les 24 taps sur « + »)
 // ═══════════════════════════════════════════════════════════════════════════
 // Modale d'ajout d'une gratuité : quantité offerte + type de gratuité.
-function GiftModal({ product, freeTypes, onClose, onConfirm }: {
-  product: any; freeTypes: sync.FreeType[];
-  onClose: () => void; onConfirm: (qty: number, type: string) => void;
-}) {
-  const [qty, setQty] = useState(1);
-  // Présélection de Coffre DC. Les types viennent d'Odoo et peuvent arriver après le
-  // premier rendu (ou depuis le cache hors ligne), d'où l'initialisation + l'effet.
-  const hasDefault = (list: sync.FreeType[]) => list.some(t => t.value === DEFAULT_FREE_TYPE);
-  const [type, setType] = useState(() => (hasDefault(freeTypes) ? DEFAULT_FREE_TYPE : ""));
-  // Le garde-fou évite de réimposer le défaut si le commercial repasse sur « aucun ».
-  const defaultApplied = useRef(type !== "");
-  useEffect(() => {
-    if (defaultApplied.current || !hasDefault(freeTypes)) return;
-    defaultApplied.current = true;
-    setType(DEFAULT_FREE_TYPE);
-  }, [freeTypes]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  return (
-    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 250, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
-      <div onClick={e => e.stopPropagation()} style={{ width: "100%", maxWidth: 380, background: C.white, borderRadius: 18, padding: "22px 22px 20px", boxShadow: C.shadowXl, fontFamily: "'DM Sans', sans-serif" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4, color: C.green, fontWeight: 800, fontSize: 15 }}>
-          <Icon name="gift" size={16} /> Offrir une gratuité
-        </div>
-        <div style={{ fontSize: 12, color: C.muted, marginBottom: 16 }}>{product.name}</div>
-
-        <div style={{ fontSize: 12, fontWeight: 700, color: C.textSec, marginBottom: 6 }}>Quantité offerte</div>
-        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}>
-          <button onClick={() => setQty(q => Math.max(1, q - 1))} style={{ width: 44, height: 44, borderRadius: 10, background: C.redSoft, color: C.red, border: "none", fontSize: 20, fontWeight: 700, cursor: "pointer" }}>−</button>
-          <div style={{ flex: 1, textAlign: "center" as const, fontSize: 20, fontWeight: 800, color: C.text }}>{qty}</div>
-          <button onClick={() => setQty(q => q + 1)} style={{ width: 44, height: 44, borderRadius: 10, background: C.tealSoft, color: C.teal, border: "none", fontSize: 20, fontWeight: 700, cursor: "pointer" }}>+</button>
-        </div>
-
-        <div style={{ fontSize: 12, fontWeight: 700, color: C.textSec, marginBottom: 6 }}>Type de gratuité</div>
-        <select value={type} onChange={e => setType(e.target.value)}
-          style={{ width: "100%", padding: "11px 12px", fontSize: 13, borderRadius: 10, border: `1.5px solid ${C.border}`, background: "#fff", color: C.text, fontFamily: "inherit", marginBottom: 18 }}>
-          <option value="">— Aucun (compléter plus tard) —</option>
-          {freeTypes.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
-        </select>
-
-        <div style={{ display: "flex", gap: 10 }}>
-          <button onClick={onClose} style={{ flex: "0 0 auto", padding: "12px 18px", background: C.bg, color: C.textSec, border: `1px solid ${C.border}`, borderRadius: 12, fontSize: 14, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>Annuler</button>
-          <button onClick={() => onConfirm(qty, type)} style={{ flex: 1, padding: "12px", background: C.green, color: "#fff", border: "none", borderRadius: 12, fontSize: 14, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>Ajouter en gratuité</button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
 // ═══════════════════════════════════════════════════════════════════════════
 // PANNEAU RÈGLES
 // ═══════════════════════════════════════════════════════════════════════════

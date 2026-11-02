@@ -1,6 +1,6 @@
 // lib/incomingFile.ts
 // Fichiers ouverts DANS l'app depuis iOS : Mail → pièce jointe → partager (flèche
-// vers le haut) → « Commande ». Info.plist déclare les PDF et les photos
+// vers le haut) → « Commande ». Info.plist déclare PDF, photos, Word, Excel, CSV
 // (CFBundleDocumentTypes) ; iOS copie alors le fichier dans Documents/Inbox et
 // ouvre l'app avec son URL file://.
 //

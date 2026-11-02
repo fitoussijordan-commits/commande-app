@@ -6,6 +6,7 @@
 //  3. Rejeu de la file de commandes créées hors ligne vers Odoo au retour réseau.
 
 import * as odoo from "@/lib/odoo";
+import { optionalProductFields } from "@/lib/productFields";
 import * as db from "@/lib/localdb";
 import * as loyalty from "@/lib/loyalty";
 import * as perimes from "@/lib/perimes";
@@ -54,10 +55,11 @@ export async function preloadCatalog(
   // 1. Produits vendables
   onProgress?.({ step: "Catalogue produits", done: 0, total: steps });
   // Vendables + testeurs (réf. en 3), comme le catalogue en ligne.
+  const extra = await optionalProductFields(session);
   const products = await odoo.searchRead(
     session, "product.product",
     ["|", ["sale_ok", "=", true], ["default_code", "=like", "3%"]],
-    PRODUCT_FIELDS,
+    [...PRODUCT_FIELDS.filter(f => f !== "x_type_de_produit_id"), ...extra],
     0, "name"
   );
   await db.kvSet(db.STORES.products, KEY, products);

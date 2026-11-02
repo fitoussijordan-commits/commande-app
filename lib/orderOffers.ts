@@ -17,6 +17,7 @@ export interface OrderMeta {
   typeField?: string;                   // « Type de commande »
   typeKind?: "selection" | "many2one";
   implantValues: (string | number)[];   // valeurs du type correspondant à une implantation
+  typeOptions: { value: string | number; label: string }[];   // choix proposés à la saisie
   joinedField?: string;                 // many2many « Commandes jointes » (vers sale.order)
 }
 
@@ -24,7 +25,7 @@ let _meta: OrderMeta | null = null;
 
 export async function orderMeta(session: odoo.OdooSession): Promise<OrderMeta> {
   if (_meta) return _meta;
-  const meta: OrderMeta = { implantValues: [] };
+  const meta: OrderMeta = { implantValues: [], typeOptions: [] };
   const fields: Record<string, any> = await odoo.callMethod(session, "sale.order", "fields_get", [],
     { attributes: ["string", "type", "relation", "selection"] });
 
@@ -45,13 +46,15 @@ export async function orderMeta(session: odoo.OdooSession): Promise<OrderMeta> {
     if (!meta.typeField && /^type\s+de\s+commande/i.test(label) && (f.type === "selection" || f.type === "many2one")) {
       meta.typeField = name; meta.typeKind = f.type;
       if (f.type === "selection") {
+        meta.typeOptions = (f.selection || []).map(([v, l]: [string, string]) => ({ value: v, label: String(l) }));
         meta.implantValues = (f.selection || [])
           .filter(([, l]: [string, string]) => /implant/i.test(String(l)))
           .map(([v]: [string, string]) => v);
       } else if (f.relation) {
         try {
-          const rows = await odoo.searchRead(session, f.relation, [["name", "ilike", "implant"]], ["id"], 20);
-          meta.implantValues = rows.map((r: any) => r.id);
+          const rows = await odoo.searchRead(session, f.relation, [], ["id", "display_name"], 100);
+          meta.typeOptions = rows.map((r: any) => ({ value: r.id, label: String(r.display_name || "") }));
+          meta.implantValues = meta.typeOptions.filter(o => /implant/i.test(o.label)).map(o => o.value);
         } catch { /* sans valeur : aucune implantation repérable par le type */ }
       }
     }
@@ -89,4 +92,13 @@ export async function offerNames(session: odoo.OdooSession, orders: any[], meta:
     rows.forEach((r: any) => out.set(r.id, String(r.display_name || "")));
   } catch { /* libellés indisponibles : on retombera sur le modèle de devis */ }
   return out;
+}
+
+// Offres que l'on peut cocher sur une commande (champ « Offres commandées »).
+export async function offerOptions(session: odoo.OdooSession, meta: OrderMeta): Promise<{ id: number; name: string }[]> {
+  if (!meta.offersRelation) return [];
+  try {
+    const rows = await odoo.searchRead(session, meta.offersRelation, [], ["display_name"], 500, "id desc");
+    return rows.map((r: any) => ({ id: r.id, name: String(r.display_name || "") }));
+  } catch { return []; }
 }
