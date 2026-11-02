@@ -60,9 +60,29 @@ export default function AgendaGlass({ session, onOpenPlanning }: {
       setState("loading");
       const end = new Date(days[days.length - 1]); end.setDate(end.getDate() + 1);
       try {
-        const rows = await odoo.searchRead(session, "calendar.event",
-          [["user_id", "=", session.uid], ["start", "<", toOdoo(end)], ["stop", ">=", toOdoo(days[0])], ["active", "in", [true, false]]],
-          ["id", "name", "start", "x_studio_annul", "active"], 600, "start asc");
+        const domain = [["user_id", "=", session.uid], ["start", "<", toOdoo(end)], ["stop", ">=", toOdoo(days[0])], ["active", "in", [true, false]]];
+        const BASE = ["id", "name", "start", "location", "x_studio_annul", "active"];
+        // res_model / res_id = client lié au RDV (cf. AppointmentModal) ; repli
+        // sans ces champs s'ils n'existent pas sur l'instance.
+        let rows: any[];
+        try {
+          rows = await odoo.searchRead(session, "calendar.event", domain, [...BASE, "res_model", "res_id"], 600, "start asc");
+        } catch (e) {
+          if (odoo.isNetworkError(e)) throw e;
+          rows = await odoo.searchRead(session, "calendar.event", domain, BASE, 600, "start asc");
+        }
+        // RDV lié à un client : « Visite de <client> à <ville> ».
+        const ids = Array.from(new Set(rows.filter(r => r.res_model === "res.partner" && r.res_id).map(r => r.res_id)));
+        if (ids.length) {
+          try {
+            const partners = await odoo.searchRead(session, "res.partner", [["id", "in", ids]], ["id", "name", "city"], ids.length);
+            const byId = new Map(partners.map((p: any) => [p.id, p]));
+            rows = rows.map(r => {
+              const p: any = r.res_model === "res.partner" && byId.get(r.res_id);
+              return p ? { ...r, label: `Visite de ${p.name}${p.city ? ` à ${p.city}` : r.location ? ` à ${r.location}` : ""}` } : r;
+            });
+          } catch {}
+        }
         if (!cancelled) { setEvents(rows); setState("ok"); }
       } catch {
         if (!cancelled) { setEvents([]); setState("offline"); }
@@ -152,7 +172,7 @@ export default function AgendaGlass({ session, onOpenPlanning }: {
                 background: "rgba(255,255,255,0.7)", opacity: cancelled(e) ? 0.55 : 1 }}>
               <span style={{ width: 4, alignSelf: "stretch", borderRadius: 2, background: cancelled(e) ? C.faint : C.teal }} />
               <span style={{ fontSize: 12.5, fontWeight: 800, color: C.tealDark, width: 42, flexShrink: 0 }}>{hhmm(fromOdoo(e.start))}</span>
-              <span style={{ fontSize: 13.5, fontWeight: 600, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const, textDecoration: cancelled(e) ? "line-through" : "none" }}>{e.name}</span>
+              <span style={{ fontSize: 13.5, fontWeight: 600, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const, textDecoration: cancelled(e) ? "line-through" : "none" }}>{e.label || e.name}</span>
             </button>
           ))}
         </div>
