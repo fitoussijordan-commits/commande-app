@@ -91,6 +91,18 @@ interface CartItem { product: any; qty: number; unitPrice: number; priceLocked?:
 function orderedCart(cart: Record<number, CartItem>): CartItem[] {
   return Object.values(cart).sort((a, b) => (a.seq || 0) - (b.seq || 0));
 }
+// Remises Odoo (programmes de fidélité) : les lignes d'un devis d'implantation
+// n'y comptent pas — ni pour déclencher une promo, ni pour en recevoir la remise.
+function promoCart(cart: Record<number, CartItem>): Record<number, CartItem> {
+  return Object.fromEntries(Object.entries(cart).filter(([, i]) => !/implantation/i.test(i.group || ""))) as Record<number, CartItem>;
+}
+// Recherche : chaque mot tapé doit se retrouver dans le nom, la réf. ou l'EAN
+// (sans tenir compte des accents ni des majuscules).
+const fold = (t: string) => t.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+function matchesSearch(p: any, words: string[]): boolean {
+  const hay = fold(`${p.name || ""} ${p.default_code || ""} ${p.barcode || ""}`);
+  return words.every(w => hay.includes(w));
+}
 // Ligne offerte : produit à 0€ + type de gratuité (type_gratuit sur sale.order.line).
 interface GiftItem { product: any; qty: number; type: string; }
 interface FreeRule {
@@ -395,7 +407,7 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
   const [freeItems, setFreeItems] = useState<FreeItem[]>([]);
   const [showRules, setShowRules] = useState(false);
   const [submitting, setSubmitting] = useState(false);
-  const [done, setDone] = useState<{ mainId: number | null; freeId: number | null; offline?: boolean } | null>(null);
+  const [done, setDone] = useState<{ mainId: number | null; freeId: number | null; mainName?: string; freeName?: string; offline?: boolean } | null>(null);
   const [note, setNote] = useState("");
   // Brouillon détecté pour le client qu'on vient de sélectionner (jamais un autre client — pas de fuite visuelle)
   const [resumePrompt, setResumePrompt] = useState<Draft | null>(null);
@@ -542,7 +554,7 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
   }, [session, refreshPendingDrafts]);
 
   // Programmes dont les conditions sont actuellement remplies par le panier
-  const triggeredPromos = loyaltyPrograms.filter(p => loyalty.isProgramTriggered(p, cart));
+  const triggeredPromos = loyaltyPrograms.filter(p => loyalty.isProgramTriggered(p, promoCart(cart)));
   const availablePromoCount = triggeredPromos.filter(p => !appliedPromos[p.id]).length;
 
   const applyPromo = async (program: loyalty.LoyaltyProgram) => {
@@ -634,9 +646,11 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
   const cartTotal = Object.values(cart).reduce((s, i) => s + i.qty * i.unitPrice, 0);
   const freeCount = freeItems.reduce((s, i) => s + i.qty, 0);
 
-  const setQty = (product: any, qty: number, unitPrice?: number, group?: string) => {
+  // keepZero : ligne de MEA / devis d'implantation à 0 dans le modèle — gardée au
+  // panier à 0 pour que le délégué choisisse la quantité (non envoyée à Odoo).
+  const setQty = (product: any, qty: number, unitPrice?: number, group?: string, keepZero?: boolean) => {
     setCart(prev => {
-      if (qty <= 0) { const n = { ...prev }; delete n[product.id]; return n; }
+      if (qty < 0 || (qty === 0 && !keepZero)) { const n = { ...prev }; delete n[product.id]; return n; }
       const cur = prev[product.id];
       if (cur?.priceLocked) return { ...prev, [product.id]: { ...cur, qty } };
       const price = unitPrice ?? cur?.unitPrice ?? product.lst_price ?? 0;
@@ -714,7 +728,7 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
       const pricelistId = client.property_product_pricelist?.[0] || false;
 
       // Remises additionnelles Odoo appliquées manuellement (bouton 🏷️) : % par produit du panier
-      const lineDiscounts = loyalty.computeLineDiscounts(appliedPromos, cart);
+      const lineDiscounts = loyalty.computeLineDiscounts(appliedPromos, promoCart(cart));
       // Produits offerts par une remise "Achetez X" (distincts des règles maison du panneau ⚙️)
       const promoFreeLines = Object.values(appliedPromos).filter((p): p is loyalty.AppliedFreePromo => p.type === "product");
 
@@ -729,7 +743,7 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
         ...joinVals,
         order_line: [
           // Ordre d'ajout : les lignes d'une même MEA restent groupées dans le devis.
-          ...orderedCart(cart).map(item => {
+          ...orderedCart(cart).filter(item => item.qty > 0).map(item => {
             // Remise ligne = remise promo Odoo + remise événement Co (cumul, plafonné à 100%).
             const promoDisc = Math.min(100, (lineDiscounts[item.product.id] || 0) + (eventDiscount || 0));
             // Prix d'un bon importé avec remise : brut + % comme le logiciel du client.
@@ -843,7 +857,13 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
       removeDraftForClient(client.id);
       refreshPendingDrafts();
       setAppliedPromos({});
-      setDone({ mainId, freeId });
+      // Numéro Odoo (S78301…) : c'est celui que tout le monde connaît, pas l'id technique.
+      const names = new Map<number, string>();
+      try {
+        const rows = await odoo.searchRead(session, "sale.order", [["id", "in", freeId ? [mainId, freeId] : [mainId]]], ["name"], 2);
+        rows.forEach((r: any) => names.set(r.id, String(r.name || "")));
+      } catch {}
+      setDone({ mainId, freeId, mainName: names.get(mainId), freeName: freeId ? names.get(freeId) : undefined });
     } catch (e: any) { onToast("Erreur : " + e.message, "error"); }
     setSubmitting(false);
   };
@@ -863,8 +883,8 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
             <>Enregistrée hors ligne sur cet appareil.<br/>
             Elle sera envoyée à Odoo automatiquement dès le retour du réseau — voir « en attente » en haut de l'écran.</>
           ) : (
-            <>Devis principal <span style={{ color: C.teal, fontWeight: 700 }}>#{done.mainId}</span> dans Odoo
-            {done.freeId && <><br/>BC gratuit <span style={{ color: C.purple, fontWeight: 700 }}>#{done.freeId}</span> créé automatiquement</>}</>
+            <>Devis <span style={{ color: C.teal, fontWeight: 700 }}>{done.mainName || `#${done.mainId}`}</span> dans Odoo
+            {done.freeId && <><br/>BC gratuit <span style={{ color: C.purple, fontWeight: 700 }}>{done.freeName || `#${done.freeId}`}</span> créé automatiquement</>}</>
           )}
         </div>
         <div style={{ display: "flex", gap: 12, justifyContent: "center" }}>
@@ -2758,7 +2778,7 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
   shipping?: ShippingPlan | null;
   onChangeExpedition?: (d: Date | null) => void;
   session: odoo.OdooSession; cart: Record<number, CartItem>;
-  onQtyChange: (p: any, q: number, price?: number, group?: string) => void; freeItems: FreeItem[];
+  onQtyChange: (p: any, q: number, price?: number, group?: string, keepZero?: boolean) => void; freeItems: FreeItem[];
   onValidate: () => void; submitting: boolean;
   note: string; setNote: (n: string) => void; client: any;
   priceItems: PriceItem[];
@@ -2775,7 +2795,6 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
   const [search, setSearch] = useState("");
   const [stockOnly, setStockOnly] = useState(true); // n'afficher que les articles avec du stock prévisionnel
   const searchInput = useRef<HTMLInputElement>(null);
-  const searchTimer = useRef<any>(null);
 
   // Pavé numérique quantité : tap sur le chiffre d'un produit (grille ou panier).
   // price fourni depuis la grille (prix client calculé) ; absent depuis le panier
@@ -2825,7 +2844,8 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
 
   const [meaTemplates, setMeaTemplates] = useState<any[]>([]);
   const isOfferView = activeCatId === MEA_CAT_ID || activeCatId === DEVIS_CAT_ID;
-  const shownTemplates = meaTemplates.filter((t: any) => isImplantTemplate(t) === (activeCatId === DEVIS_CAT_ID));
+  const shownTemplates = meaTemplates.filter((t: any) => isImplantTemplate(t) === (activeCatId === DEVIS_CAT_ID)
+    && fold(String(t.name || "")).includes(fold(search).trim()));
   const [meaLoading, setMeaLoading] = useState(false);
   const [applyingMea, setApplyingMea] = useState<number | null>(null);
 
@@ -2944,9 +2964,11 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
         // un product_id, donc display_type ne le filtre pas — mais il n'a aucun stock,
         // ce qui déclenchait une fausse alerte de rupture.
         if (isSeparatorProduct(product)) continue;
-        const qty = Math.max(1, Math.round(line.product_uom_qty || 1));
-        const clientPrice = applyPricelist(product.lst_price || 0, product.id, product.product_tmpl_id?.[0] || 0, priceItems, qty);
-        onQtyChange(product, (cart[product.id]?.qty || 0) + qty, clientPrice, template.name);
+        // Quantité du modèle telle quelle : 0 reste 0 (ligne optionnelle).
+        const qty = Math.max(0, Math.round(line.product_uom_qty || 0));
+        if (qty === 0 && cart[product.id]) continue;
+        const clientPrice = applyPricelist(product.lst_price || 0, product.id, product.product_tmpl_id?.[0] || 0, priceItems, Math.max(1, qty));
+        onQtyChange(product, (cart[product.id]?.qty || 0) + qty, clientPrice, template.name, true);
         added++;
       }
       onToast(`✅ ${template.name} — ${added} produit${added > 1 ? "s" : ""} ajouté${added > 1 ? "s" : ""}`, "success");
@@ -3005,26 +3027,15 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
 
   useEffect(() => { loadAll(""); }, [loadAll]);
 
-  // Produits affichés = filtre catégorie + filtre recherche sur le cache local
-  const [searchResults, setSearchResults] = useState<any[]>([]);
-  const isSearching = search.trim().length >= 2;
-
-  useEffect(() => {
-    if (!isSearching) { setSearchResults([]); return; }
-    clearTimeout(searchTimer.current);
-    searchTimer.current = setTimeout(async () => {
-      setProdLoading(true);
-      const r = await loadAll(search);
-      if (r) setSearchResults(r as any[]);
-      setProdLoading(false);
-    }, 300);
-  }, [search, loadAll, isSearching]);
+  // Recherche instantanée, dès la 1ʳᵉ lettre, DANS la vue en cours (testeurs,
+  // PLV, favoris…) ; sans catégorie, dans tout le catalogue. Filtre local sur le
+  // catalogue complet déjà chargé : chaque lettre affine, sans appel réseau.
+  const searchWords = fold(search).split(/\s+/).filter(Boolean);
+  const isSearching = searchWords.length > 0;
 
   const inStock = (p: any) => (p.virtual_available || 0) > 0;
 
-  const baseProducts = isSearching
-    ? searchResults
-    : activeCatId === FAV_CAT_ID
+  const viewProducts = activeCatId === FAV_CAT_ID
       ? favProducts
       : activeCatId?.startsWith(TYPE_CAT_PREFIX)
         ? allProducts.filter(p => matchesTypeGroup(p, activeCatId.slice(TYPE_CAT_PREFIX.length)))
@@ -3034,6 +3045,7 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
             return cat ? matchesCat(p, cat) && isSaleProduct(p) : true;
           })
         : allProducts;
+  const baseProducts = isSearching ? viewProducts.filter(p => matchesSearch(p, searchWords)) : viewProducts;
   const displayedProducts = stockOnly ? baseProducts.filter(inStock) : baseProducts;
 
   // Les catégories de type, avec leur nombre d'articles. Une catégorie sans
@@ -3068,7 +3080,7 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
   const cartCount = cartItems.reduce((s, i) => s + i.qty, 0);
   const cartTotal = cartItems.reduce((s, i) => s + i.qty * i.unitPrice, 0);
   const freeCount = freeItems.reduce((s, i) => s + i.qty, 0);
-  const lineDiscounts = loyalty.computeLineDiscounts(appliedPromos, cart);
+  const lineDiscounts = loyalty.computeLineDiscounts(appliedPromos, promoCart(cart));
   const discountTotal = cartItems.reduce((s, i) => {
     // Remise promo Odoo + remise événement Co, cumulées (plafond 100%).
     const pct = Math.min(100, (lineDiscounts[i.product.id] || 0) + (eventDiscount || 0));
