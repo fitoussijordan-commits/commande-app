@@ -19,6 +19,7 @@ export interface OrderMeta {
   implantValues: (string | number)[];   // valeurs du type correspondant à une implantation
   typeOptions: { value: string | number; label: string }[];   // choix proposés à la saisie
   joinedField?: string;                 // many2many « Commandes jointes » (vers sale.order)
+  internalNoteField?: string;           // « Note interne » de la commande (sinon : note dans le chatter)
 }
 
 let _meta: OrderMeta | null = null;
@@ -42,6 +43,9 @@ export async function orderMeta(session: odoo.OdooSession): Promise<OrderMeta> {
     }
     if (!meta.joinedField && /commandes?\s+jointes?/i.test(label) && f.type === "many2many" && f.relation === "sale.order") {
       meta.joinedField = name;
+    }
+    if (!meta.internalNoteField && /note\s+interne/i.test(label) && ["text", "html", "char"].includes(f.type)) {
+      meta.internalNoteField = name;
     }
     if (!meta.typeField && /^type\s+de\s+commande/i.test(label) && (f.type === "selection" || f.type === "many2one")) {
       meta.typeField = name; meta.typeKind = f.type;
@@ -101,4 +105,27 @@ export async function offerOptions(session: odoo.OdooSession, meta: OrderMeta): 
     const rows = await odoo.searchRead(session, meta.offersRelation, [], ["display_name"], 500, "id desc");
     return rows.map((r: any) => ({ id: r.id, name: String(r.display_name || "") }));
   } catch { return []; }
+}
+
+// Champs Studio des MODÈLES de devis (MEA / implantation), repérés par libellé :
+//   « Note interne »          → recopiée sur la commande (suivi des campagnes, ex. SERUM26)
+//   « Date d'expédition… »    → date d'expédition prévue de la commande
+export interface TemplateMeta { noteField?: string; shipField?: string }
+let _tmeta: TemplateMeta | null = null;
+export async function templateMeta(session: odoo.OdooSession): Promise<TemplateMeta> {
+  if (_tmeta) return _tmeta;
+  const out: TemplateMeta = {};
+  try {
+    const fields: Record<string, any> = await odoo.callMethod(session, "sale.order.template", "fields_get", [],
+      { attributes: ["string", "type"] });
+    for (const [name, f] of Object.entries(fields)) {
+      const label = String(f.string || "");
+      if (!out.noteField && /note\s+interne/i.test(label) && ["text", "html", "char"].includes(f.type)) out.noteField = name;
+      if (!out.shipField && /exp[ée]dition/i.test(label) && (f.type === "date" || f.type === "datetime")) out.shipField = name;
+    }
+  } catch (e) {
+    if (odoo.isNetworkError(e)) return out;   // hors ligne : on réessaiera
+  }
+  _tmeta = out;
+  return out;
 }

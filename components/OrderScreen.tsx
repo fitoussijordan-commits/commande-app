@@ -13,10 +13,12 @@ import VisitPriority from "@/components/VisitPriority";
 import AgendaGlass from "@/components/AgendaGlass";
 import { resolveClientFamily, odooRecordUrl } from "@/lib/perimes";
 import { saleStep, snapQty, optionalProductFields } from "@/lib/productFields";
-import { orderMeta, isMea, isImplantation, offerNames, offerOptions, type OrderMeta } from "@/lib/orderOffers";
+import { orderMeta, isMea, isImplantation, offerNames, offerOptions, templateMeta, type OrderMeta } from "@/lib/orderOffers";
 import { loadBlockingTags, clientBlockingTags, loadClosedDayTags, clientClosedWeekdays, type BlockingTag, type ClosedDayTag } from "@/lib/clientFlags";
 import { planShipping, toOdooDate, toOdooDatetime, isDirectLogistics, type ShippingPlan } from "@/lib/delivery";
 import { onIncomingFile } from "@/lib/incomingFile";
+import { needsShippingFee, shippingProduct, SHIPPING_FEE_HT, FRANCO_HT } from "@/lib/franco";
+import OrderCheck from "@/components/OrderCheck";
 import * as sync from "@/lib/sync";
 import * as geo from "@/lib/geo";
 import { apiUrl } from "@/lib/apiBase";
@@ -98,6 +100,20 @@ function orderedCart(cart: Record<number, CartItem>): CartItem[] {
 // n'y comptent pas — ni pour déclencher une promo, ni pour en recevoir la remise.
 function promoCart(cart: Record<number, CartItem>): Record<number, CartItem> {
   return Object.fromEntries(Object.entries(cart).filter(([, i]) => !i.note && !/implantation/i.test(i.group || ""))) as Record<number, CartItem>;
+}
+// Total HT net du panier (remises promo + événement + implantation), hors frais de port.
+function cartNet(cart: Record<number, CartItem>, lineDiscounts: Record<number, number>, eventDiscount: number, groupDiscounts: Record<string, number>): number {
+  return Object.values(cart).reduce((s, i) => {
+    if (i.note) return s;
+    const pct = Math.min(100, (lineDiscounts[i.product.id] || 0) + (eventDiscount || 0) + (i.group ? groupDiscounts[i.group] || 0 : 0));
+    return s + i.qty * i.unitPrice * (1 - pct / 100);
+  }, 0);
+}
+// Lignes dont la quantité dépasse le stock prévisionnel (pastille rouge).
+function cartRuptures(cart: Record<number, CartItem>) {
+  return orderedCart(cart)
+    .filter(i => !i.note && i.qty > 0 && !isSeparatorProduct(i.product) && i.qty > Math.floor(i.product.virtual_available || 0))
+    .map(i => ({ name: String(i.product.name || ""), code: i.product.default_code || undefined, qty: i.qty, stock: Math.max(0, Math.floor(i.product.virtual_available || 0)) }));
 }
 // Recherche : chaque mot tapé doit se retrouver dans le nom, la réf. ou l'EAN
 // (sans tenir compte des accents ni des majuscules).
@@ -411,7 +427,7 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
   const [freeItems, setFreeItems] = useState<FreeItem[]>([]);
   const [showRules, setShowRules] = useState(false);
   const [submitting, setSubmitting] = useState(false);
-  const [done, setDone] = useState<{ mainId: number | null; freeId: number | null; mainName?: string; freeName?: string; offline?: boolean } | null>(null);
+  const [done, setDone] = useState<{ mainId: number | null; freeId: number | null; mainName?: string; freeName?: string; offline?: boolean; ruptures?: number } | null>(null);
   const [note, setNote] = useState("");
   // Brouillon détecté pour le client qu'on vient de sélectionner (jamais un autre client — pas de fuite visuelle)
   const [resumePrompt, setResumePrompt] = useState<Draft | null>(null);
@@ -434,6 +450,8 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
   // « Type de commande » et « Offres commandées » saisis dans l'app (champs Odoo).
   const [orderType, setOrderType] = useState<string | number | "">("");
   const [offerIds, setOfferIds] = useState<number[]>([]);
+  // Infos des modèles ajoutés (MEA / implantation) : note interne de campagne, date d'expédition.
+  const [templateInfo, setTemplateInfo] = useState<Record<string, { note?: string; shipDate?: string }>>({});
   const refreshPendingDrafts = useCallback(() => setPendingDrafts(listDrafts()), []);
 
   // D'où vient-on quand on ouvre une fiche client : recherche ou planning.
@@ -512,7 +530,13 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
   // quand on change de client.
   const [wantedExpedition, setWantedExpedition] = useState<Date | null>(null);
   useEffect(() => { setWantedExpedition(null); }, [client?.id]);
-  const shippingPlan = client ? planShipping(new Date(), clientClosedWeekdays(client, closedDayTags), wantedExpedition) : null;
+  // Date d'expédition des offres du panier (la plus tardive) : sert de date par défaut.
+  const offerShipDate = (() => {
+    const groups = new Set(Object.values(cart).map(i => i.group).filter(Boolean) as string[]);
+    const dates = Object.entries(templateInfo).filter(([g, t]) => groups.has(g) && t.shipDate).map(([, t]) => String(t.shipDate).slice(0, 10)).sort();
+    return dates.length ? new Date(`${dates[dates.length - 1]}T12:00:00`) : null;
+  })();
+  const shippingPlan = client ? planShipping(new Date(), clientClosedWeekdays(client, closedDayTags), wantedExpedition ?? offerShipDate) : null;
   const blockLabel = clientBlocks.map(t => t.name).join(" · ");
 
   // Écran d'où l'on a ouvert le rapport Périmés, pour y revenir.
@@ -628,6 +652,7 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
     setGroupDiscounts({});
     setOrderType("");
     setOfferIds([]);
+    setTemplateInfo({});
     manuallyRemovedRef.current.clear(); // nouvelle commande → réinitialise les retraits manuels
     setResumePrompt(loadDraftForClient(client.id));
     setStep("catalog");
@@ -736,8 +761,10 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
       const tagIds = [validatedTagId, transmiseId].filter((x): x is number => x !== null);
       const tagVals = tagIds.length ? { tag_ids: [[6, 0, tagIds]] } : {};
       // Date calculée AU MOMENT de la validation (l'heure compte : coupure 14 h 30).
-      const plan = planShipping(new Date(), clientClosedWeekdays(client, closedDayTags), wantedExpedition);
-      const shipVals = directLogistics ? { [EXPEDITION_FIELD]: toOdooDate(plan.expedition) } : {};
+      const plan = planShipping(new Date(), clientClosedWeekdays(client, closedDayTags), wantedExpedition ?? offerShipDate);
+      // Délégué « direct logistique » : date calculée ; sinon, date d'expédition des offres si elle existe.
+      const shipVals = directLogistics ? { [EXPEDITION_FIELD]: toOdooDate(plan.expedition) }
+        : offerShipDate ? { [EXPEDITION_FIELD]: toOdooDate(offerShipDate) } : {};
       let orderNote = clientBlocked
         ? `CLIENT ${blockLabel.toUpperCase()} — commande à valider par le service client.${note ? `\n${note}` : ""}`
         : (note || "");
@@ -753,10 +780,25 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
 
       // Type de commande / Offres commandées : champs repérés dans Odoo (orderMeta).
       const metaVals: any = {};
-      if (orderType !== "" || offerIds.length) {
-        const m = await orderMeta(session).catch(() => null);
-        if (m?.typeField && orderType !== "") metaVals[m.typeField] = orderType;
-        if (m?.offersField && offerIds.length) metaVals[m.offersField] = [[6, 0, offerIds]];
+      const m = await orderMeta(session).catch(() => null);
+      if (m?.typeField && orderType !== "") metaVals[m.typeField] = orderType;
+      if (m?.offersField && offerIds.length) metaVals[m.offersField] = [[6, 0, offerIds]];
+      // Note INTERNE (jamais imprimée sur le devis) : ruptures à vérifier par le
+      // service client + notes de suivi des campagnes ajoutées (ex. SERUM26).
+      const ruptures = cartRuptures(cart);
+      const groupsInCart = new Set(Object.values(cart).map(i => i.group).filter(Boolean) as string[]);
+      const internalLines = [
+        ...(ruptures.length ? [`RUPTURES À VÉRIFIER : ${ruptures.map(r => `${r.code || r.name} (${r.qty} dem. / ${r.stock} dispo)`).join(", ")}`] : []),
+        ...Object.entries(templateInfo).filter(([g, t]) => groupsInCart.has(g) && t.note).map(([, t]) => String(t.note)),
+      ];
+      const internalNote = internalLines.join("\n");
+      if (internalNote && m?.internalNoteField) metaVals[m.internalNoteField] = internalNote;
+
+      // Franco : sous 250 € HT net → 10 € HT de frais de livraison.
+      const netHt = cartNet(cart, loyalty.computeLineDiscounts(appliedPromos, promoCart(cart)), eventDiscount, groupDiscounts);
+      const feeProduct = needsShippingFee(netHt) ? await shippingProduct(session) : null;
+      if (needsShippingFee(netHt) && !feeProduct) {
+        onToast("Article « Frais de port » introuvable dans Odoo — frais de livraison à ajouter à la main", "error");
       }
 
       const pricelistId = client.property_product_pricelist?.[0] || false;
@@ -813,6 +855,8 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
             price_unit: 0,
             ...(g.type ? { type_gratuit: g.type } : {}),
           }]),
+          // Franco non atteint : frais de livraison.
+          ...(feeProduct ? [[0, 0, { product_id: feeProduct.id, product_uom_qty: 1, price_unit: SHIPPING_FEE_HT }]] : []),
         ],
       };
 
@@ -863,6 +907,13 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
         return;
       }
 
+      // Pas de champ « Note interne » sur la commande : note interne dans le chatter.
+      if (internalNote && !m?.internalNoteField) {
+        const html = internalNote.split("\n").map(l => l.replace(/&/g, "&amp;").replace(/</g, "&lt;")).join("<br/>");
+        odoo.callMethod(session, "sale.order", "message_post", [[mainId]],
+          { body: html, message_type: "comment", subtype_xmlid: "mail.mt_note" }).catch(() => {});
+      }
+
       // 1 bis) Commande directe logistique : confirmation automatique + note de la
       // commande recopiée sur le bon de préparation (la logistique ne lit que celle-là).
       if (directLogistics) {
@@ -901,7 +952,7 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
         const rows = await odoo.searchRead(session, "sale.order", [["id", "in", freeId ? [mainId, freeId] : [mainId]]], ["name"], 2);
         rows.forEach((r: any) => names.set(r.id, String(r.name || "")));
       } catch {}
-      setDone({ mainId, freeId, mainName: names.get(mainId), freeName: freeId ? names.get(freeId) : undefined });
+      setDone({ mainId, freeId, mainName: names.get(mainId), freeName: freeId ? names.get(freeId) : undefined, ruptures: ruptures.length });
     } catch (e: any) { onToast("Erreur : " + e.message, "error"); }
     setSubmitting(false);
   };
@@ -923,6 +974,11 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
           ) : (
             <>Devis <span style={{ color: C.teal, fontWeight: 700 }}>{done.mainName || `#${done.mainId}`}</span> dans Odoo
             {done.freeId && <><br/>BC gratuit <span style={{ color: C.purple, fontWeight: 700 }}>{done.freeName || `#${done.freeId}`}</span> créé automatiquement</>}</>
+          )}
+          {!!done.ruptures && (
+            <div style={{ marginTop: 14, padding: "10px 12px", borderRadius: 12, background: C.orangeSoft, color: C.orange, fontSize: 13.5, fontWeight: 700, lineHeight: 1.45 }}>
+              Votre commande comporte des ruptures ({done.ruptures} article{done.ruptures > 1 ? "s" : ""}) : le service client va vérifier.
+            </div>
           )}
         </div>
         <div style={{ display: "flex", gap: 12, justifyContent: "center" }}>
@@ -1294,7 +1350,8 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
           shipping={directLogistics ? shippingPlan : null} onChangeExpedition={setWantedExpedition}
           onAddNote={addNote} onNoteText={setNoteText}
           groupDiscounts={groupDiscounts} setGroupDiscounts={setGroupDiscounts}
-          orderType={orderType} setOrderType={setOrderType} offerIds={offerIds} setOfferIds={setOfferIds} />
+          orderType={orderType} setOrderType={setOrderType} offerIds={offerIds} setOfferIds={setOfferIds}
+          onTemplateApplied={(name, info) => setTemplateInfo(prev => ({ ...prev, [name]: info }))} />
       )}
 
       {showAppointment && client && (
@@ -2814,12 +2871,13 @@ function ClientHistory({ session, client }: { session: odoo.OdooSession; client:
 // ═══════════════════════════════════════════════════════════════════════════
 // ÉTAPE 2 — Catalogue + Panier persistant
 // ═══════════════════════════════════════════════════════════════════════════
-function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submitting, note, setNote, client, priceItems, onToast, appliedPromos, giftItems, setGiftItems, freeTypes, eventDiscount, setEventDiscount, shipping, onChangeExpedition, onAddNote, onNoteText, groupDiscounts, setGroupDiscounts, orderType, setOrderType, offerIds, setOfferIds }: {
+function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submitting, note, setNote, client, priceItems, onToast, appliedPromos, giftItems, setGiftItems, freeTypes, eventDiscount, setEventDiscount, shipping, onChangeExpedition, onAddNote, onNoteText, groupDiscounts, setGroupDiscounts, orderType, setOrderType, offerIds, setOfferIds, onTemplateApplied }: {
   onAddNote: (text: string, kind?: "line_note" | "line_section", group?: string) => void;
   onNoteText: (id: number, text: string) => void;
   groupDiscounts: Record<string, number>; setGroupDiscounts: React.Dispatch<React.SetStateAction<Record<string, number>>>;
   orderType: string | number | ""; setOrderType: (v: string | number | "") => void;
   offerIds: number[]; setOfferIds: React.Dispatch<React.SetStateAction<number[]>>;
+  onTemplateApplied: (name: string, info: { note?: string; shipDate?: string }) => void;
   // Commande transmise directement à la logistique : dates prévues (sinon null).
   shipping?: ShippingPlan | null;
   onChangeExpedition?: (d: Date | null) => void;
@@ -2967,10 +3025,16 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
     if (meaTemplates.length > 0) return;
     setMeaLoading(true);
     try {
+      const tm = await templateMeta(session);
       const templates = await odoo.searchRead(session, "sale.order.template",
         [["active", "=", true]],
-        ["id", "name", "sale_order_template_line_ids"],
+        ["id", "name", "sale_order_template_line_ids", ...(tm.noteField ? [tm.noteField] : []), ...(tm.shipField ? [tm.shipField] : [])],
         200, "name");
+      // Champs Studio normalisés : la commande n'a pas à connaître leurs noms techniques.
+      for (const t of templates) {
+        if (tm.noteField) t.internalNote = descToText(String(t[tm.noteField] || "")).trim() || undefined;
+        if (tm.shipField && t[tm.shipField]) t.shipDate = String(t[tm.shipField]).slice(0, 10);
+      }
       setMeaTemplates(templates);
       sync.cacheMea(templates).catch(() => {});
     } catch {
@@ -3036,6 +3100,7 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
         onQtyChange(product, (cart[product.id]?.qty || 0) + qty, clientPrice, template.name, true);
         added++;
       }
+      if (template.internalNote || template.shipDate) onTemplateApplied(template.name, { note: template.internalNote, shipDate: template.shipDate });
       // Implantation → type de commande « Implantation » ; MEA → coche l'offre du même nom.
       if (isImplantTemplate(template)) {
         if (orderType === "" && meta?.implantValues.length) setOrderType(meta.implantValues[0]);
@@ -3160,6 +3225,8 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
     return s + (i.qty * i.unitPrice * pct) / 100;
   }, 0);
   const netTotal = cartTotal - discountTotal;
+  const shippingFee = needsShippingFee(netTotal);
+  const [showCheck, setShowCheck] = useState(false);
 
   // Ruptures de stock : produits dont la quantité commandée dépasse le stock
   // prévisionnel (virtual_available). AVERTISSEMENT seulement — le devis reste
@@ -3682,7 +3749,7 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
         {hasStockIssue && (
           <div style={{ margin: "0 12px 8px", display: "flex", alignItems: "center", gap: 6, fontSize: 11.5, fontWeight: 700, color: C.red }}>
             <span style={{ width: 8, height: 8, borderRadius: "50%", background: C.red }} />
-            {overStockItems.length} article{overStockItems.length > 1 ? "s" : ""} en stock insuffisant — devis possible
+            Commande avec {overStockItems.length} rupture{overStockItems.length > 1 ? "s" : ""} : le service client vérifiera
           </div>
         )}
 
@@ -3758,9 +3825,23 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
                   <span style={{ fontSize: 13, fontWeight: 700, color: "#fb923c" }}>−{fmtPrice(discountTotal)}</span>
                 </div>
               )}
+              {shippingFee && (
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <span style={{ fontSize: 12, color: "#fbbf24" }}>Frais de livraison <span style={{ opacity: 0.75 }}>(franco {FRANCO_HT} € : il manque {fmtPrice(FRANCO_HT - netTotal)})</span></span>
+                  <span style={{ fontSize: 13, fontWeight: 700, color: "#fbbf24" }}>+{fmtPrice(SHIPPING_FEE_HT)}</span>
+                </div>
+              )}
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", paddingTop: 4 }}>
-                <span style={{ fontSize: 13, fontWeight: 700, color: "#fff" }}>Total HT</span>
-                <span style={{ fontSize: 20, fontWeight: 800, color: "#5eead4" }}>{fmtPrice(netTotal)}</span>
+                <span style={{ fontSize: 13, fontWeight: 700, color: "#fff", display: "flex", alignItems: "center", gap: 8 }}>
+                  Total HT
+                  {cartCount > 0 && (
+                    <button onClick={() => setShowCheck(true)} title="Contrôle de cohérence"
+                      style={{ height: 24, padding: "0 9px", borderRadius: 999, background: "rgba(94,234,212,0.15)", border: "1px solid rgba(94,234,212,0.4)", color: "#5eead4", fontSize: 11, fontWeight: 800, cursor: "pointer", fontFamily: "inherit", display: "flex", alignItems: "center", gap: 4 }}>
+                      <Icon name="check" size={12} /> Check
+                    </button>
+                  )}
+                </span>
+                <span style={{ fontSize: 20, fontWeight: 800, color: "#5eead4" }}>{fmtPrice(netTotal + (shippingFee ? SHIPPING_FEE_HT : 0))}</span>
               </div>
             </div>
 
@@ -3788,6 +3869,14 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
           onSet={n => onQtyChange(pad.product, n, pad.price)}
           onClose={() => setPad(null)}
         />
+      )}
+
+      {showCheck && (
+        <OrderCheck session={session} client={client} netTotal={netTotal}
+          giftValue={giftItems.reduce((s, g) => s + g.qty * (g.product.lst_price || 0), 0)}
+          giftCount={giftItems.reduce((s, g) => s + g.qty, 0)}
+          ruptures={cartRuptures(cart)} shippingFee={shippingFee}
+          onClose={() => setShowCheck(false)} />
       )}
 
       {/* ── Modale zoom image ── */}
