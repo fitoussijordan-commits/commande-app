@@ -39,3 +39,16 @@ export function descToText(html: string): string {
     .replace(/\n{3,}/g, "\n\n")
     .trim();
 }
+
+// Liens d'itinéraire vers l'adresse d'un RDV : Waze, et Plans (iPad sans Waze).
+// Écrits aussi dans la description du RDV pour être cliquables dans Outlook.
+export function routeUrls(address: string) {
+  const q = encodeURIComponent(address.trim());
+  return { waze: `https://waze.com/ul?q=${q}&navigate=yes`, plans: `https://maps.apple.com/?daddr=${q}` };
+}
+export const ROUTE_LINE = /^\s*(Waze|Plans)\s*:/i;
+export function routeLines(address: string): string {
+  if (!address.trim()) return "";
+  const u = routeUrls(address);
+  return `Waze : ${u.waze}\nPlans : ${u.plans}`;
+}

@@ -2,7 +2,7 @@
 import { useState, useEffect } from "react";
 import * as odoo from "@/lib/odoo";
 import * as sync from "@/lib/sync";
-import { descToText } from "@/lib/text";
+import { descToText, routeLines, ROUTE_LINE } from "@/lib/text";
 
 const C = {
   bg: "#f8fafc", white: "#fff", text: "#0f172a", textSec: "#334155",
@@ -110,7 +110,9 @@ export default function AppointmentModal({ session, client, event, adminMode, on
   );
   const [startLocal, setStartLocal] = useState(initStart);
   const [durationHours, setDurationHours] = useState(initDuration);
-  const [location, setLocation] = useState(event?.location || client?.city || "");
+  // Adresse complète par défaut : elle sert au lien Waze / Plans.
+  const [location, setLocation] = useState(event?.location
+    || (client?.street ? [client.street, [client.zip, client.city].filter(Boolean).join(" ")].filter(Boolean).join(", ") : client?.city) || "");
   const [note, setNote] = useState(initNote);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -143,14 +145,18 @@ export default function AppointmentModal({ session, client, event, adminMode, on
         // Idem : sans descToText, clientLine valait TOUT le bloc HTML, qui était
         // alors réécrit tel quel dans la description à chaque modification.
         const orig: string = descToText(event?.description || "");
-        const clientLine = orig.split(/\n\n/)[0] || "";
-        description = clientLine + (note ? `\n\n${note}` : "");
+        // Liens d'itinéraire refaits d'après le lieu (il a pu changer).
+        const clientLine = (orig.split(/\n\n/)[0] || "").split("\n").filter(l => !ROUTE_LINE.test(l)).join("\n").trim();
+        const head = [clientLine, routeLines(location)].filter(Boolean).join("\n");
+        description = head + (head && note ? "\n\n" : "") + (note || "");
       } else {
         const codeSuffix = client?.ref ? ` (${client.ref})` : "";
         const clientPart = client?.name
           ? `Client : ${client.name}${codeSuffix}${client?.phone ? ` — ${client.phone}` : ""}`
           : "";
-        description = clientPart + (clientPart && note ? "\n\n" : "") + (note || "");
+        // 1er bloc = client + liens Waze / Plans (cliquables dans Outlook), puis la note.
+        const head = [clientPart, routeLines(location)].filter(Boolean).join("\n");
+        description = head + (head && note ? "\n\n" : "") + (note || "");
       }
 
       const baseValues: any = {

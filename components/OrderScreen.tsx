@@ -24,7 +24,7 @@ import * as geo from "@/lib/geo";
 import { apiUrl } from "@/lib/apiBase";
 import * as loyalty from "@/lib/loyalty";
 import { PriceItem, sortPriceItems, applyPricelist, resolveBaseLists } from "@/lib/pricing";
-import { descToText } from "@/lib/text";
+import { descToText, routeUrls } from "@/lib/text";
 import { pickClientAmong } from "@/lib/clients";
 
 // ── Palette ───────────────────────────────────────────────────────────────────
@@ -1984,13 +1984,17 @@ function HomeScreen({ session, onNewOrder, onOpenClient, onToast, initialDate }:
               <div style={{ padding: "20px 24px", display: "flex", flexDirection: "column" as const, gap: 14 }}>
                 <Row icon="calendar" label={dateStr} />
                 <Row icon="clock" label={timeStr} />
-                {(eventAddress || e.location) && (
-                  <a href={`https://waze.com/ul?q=${encodeURIComponent(eventAddress || e.location)}&navigate=yes`} target="_blank" rel="noopener noreferrer"
-                    style={{ display: "flex", alignItems: "center", gap: 12, textDecoration: "none" }}>
-                    <div style={{ flex: 1, minWidth: 0 }}><Row icon="pin" label={eventAddress || e.location} /></div>
-                    <span style={{ padding: "7px 12px", borderRadius: 999, background: "#33ccff", color: "#fff", fontSize: 12.5, fontWeight: 800, flexShrink: 0 }}>Waze</span>
-                  </a>
-                )}
+                {(eventAddress || e.location) && (() => {
+                  const u = routeUrls(eventAddress || e.location);
+                  const pill = (bg: string): React.CSSProperties => ({ padding: "7px 12px", borderRadius: 999, background: bg, color: "#fff", fontSize: 12.5, fontWeight: 800, flexShrink: 0, textDecoration: "none" });
+                  return (
+                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      <div style={{ flex: 1, minWidth: 0 }}><Row icon="pin" label={eventAddress || e.location} /></div>
+                      <a href={u.waze} target="_blank" rel="noopener noreferrer" style={pill("#33ccff")}>Waze</a>
+                      <a href={u.plans} target="_blank" rel="noopener noreferrer" style={pill("#0f172a")}>Plans</a>
+                    </div>
+                  );
+                })()}
                 {clientName && <Row icon="user" label={clientName + (clientRef ? `  ·  ${clientRef}` : "")} />}
                 {phone && <Row icon="phone" label={phone} />}
                 {notes && (

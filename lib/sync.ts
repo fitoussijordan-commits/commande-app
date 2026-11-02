@@ -26,7 +26,7 @@ export const PRODUCT_FIELDS = [
 // parent_id / type doivent être présents ici aussi, sinon le dédoublonnage des
 // adresses enfants (dedupeClients) ne s'applique pas aux résultats hors ligne.
 export const CLIENT_FIELDS = [
-  "id", "name", "ref", "city", "country_id",
+  "id", "name", "ref", "street", "zip", "city", "country_id",
   "property_product_pricelist", "email", "phone",
   "partner_latitude", "partner_longitude", "is_company",
   // customer_rank départage les fiches partageant un même ref (cf. pickClient
