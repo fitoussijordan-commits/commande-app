@@ -25,7 +25,7 @@ import { apiUrl } from "@/lib/apiBase";
 import * as loyalty from "@/lib/loyalty";
 import { PriceItem, sortPriceItems, applyPricelist, resolveBaseLists } from "@/lib/pricing";
 import { descToText, routeUrls } from "@/lib/text";
-import { dedupeClients } from "@/lib/clients";
+import { dedupeClients, NOT_SUPPLIER } from "@/lib/clients";
 import { eventOnDay, ALLDAY_FIELDS, linkedPartnerId } from "@/lib/calendar";
 import { pickClientAmong } from "@/lib/clients";
 
@@ -2176,7 +2176,7 @@ function ClientStep({ session, onSelect, onImportBon, onOpenPlanning }: {
         // Nom, référence OU ville — aligné sur la recherche hors ligne (et sur le
         // sous-titre de l'écran, qui promettait déjà la ville).
         const r = await odoo.searchRead(session, "res.partner",
-          ["|", "|", ["name", "ilike", q], ["ref", "ilike", q], ["city", "ilike", q], ["customer_rank", ">", 0], ["active", "=", true]],
+          ["|", "|", ["name", "ilike", q], ["ref", "ilike", q], ["city", "ilike", q], ["customer_rank", ">", 0], ["active", "=", true], NOT_SUPPLIER],
           CLIENT_FIELDS, 30);
         setResults(r);
       } catch {

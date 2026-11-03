@@ -86,7 +86,12 @@ function clientScore(c: any): number {
 //
 // Deux passes : on écarte les adresses enfants, puis, en filet de sécurité, on ne
 // garde qu'une fiche par couple (code, nom).
+// Codes « XX-… » : fournisseurs, jamais proposés comme clients.
+export const NOT_SUPPLIER: any[] = ["ref", "not =ilike", "XX-%"];
+export const isSupplier = (c: any) => /^xx-/i.test(String(c?.ref || "").trim());
+
 export function dedupeClients(rows: any[]): any[] {
+  rows = rows.filter(c => !isSupplier(c));
   // Passe 1 — adresses enfants. Repli sur la liste brute si le filtre vide tout
   // (instance Odoo sans champ `type`, ou cache préchargé avant cette version).
   const roots = rows.filter(c => !(c.parent_id && ADDRESS_TYPES.has(c.type)));
