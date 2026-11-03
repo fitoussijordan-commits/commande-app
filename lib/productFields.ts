@@ -8,7 +8,7 @@
 //                            n'importe quelle quantité (2, 3, 4…).
 //   • x_offre_produit_id   : offre de l'article (MEA Cures 2026…) → reportée
 //                            dans « Offres commandées » de la commande.
-//   • PPC (Studio)         : prix public conseillé, affiché à titre indicatif.
+//   • x_ppc (Studio)       : prix public conseillé, affiché à titre indicatif.
 import * as odoo from "@/lib/odoo";
 
 const OPTIONAL = ["x_type_de_produit_id", "min_qty", "x_offre_produit_id"];
@@ -23,7 +23,8 @@ export async function optionalProductFields(session: odoo.OdooSession): Promise<
   try {
     const fields = await odoo.callMethod(session, "product.product", "fields_get", [], { attributes: ["string", "type"] });
     _extra = OPTIONAL.filter(f => f in (fields || {}));
-    _ppc = Object.entries(fields || {}).find(([, f]: [string, any]) =>
+    // x_ppc : champ de cette instance (vérifié dans Odoo) ; libellé en repli.
+    _ppc = "x_ppc" in (fields || {}) ? "x_ppc" : Object.entries(fields || {}).find(([, f]: [string, any]) =>
       /^\s*(ppc|prix public conseill)/i.test(String(f.string || "")) && ["float", "monetary"].includes(f.type))?.[0] || null;
     if (_ppc) _extra.push(_ppc);
     try { localStorage.setItem(LS_KEY, JSON.stringify(_extra)); } catch {}
