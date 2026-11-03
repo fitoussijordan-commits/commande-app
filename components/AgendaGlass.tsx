@@ -1,7 +1,7 @@
 "use client";
 // Agenda compact de l'écran d'accueil (« Choisir un client ») : semaine ou mois,
-// en verre façon iOS. Toucher un jour montre ses RDV ; « Ouvrir le planning »
-// (ou un RDV) ouvre le planning complet sur cette semaine.
+// en verre façon iOS. Toucher un jour (ou un RDV, ou « Ouvrir le planning »)
+// ouvre le planning complet sur ce jour-là.
 import { useEffect, useMemo, useState } from "react";
 import * as odoo from "@/lib/odoo";
 import { GLASS, GLASS_PILL } from "@/components/glass";
@@ -142,7 +142,7 @@ export default function AgendaGlass({ session, onOpenPlanning }: {
           const isSel = sameDay(d, selected), isToday = sameDay(d, today);
           const out = view === "month" && d.getMonth() !== monthRef.getMonth();
           return (
-            <button key={d.toISOString()} onClick={() => setSelected(d)}
+            <button key={d.toISOString()} onClick={() => { setSelected(d); onOpenPlanning(d); }}
               style={{ display: "flex", flexDirection: "column" as const, alignItems: "center", gap: 3, padding: view === "week" ? "8px 0" : "5px 0", minHeight: 44,
                 border: "none", borderRadius: 14, cursor: "pointer", fontFamily: "inherit", opacity: out ? 0.35 : 1,
                 background: isSel ? C.teal : isToday ? "rgba(13,148,136,0.12)" : "transparent",
