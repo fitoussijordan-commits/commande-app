@@ -5,6 +5,7 @@
 import { useEffect, useMemo, useState } from "react";
 import * as odoo from "@/lib/odoo";
 import { GLASS, GLASS_PILL } from "@/components/glass";
+import { eventOnDay, ALLDAY_FIELDS } from "@/lib/calendar";
 
 const C = {
   text: "#0f172a", textSec: "#334155", muted: "#64748b", faint: "#94a3b8",
@@ -64,7 +65,7 @@ export default function AgendaGlass({ session, onOpenPlanning }: {
       const end = new Date(days[days.length - 1]); end.setDate(end.getDate() + 1);
       try {
         const domain = [["user_id", "=", session.uid], ["start", "<", toOdoo(end)], ["stop", ">=", toOdoo(days[0])], ["active", "in", [true, false]]];
-        const BASE = ["id", "name", "start", "location", "x_studio_annul", "active"];
+        const BASE = ["id", "name", "start", ...ALLDAY_FIELDS, "location", "x_studio_annul", "active"];
         // res_model / res_id = client lié au RDV (cf. AppointmentModal) ; repli
         // sans ces champs s'ils n'existent pas sur l'instance.
         let rows: any[];
@@ -95,8 +96,8 @@ export default function AgendaGlass({ session, onOpenPlanning }: {
   }, [session, days, reloadKey]);
 
   const cancelled = (e: any) => Boolean(e.x_studio_annul) || e.active === false;
-  const countOn = (d: Date) => events.filter(e => !cancelled(e) && sameDay(fromOdoo(e.start), d)).length;
-  const dayEvents = events.filter(e => sameDay(fromOdoo(e.start), selected));
+  const countOn = (d: Date) => events.filter(e => !cancelled(e) && eventOnDay(e, d)).length;
+  const dayEvents = events.filter(e => eventOnDay(e, selected));
   const label = view === "month"
     ? monthRef.toLocaleDateString("fr-FR", { month: "long", year: "numeric" }).replace(/^./, c => c.toUpperCase())
     : `${days[0].toLocaleDateString("fr-FR", { day: "numeric", month: "short" })} – ${days[6].toLocaleDateString("fr-FR", { day: "numeric", month: "short" })}`;
@@ -174,7 +175,7 @@ export default function AgendaGlass({ session, onOpenPlanning }: {
               style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 12px", borderRadius: 14, border: "none", cursor: "pointer", fontFamily: "inherit", textAlign: "left" as const,
                 background: "rgba(255,255,255,0.7)", opacity: cancelled(e) ? 0.55 : 1 }}>
               <span style={{ width: 4, alignSelf: "stretch", borderRadius: 2, background: cancelled(e) ? C.faint : C.teal }} />
-              <span style={{ fontSize: 12.5, fontWeight: 800, color: C.tealDark, width: 42, flexShrink: 0 }}>{hhmm(fromOdoo(e.start))}</span>
+              <span style={{ fontSize: 12.5, fontWeight: 800, color: C.tealDark, width: 42, flexShrink: 0 }}>{e.allday ? "Journée" : hhmm(fromOdoo(e.start))}</span>
               <span style={{ fontSize: 13.5, fontWeight: 600, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const, textDecoration: cancelled(e) ? "line-through" : "none" }}>{e.label || e.name}</span>
             </button>
           ))}

@@ -25,6 +25,7 @@ import { apiUrl } from "@/lib/apiBase";
 import * as loyalty from "@/lib/loyalty";
 import { PriceItem, sortPriceItems, applyPricelist, resolveBaseLists } from "@/lib/pricing";
 import { descToText, routeUrls } from "@/lib/text";
+import { eventOnDay, ALLDAY_FIELDS } from "@/lib/calendar";
 import { pickClientAmong } from "@/lib/clients";
 
 // ── Palette ───────────────────────────────────────────────────────────────────
@@ -1633,7 +1634,7 @@ function HomeScreen({ session, onNewOrder, onOpenClient, onToast, initialDate }:
         // de RDV (cf. AppointmentModal) : plus besoin de la retrouver au code,
         // qui n'est pas unique. Repli sans ces champs s'ils n'existent pas sur
         // l'instance — sinon la semaine entière s'afficherait vide.
-        const BASE_FIELDS = ["id", "name", "start", "stop", "location", "description", "x_studio_code_client_cli_calendar", "x_studio_annul", "active"];
+        const BASE_FIELDS = ["id", "name", "start", "stop", ...ALLDAY_FIELDS, "location", "description", "x_studio_code_client_cli_calendar", "x_studio_annul", "active"];
         let rows: any[];
         try {
           rows = await odoo.searchRead(session, "calendar.event", domain, [...BASE_FIELDS, "res_model", "res_id"], 600, "start asc");
@@ -1699,7 +1700,7 @@ function HomeScreen({ session, onNewOrder, onOpenClient, onToast, initialDate }:
     }
   };
 
-  const eventsByDay = days.map(d => events.filter(e => sameDay(odooToLocalDate(e.start), d)));
+  const eventsByDay = days.map(d => events.filter(e => eventOnDay(e, d)));
   // En vue Mois, on ne compte que les RDV du mois (la grille déborde sur les mois voisins).
   const totalCount = view === "month"
     ? events.filter(e => odooToLocalDate(e.start).getMonth() === monthStart.getMonth()).length
@@ -1881,7 +1882,7 @@ function HomeScreen({ session, onNewOrder, onOpenClient, onToast, initialDate }:
             {monthDays.map(d => {
               const inMonth = d.getMonth() === monthStart.getMonth();
               const isToday = sameDay(d, today);
-              const dayEvents = events.filter(e => sameDay(odooToLocalDate(e.start), d));
+              const dayEvents = events.filter(e => eventOnDay(e, d));
               return (
                 <div key={d.toISOString()} onClick={() => openWeekOf(d)}
                   style={{ background: C.white, borderRadius: 12, padding: "6px 7px", cursor: "pointer", opacity: inMonth ? 1 : 0.4, overflow: "hidden",
@@ -1897,7 +1898,7 @@ function HomeScreen({ session, onNewOrder, onOpenClient, onToast, initialDate }:
                         style={{ display: "flex", alignItems: "center", gap: 4, width: "100%", border: "none", borderRadius: 6, padding: "3px 5px", cursor: "pointer", fontFamily: "inherit", textAlign: "left" as const,
                           background: isCancelled(e) ? "#f8fafc" : col.bg, opacity: isCancelled(e) ? 0.6 : 1 }}>
                         <span style={{ fontSize: 9.5, fontWeight: 800, color: isCancelled(e) ? C.muted : col.text, flexShrink: 0 }}>
-                          {odooToLocalDate(e.start).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}
+                          {e.allday ? "Déplacement" : odooToLocalDate(e.start).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}
                         </span>
                         <span style={{ fontSize: 10, fontWeight: 600, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const, textDecoration: isCancelled(e) ? "line-through" : "none" }}>{e.name}</span>
                       </button>
@@ -1957,7 +1958,7 @@ function HomeScreen({ session, onNewOrder, onOpenClient, onToast, initialDate }:
                     <button key={e.id} onClick={() => setSelectedEvent(e)} title="Voir le rendez-vous"
                       style={{ background: isCancelled(e) ? "#f8fafc" : col.bg, border: "none", borderRadius: 10, padding: "8px 10px", cursor: "pointer", fontFamily: "inherit", textAlign: "left" as const, width: "100%", boxShadow: isToday ? "0 4px 10px rgba(15,23,42,0.12)" : "none", opacity: isCancelled(e) ? 0.6 : 1 }}>
                       <div style={{ fontSize: 10, fontWeight: 800, color: isCancelled(e) ? C.muted : col.text }}>
-                        {odooToLocalDate(e.start).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}
+                        {e.allday ? "Déplacement" : odooToLocalDate(e.start).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}
                         {isCancelled(e) && " · Annulé"}
                       </div>
                       <div style={{ fontSize: 11, fontWeight: 700, color: C.text, marginTop: 2, lineHeight: 1.3, overflow: "hidden", display: "-webkit-box" as const, WebkitLineClamp: 2, WebkitBoxOrient: "vertical" as const, textDecoration: isCancelled(e) ? "line-through" : "none" }}>{e.name}</div>
@@ -1981,9 +1982,15 @@ function HomeScreen({ session, onNewOrder, onOpenClient, onToast, initialDate }:
         const clientRef = clientLine.match(/\(([^)]+)\)/)?.[1]?.trim() || "";
         const phone = clientLine.match(/—\s*(.+)$/)?.[1]?.trim() || "";
         const notes = (desc.split(/\n\n/).slice(1).join("\n\n")).trim();
-        const timeStr = start.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })
-          + (stop ? ` – ${stop.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}` : "");
-        const dateStr = start.toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long" });
+        const fmtDay = (x: Date) => x.toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long" });
+        const ymdDate = (v: string) => new Date(`${v}T12:00:00`);
+        // Déplacement (journée entière) : du … au …, sans heure.
+        const timeStr = e.allday ? "Journée entière"
+          : start.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })
+            + (stop ? ` – ${stop.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}` : "");
+        const dateStr = e.allday && e.start_date
+          ? (e.stop_date && e.stop_date !== e.start_date ? `Du ${fmtDay(ymdDate(e.start_date))} au ${fmtDay(ymdDate(e.stop_date))}` : fmtDay(ymdDate(e.start_date)))
+          : fmtDay(start);
         return (
           <div onClick={() => setSelectedEvent(null)}
             style={{ position: "fixed", inset: 0, background: "rgba(15,23,42,0.45)", zIndex: 300, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>

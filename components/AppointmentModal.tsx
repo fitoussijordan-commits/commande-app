@@ -3,6 +3,7 @@ import { useState, useEffect, useMemo } from "react";
 import * as odoo from "@/lib/odoo";
 import * as sync from "@/lib/sync";
 import { descToText, routeLines, ROUTE_LINE } from "@/lib/text";
+import { eventOnDay, ALLDAY_FIELDS } from "@/lib/calendar";
 
 const C = {
   bg: "#f8fafc", white: "#fff", text: "#0f172a", textSec: "#334155",
@@ -123,6 +124,15 @@ export default function AppointmentModal({ session, client: clientProp, event, a
   // Adresse complète par défaut : elle sert au lien Waze / Plans.
   const [location, setLocation] = useState(event?.location || clientAddress(client));
   const [note, setNote] = useState(initNote);
+  // Déplacement : RDV « journée entière » d'Odoo du … au …, titre = destination
+  // (+ zone entre parenthèses), lieu = destination.
+  const [trip, setTrip] = useState(Boolean(event?.allday));
+  const todayStr = toLocalInput(new Date()).slice(0, 10);
+  const [tripFrom, setTripFrom] = useState<string>(event?.allday ? event.start_date : todayStr);
+  const [tripTo, setTripTo] = useState<string>(event?.allday ? (event.stop_date || event.start_date) : todayStr);
+  const tripName = event?.allday ? String(event.name || "").match(/^(.*?)(?:\s*\(([^)]*)\))?$/) : null;
+  const [destination, setDestination] = useState(tripName?.[1]?.trim() || "");
+  const [zone, setZone] = useState(tripName?.[2]?.trim() || "");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
@@ -174,12 +184,12 @@ export default function AppointmentModal({ session, client: clientProp, event, a
     const to = new Date(monday); to.setDate(to.getDate() + 7);
     odoo.searchRead(session, "calendar.event",
       [["user_id", "=", session.uid], ["start", "<", toOdooUTC(to)], ["stop", ">", toOdooUTC(monday)]],
-      ["id", "name", "start", "stop", "location", "x_studio_annul"], 200, "start asc")
+      ["id", "name", "start", "stop", ...ALLDAY_FIELDS, "location", "x_studio_annul"], 200, "start asc")
       .then((rows: any[]) => setWeekEvents(rows.filter(r => !r.x_studio_annul && r.id !== event?.id)))
       .catch(() => setWeekEvents([]));
   }, [monday, session, event?.id]);
-  const sameDayStr = (r: any) => toLocalInput(fromOdoo(r.start)).slice(0, 10) === day;
-  const dayEvents = useMemo(() => weekEvents.filter(sameDayStr), [weekEvents, day]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Créneaux occupés du jour (les déplacements, journée entière, n'en bloquent pas).
+  const dayEvents = useMemo(() => weekEvents.filter(r => !r.allday && eventOnDay(r, new Date(`${day}T12:00`))), [weekEvents, day]);
   const overlaps = useMemo(() => {
     const s = new Date(startLocal).getTime(), e = s + durationHours * 3600000;
     return isNaN(s) ? [] : dayEvents.filter(r => fromOdoo(r.start).getTime() < e && fromOdoo(r.stop).getTime() > s);
@@ -202,9 +212,40 @@ export default function AppointmentModal({ session, client: clientProp, event, a
     setStartLocal(toLocalInput(nextFree));
   }, [overlaps, nextFree, startTouched]);
 
+  const submitTrip = async () => {
+    if (!destination.trim() || !tripFrom || !tripTo) { setError("Destination et dates requises"); return; }
+    if (tripTo < tripFrom) { setError("La date de fin est avant la date de début"); return; }
+    setSaving(true);
+    const name = `${destination.trim()}${zone.trim() ? ` (${zone.trim()})` : ""}`;
+    const values: any = {
+      name, allday: true, start_date: tripFrom, stop_date: tripTo,
+      location: destination.trim(),
+      description: [`Déplacement${zone.trim() ? ` — zone : ${zone.trim()}` : ""}`, note.trim()].filter(Boolean).join("\n\n"),
+      user_id: session.uid,
+    };
+    try {
+      // Étiquette au nom du déplacement : l'automatisation Studio recopie le
+      // nom de la 1re étiquette dans le titre (cf. getOrCreateTagForTitle).
+      const categId = await getOrCreateTagForTitle(session, name);
+      const vals = { ...values, ...(categId ? { categ_ids: [[6, 0, [categId]]] } : {}) };
+      if (isEdit) await odoo.write(session, "calendar.event", [event.id], vals);
+      else await odoo.create(session, "calendar.event", vals);
+      onToast(isEdit ? "Déplacement modifié" : "Déplacement ajouté au calendrier", "success");
+      onClose();
+    } catch (err: any) {
+      if (!odoo.isNetworkError(err)) { setError("Odoo a refusé le déplacement : " + (err?.message || err)); setSaving(false); return; }
+      if (isEdit) await sync.queueAppointmentEdit(event.id, name, values);
+      else await sync.queueAppointment(name, values);
+      onToast("Déplacement enregistré hors ligne — envoyé au retour du réseau", "info");
+      onClose();
+    }
+    setSaving(false);
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
+    if (trip) { await submitTrip(); return; }
     if (!title.trim() || !startLocal) { setError("Titre et date/heure requis"); return; }
     setSaving(true);
     try {
@@ -344,7 +385,7 @@ export default function AppointmentModal({ session, client: clientProp, event, a
           </div>
           <div>
             <div style={{ fontSize: 16, fontWeight: 800, color: C.text }}>
-              {isEdit ? "Modifier le RDV" : adminMode ? "RDV administratif" : "Prendre un RDV"}
+              {trip ? (isEdit ? "Modifier le déplacement" : "Déplacement") : isEdit ? "Modifier le RDV" : adminMode ? "RDV administratif" : "Prendre un RDV"}
             </div>
             <div style={{ fontSize: 12, color: C.muted }}>{client?.name || (adminMode ? "Sans client" : event?.name || "")}</div>
           </div>
@@ -354,6 +395,36 @@ export default function AppointmentModal({ session, client: clientProp, event, a
           <div style={{ background: C.redSoft, color: C.red, borderRadius: 10, padding: "10px 14px", fontSize: 13, marginBottom: 14 }}>{error}</div>
         )}
 
+        {!clientProp && (!isEdit || event?.allday) && (
+          <div style={{ display: "flex", background: C.bg, borderRadius: 10, padding: 3, marginBottom: 14 }}>
+            {([[false, "Rendez-vous"], [true, "Déplacement"]] as const).map(([v, l]) => (
+              <button type="button" key={l} onClick={() => { if (!isEdit) setTrip(v); }}
+                style={{ flex: 1, height: 32, borderRadius: 8, border: "none", cursor: isEdit ? "default" : "pointer", fontFamily: "inherit", fontSize: 13, fontWeight: 700,
+                  background: trip === v ? C.white : "transparent", color: trip === v ? C.tealDark : C.muted, boxShadow: trip === v ? "0 1px 4px rgba(15,23,42,0.1)" : "none" }}>
+                {l}
+              </button>
+            ))}
+          </div>
+        )}
+
+        {trip && <>
+          <div style={{ display: "flex", gap: 10 }}>
+            <div style={{ flex: 1 }}><Field label="Du">
+              <input type="date" value={tripFrom} onChange={e => { const v = e.target.value; setTripFrom(v); if (tripTo < v) setTripTo(v); }} style={inputStyle} />
+            </Field></div>
+            <div style={{ flex: 1 }}><Field label="Au">
+              <input type="date" value={tripTo} min={tripFrom} onChange={e => setTripTo(e.target.value)} style={inputStyle} />
+            </Field></div>
+          </div>
+          <Field label="Destination">
+            <input value={destination} onChange={e => setDestination(e.target.value)} placeholder="Ex. Nice" style={inputStyle} autoFocus={!isEdit} />
+          </Field>
+          <Field label="Zone (optionnel)">
+            <input value={zone} onChange={e => setZone(e.target.value)} placeholder="Ex. Sud-Est, 06…" style={inputStyle} />
+          </Field>
+        </>}
+
+        {!trip && <>
         {canPickClient && (
           <Field label="Client (optionnel)">
             {picked ? (
@@ -424,6 +495,8 @@ export default function AppointmentModal({ session, client: clientProp, event, a
           <input value={location} onChange={e => setLocation(e.target.value)} placeholder="Adresse du RDV" style={inputStyle} />
         </Field>
 
+        </>}
+
         <Field label="Note (optionnel)">
           <textarea value={note} onChange={e => setNote(e.target.value)} rows={2} style={{ ...inputStyle, resize: "vertical" as const, fontFamily: "inherit" }} />
         </Field>
@@ -442,7 +515,11 @@ export default function AppointmentModal({ session, client: clientProp, event, a
         </div>
         </div>
         <WeekPlanner monday={monday} day={day} events={weekEvents} startLocal={startLocal} durationHours={durationHours}
-          onPick={v => { setStartTouched(true); setStartLocal(v); }} />
+          hideSlot={trip}
+          onPick={v => {
+            if (trip) { const d = v.slice(0, 10); setTripFrom(d); if (tripTo < d) setTripTo(d); setStartLocal(`${d}T${startLocal.slice(11, 16) || "09:00"}`); return; }
+            setStartTouched(true); setStartLocal(v);
+          }} />
       </form>
     </div>
   );
@@ -465,8 +542,8 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 // changer de jour) + journée choisie de 8 h à 20 h, avec le créneau proposé.
 // Tap sur un créneau vide = heure du RDV (au quart d'heure).
 const H0 = 8, H1 = 20, PX = 34;   // heures affichées, pixels par heure
-function WeekPlanner({ monday, day, events, startLocal, durationHours, onPick }: {
-  monday: Date; day: string; events: any[]; startLocal: string; durationHours: number; onPick: (v: string) => void;
+function WeekPlanner({ monday, day, events, startLocal, durationHours, onPick, hideSlot }: {
+  monday: Date; day: string; events: any[]; startLocal: string; durationHours: number; onPick: (v: string) => void; hideSlot?: boolean;
 }) {
   const days = Array.from({ length: 7 }, (_, i) => { const d = new Date(monday); d.setDate(d.getDate() + i); return d; });
   const dayStr = (d: Date) => toLocalInput(d).slice(0, 10);
@@ -474,7 +551,9 @@ function WeekPlanner({ monday, day, events, startLocal, durationHours, onPick }:
   const time = startLocal.slice(11, 16) || "09:00";
   const shiftWeek = (n: number) => { const d = new Date(`${day}T${time}`); d.setDate(d.getDate() + n * 7); onPick(toLocalInput(d)); };
   const top = (d: Date) => (d.getHours() + d.getMinutes() / 60 - H0) * PX;
-  const dayEv = events.filter(r => dayStr(fromOdoo(r.start)) === day);
+  const dayRef = new Date(`${day}T12:00`);
+  const dayEv = events.filter(r => !r.allday && eventOnDay(r, dayRef));
+  const dayTrips = events.filter(r => r.allday && eventOnDay(r, dayRef));
   const start = new Date(startLocal);
   const navBtn: React.CSSProperties = { width: 26, height: 26, borderRadius: 7, border: `1px solid ${C.border}`, background: C.white, cursor: "pointer", color: C.textSec, fontSize: 13, padding: 0 };
   return (
@@ -487,17 +566,24 @@ function WeekPlanner({ monday, day, events, startLocal, durationHours, onPick }:
       <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 4, marginBottom: 10 }}>
         {days.map(d => {
           const ds = dayStr(d), sel = ds === day;
-          const n = events.filter(r => dayStr(fromOdoo(r.start)) === ds).length;
+          const n = events.filter(r => !r.allday && eventOnDay(r, d)).length;
+          const tripHere = events.find(r => r.allday && eventOnDay(r, d));
           return (
             <button type="button" key={ds} onClick={() => onPick(`${ds}T${time}`)}
               style={{ padding: "5px 0", borderRadius: 9, border: "none", cursor: "pointer", fontFamily: "inherit", background: sel ? C.teal : C.bg, color: sel ? "#fff" : C.text }}>
               <div style={{ fontSize: 9.5, fontWeight: 700, opacity: 0.75 }}>{d.toLocaleDateString("fr-FR", { weekday: "short" }).replace(".", "")}</div>
               <div style={{ fontSize: 14, fontWeight: 800 }}>{d.getDate()}</div>
               <div style={{ fontSize: 9.5, fontWeight: 700, color: sel ? "#fff" : n ? C.teal : C.muted }}>{n ? `${n} RDV` : "libre"}</div>
+              {tripHere && <div title={tripHere.name} style={{ margin: "2px 3px 0", fontSize: 8.5, fontWeight: 800, borderRadius: 4, padding: "0 2px", background: sel ? "rgba(255,255,255,0.25)" : C.orangeSoft, color: sel ? "#fff" : C.orange, overflow: "hidden", whiteSpace: "nowrap" as const, textOverflow: "ellipsis" }}>{tripHere.name}</div>}
             </button>
           );
         })}
       </div>
+      {dayTrips.map(r => (
+        <div key={r.id} style={{ marginBottom: 6, padding: "5px 9px", borderRadius: 8, background: C.orangeSoft, color: C.orange, fontSize: 11.5, fontWeight: 800 }}>
+          Déplacement · {r.name}
+        </div>
+      ))}
       <div onClick={e => {
           const y = e.clientY - e.currentTarget.getBoundingClientRect().top;
           const mins = Math.max(0, Math.min((H1 - H0) * 60 - 15, Math.floor((y / PX) * 4) * 15));
@@ -516,7 +602,7 @@ function WeekPlanner({ monday, day, events, startLocal, durationHours, onPick }:
             </div>
           );
         })}
-        {!isNaN(start.getTime()) && (
+        {!hideSlot && !isNaN(start.getTime()) && (
           <div style={{ position: "absolute" as const, left: 32, right: 6, top: top(start), height: Math.max(14, durationHours * PX - 2), borderRadius: 6, background: "rgba(13,148,136,0.18)", border: `1.5px solid ${C.teal}`, color: C.tealDark, fontSize: 10.5, fontWeight: 800, padding: "2px 6px", pointerEvents: "none" as const }}>
             {hhmm(start)} nouveau RDV
           </div>
