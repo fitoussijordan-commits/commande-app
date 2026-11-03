@@ -2011,15 +2011,11 @@ function HomeScreen({ session, onNewOrder, onOpenClient, onToast, initialDate }:
                 {days.map((d, i) => {
                   const isToday = sameDay(d, today);
                   const lane = lanes(timed[i]);
-                  const nowTop = (hourOf(new Date()) - H0) * PXH;
                   return (
-                    <div key={i} style={{ position: "relative" as const, borderLeft: `1px solid ${C.border}`, background: isToday ? "rgba(13,148,136,0.04)" : d < today ? "#fafbfc" : "transparent" }}>
+                    <div key={i} style={{ position: "relative" as const, borderLeft: `1px solid ${C.border}`, background: isToday ? "rgba(13,148,136,0.10)" : d < today ? "#fafbfc" : "transparent" }}>
                       {Array.from({ length: H1 - H0 }, (_, h) => (
                         <div key={h} style={{ position: "absolute" as const, left: 0, right: 0, top: h * PXH, borderTop: h ? `1px solid ${C.border}` : "none" }} />
                       ))}
-                      {isToday && nowTop > 0 && nowTop < (H1 - H0) * PXH && (
-                        <div style={{ position: "absolute" as const, left: 0, right: 0, top: nowTop, height: 2, background: C.red, zIndex: 2 }} />
-                      )}
                       {timed[i].map((e, idx) => {
                         const st = odooToLocalDate(e.start), en = odooToLocalDate(e.stop || e.start);
                         const top = (hourOf(st) - H0) * PXH;
@@ -2161,13 +2157,13 @@ const hhmmFR = (d: Date) => d.toLocaleTimeString("fr-FR", { hour: "2-digit", min
 function eventClient(e: any): string {
   const line = descToText(e?.description || "").match(/Client\s*:\s*(.+)/i)?.[1] || "";
   const name = e?._client?.name || line.replace(/\(.*$/, "").replace(/—.*$/, "").trim();
-  return name ? `${name}${e?._client?.city ? ` ${e._client.city}` : ""}` : "";
+  return name ? `${name}${e?._client?.city ? ` - ${e._client.city}` : ""}` : "";
 }
 
 function eventTitle(e: any): string {
   const line = descToText(e?.description || "").match(/Client\s*:\s*(.+)/i)?.[1] || "";
   const name = e?._client?.name || line.replace(/\(.*$/, "").replace(/—.*$/, "").trim();
-  const client = name && `${name}${e?._client?.city ? ` ${e._client.city}` : ""}`;
+  const client = name && `${name}${e?._client?.city ? ` - ${e._client.city}` : ""}`;
   return client && !String(e?.name || "").toLowerCase().includes(name.toLowerCase()) ? `${client} — ${e.name}` : e?.name;
 }
 
