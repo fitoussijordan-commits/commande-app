@@ -4,7 +4,7 @@ import * as odoo from "@/lib/odoo";
 import * as sync from "@/lib/sync";
 import { descToText, routeLines, ROUTE_LINE } from "@/lib/text";
 import { eventOnDay, ALLDAY_FIELDS } from "@/lib/calendar";
-import { dedupeClients, NOT_SUPPLIER } from "@/lib/clients";
+import { dedupeClients, NOT_SUPPLIER, getMineOnly, setMineOnly, mineDomain, isMine } from "@/lib/clients";
 
 const C = {
   bg: "#f8fafc", white: "#fff", text: "#0f172a", textSec: "#334155",
@@ -151,6 +151,7 @@ export default function AppointmentModal({ session, client: clientProp, event, a
   // Recherche client (nom, code, ville) : Odoo, cache local hors ligne.
   const [clientQuery, setClientQuery] = useState("");
   const [clientResults, setClientResults] = useState<any[]>([]);
+  const [mine, setMine] = useState(getMineOnly);
   useEffect(() => {
     const q = clientQuery.trim();
     if (!canPickClient || q.length < 2) { setClientResults([]); return; }
@@ -158,14 +159,14 @@ export default function AppointmentModal({ session, client: clientProp, event, a
       try {
         // Comme l'écran client : sans les contacts / adresses enfants ni doublons.
         setClientResults(dedupeClients(await odoo.searchRead(session, "res.partner",
-          ["|", "|", ["name", "ilike", q], ["ref", "ilike", q], ["city", "ilike", q], ["customer_rank", ">", 0], ["active", "=", true], NOT_SUPPLIER],
+          ["|", "|", ["name", "ilike", q], ["ref", "ilike", q], ["city", "ilike", q], ["customer_rank", ">", 0], ["active", "=", true], NOT_SUPPLIER, ...mineDomain(session.uid, mine)],
           ["id", "name", "ref", "street", "zip", "city", "phone", "parent_id", "type", "is_company"], 30)).slice(0, 10));
       } catch {
-        try { setClientResults(dedupeClients(await sync.searchCachedClients(q, 30)).slice(0, 10)); } catch { setClientResults([]); }
+        try { setClientResults(dedupeClients(await sync.searchCachedClients(q, 60)).filter(c => !mine || isMine(c, session.uid)).slice(0, 10)); } catch { setClientResults([]); }
       }
     }, 250);
     return () => clearTimeout(t);
-  }, [clientQuery, canPickClient, session]);
+  }, [clientQuery, canPickClient, session, mine]);
   const pickClient = (c: any | null) => {
     setPicked(c); setClientQuery(""); setClientResults([]);
     if (c) { setTitle(`RDV — ${c.name}`); setLocation(clientAddress(c)); }
@@ -444,7 +445,14 @@ export default function AppointmentModal({ session, client: clientProp, event, a
               </div>
             ) : (
               <div style={{ position: "relative" as const }}>
-                <input value={clientQuery} onChange={e => setClientQuery(e.target.value)} placeholder="Nom, code ou ville…" style={inputStyle} />
+                <div style={{ display: "flex", gap: 6 }}>
+                  <input value={clientQuery} onChange={e => setClientQuery(e.target.value)} placeholder="Nom, code ou ville…" style={inputStyle} />
+                  <button type="button" onClick={() => setMine(m => { setMineOnly(!m); return !m; })}
+                    title={mine ? "Mes clients uniquement — toucher pour tous" : "Tous les clients — toucher pour les miens"}
+                    style={{ flexShrink: 0, padding: "0 10px", borderRadius: 10, border: `1.5px solid ${mine ? C.teal : C.border}`, background: mine ? C.teal : C.white, color: mine ? "#fff" : C.textSec, fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" as const }}>
+                    {mine ? "Mes clients" : "Tous"}
+                  </button>
+                </div>
                 {clientResults.length > 0 && (
                   <div style={{ position: "absolute" as const, left: 0, right: 0, top: "100%", marginTop: 4, background: C.white, border: `1px solid ${C.border}`, borderRadius: 10, boxShadow: C.shadowXl, zIndex: 5, maxHeight: 220, overflowY: "auto" as const }}>
                     {clientResults.map(c => (

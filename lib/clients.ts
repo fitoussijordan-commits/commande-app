@@ -111,3 +111,12 @@ export function dedupeClients(rows: any[]): any[] {
   }
   return out;
 }
+
+// « Mes clients » : par défaut, la recherche ne montre que les clients dont
+// l'utilisateur est le vendeur (res.partner.user_id). Désactivable, choix mémorisé.
+const MINE_KEY = "wms_clients_mine";
+export function getMineOnly(): boolean { try { return localStorage.getItem(MINE_KEY) !== "0"; } catch { return true; } }
+export function setMineOnly(v: boolean) { try { localStorage.setItem(MINE_KEY, v ? "1" : "0"); } catch {} }
+export const mineDomain = (uid: number, mine: boolean): any[] => mine ? [["user_id", "=", uid]] : [];
+// Filtre local (cache hors ligne) : une fiche sans vendeur connu est gardée.
+export const isMine = (c: any, uid: number) => !Array.isArray(c?.user_id) || c.user_id[0] === uid;

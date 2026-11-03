@@ -25,7 +25,7 @@ import { apiUrl } from "@/lib/apiBase";
 import * as loyalty from "@/lib/loyalty";
 import { PriceItem, sortPriceItems, applyPricelist, resolveBaseLists } from "@/lib/pricing";
 import { descToText, routeUrls } from "@/lib/text";
-import { dedupeClients, NOT_SUPPLIER } from "@/lib/clients";
+import { dedupeClients, NOT_SUPPLIER, getMineOnly, setMineOnly, mineDomain, isMine } from "@/lib/clients";
 import { eventOnDay, ALLDAY_FIELDS, linkedPartnerId } from "@/lib/calendar";
 import { pickClientAmong } from "@/lib/clients";
 
@@ -1396,7 +1396,7 @@ const LOC_RADIUS_KM = 1;
 // parent_id / type servent à écarter les adresses enfants (voir dedupeClients).
 // customer_rank : sert à départager plusieurs fiches partageant le même ref
 // (cf. pickClient) — c'est la fiche qui reçoit réellement les commandes.
-const CLIENT_FIELDS = ["id", "name", "ref", "street", "zip", "city", "country_id", "property_product_pricelist", "email", "phone", "is_company", "x_nbre_visites_realisees", "parent_id", "type", "customer_rank", "x_evolution_ca_n_n_1", "x_ca_n_1", "x_statut_client_id", "category_id"];
+const CLIENT_FIELDS = ["id", "name", "ref", "street", "zip", "city", "user_id", "country_id", "property_product_pricelist", "email", "phone", "is_company", "x_nbre_visites_realisees", "parent_id", "type", "customer_rank", "x_evolution_ca_n_n_1", "x_ca_n_1", "x_statut_client_id", "category_id"];
 
 // Évolution du CA année N vs N-1 (onglet « Conditions commerciales » de la fiche
 // client Odoo, champ x_evolution_ca_n_n_1).
@@ -2166,6 +2166,9 @@ function ClientStep({ session, onSelect, onImportBon, onOpenPlanning }: {
   const [locLoading, setLocLoading] = useState(false);
   const [locError, setLocError] = useState("");
   const [nearby, setNearby] = useState<any[]>([]);
+  // « Mes clients » (vendeur = moi) par défaut ; bouton pour voir tous les clients.
+  const [mine, setMine] = useState(getMineOnly);
+  const toggleMine = () => setMine(m => { setMineOnly(!m); return !m; });
 
   useEffect(() => {
     if (q.length < 2) { setResults([]); return; }
@@ -2176,7 +2179,7 @@ function ClientStep({ session, onSelect, onImportBon, onOpenPlanning }: {
         // Nom, référence OU ville — aligné sur la recherche hors ligne (et sur le
         // sous-titre de l'écran, qui promettait déjà la ville).
         const r = await odoo.searchRead(session, "res.partner",
-          ["|", "|", ["name", "ilike", q], ["ref", "ilike", q], ["city", "ilike", q], ["customer_rank", ">", 0], ["active", "=", true], NOT_SUPPLIER],
+          ["|", "|", ["name", "ilike", q], ["ref", "ilike", q], ["city", "ilike", q], ["customer_rank", ">", 0], ["active", "=", true], NOT_SUPPLIER, ...mineDomain(session.uid, mine)],
           CLIENT_FIELDS, 30);
         setResults(r);
       } catch {
@@ -2188,7 +2191,7 @@ function ClientStep({ session, onSelect, onImportBon, onOpenPlanning }: {
       }
       setLoading(false);
     }, 300);
-  }, [q, session]);
+  }, [q, session, mine]);
 
   // Taper dans la recherche désactive le mode localisation (évite la confusion entre les deux listes)
   useEffect(() => { if (q.length >= 2 && locMode) setLocMode(false); }, [q]); // eslint-disable-line
@@ -2202,7 +2205,7 @@ function ClientStep({ session, onSelect, onImportBon, onOpenPlanning }: {
       let rows: any[];
       try {
         rows = await odoo.searchRead(session, "res.partner",
-          [["customer_rank", ">", 0], ["active", "=", true], ["partner_latitude", "!=", 0], ["partner_longitude", "!=", 0]],
+          [["customer_rank", ">", 0], ["active", "=", true], ["partner_latitude", "!=", 0], ["partner_longitude", "!=", 0], NOT_SUPPLIER, ...mineDomain(session.uid, mine)],
           [...CLIENT_FIELDS, "partner_latitude", "partner_longitude"], 500);
       } catch {
         // Hors ligne → clients géolocalisés depuis le cache préchargé.
@@ -2227,7 +2230,8 @@ function ClientStep({ session, onSelect, onImportBon, onOpenPlanning }: {
 
   // Dédoublonnage à l'affichage : couvre d'un seul coup la recherche en ligne, le
   // repli sur le cache hors ligne et la liste « clients proches ».
-  const displayed = dedupeClients(q.length >= 2 ? results : (locMode ? nearby : []));
+  const displayed = dedupeClients(q.length >= 2 ? results : (locMode ? nearby : []))
+    .filter(c => !mine || isMine(c, session.uid));
 
   // Agenda + clients prioritaires : affichés tant qu'on ne cherche pas.
   const showWidgets = q.trim().length < 2 && !locMode;
@@ -2262,6 +2266,12 @@ function ClientStep({ session, onSelect, onImportBon, onOpenPlanning }: {
               placeholder="Nom du client..."
               style={{ width: "100%", boxSizing: "border-box" as const, padding: "14px 14px 14px 44px", border: `1.5px solid ${C.border}`, borderRadius: 14, fontSize: 16, fontFamily: "inherit", background: C.white, color: C.text, boxShadow: C.shadowMd, outline: "none" }} />
           </div>
+          {/* Mes clients / tous les clients */}
+          <button onClick={toggleMine}
+            title={mine ? "Mes clients uniquement — toucher pour voir tous les clients" : "Tous les clients — toucher pour ne voir que les miens"}
+            style={{ flexShrink: 0, padding: "0 12px", display: "flex", alignItems: "center", gap: 6, background: mine ? C.teal : C.white, border: `1.5px solid ${mine ? C.teal : C.border}`, borderRadius: 14, cursor: "pointer", boxShadow: C.shadowMd, color: mine ? "#fff" : C.textSec, fontFamily: "inherit", fontSize: 13, fontWeight: 700, whiteSpace: "nowrap" as const }}>
+            <Icon name="user" size={18} />{mine ? "Mes clients" : "Tous"}
+          </button>
           <button
             onClick={() => locMode ? setLocMode(false) : enableLocation()}
             title="Proposer les clients les plus proches de ma position"
