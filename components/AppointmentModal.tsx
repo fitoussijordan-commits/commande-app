@@ -99,7 +99,7 @@ export default function AppointmentModal({ session, client: clientProp, event, a
   const [picked, setPicked] = useState<any>(null);
   const client = clientProp || picked;
   const canPickClient = !isEdit && !clientProp;
-  const [adminTag, setAdminTag] = useState(ADMIN_TAGS[0]);
+  const adminTag = ADMIN_TAGS[0];
 
   // En édition : pré-remplissage depuis le RDV existant.
   const initStart = event?.start ? odooUTCToLocalInput(event.start) : defaultStartLocal();
@@ -160,19 +160,26 @@ export default function AppointmentModal({ session, client: clientProp, event, a
     else { setTitle(adminTag); setLocation(""); }
   };
 
-  // Chevauchement : RDV du jour choisi (hors annulés et hors celui qu'on modifie).
-  const [dayEvents, setDayEvents] = useState<any[]>([]);
+  // Calendrier de la semaine du jour choisi (aperçu pour planifier) et
+  // chevauchements (hors annulés et hors le RDV qu'on modifie).
+  const [weekEvents, setWeekEvents] = useState<any[]>([]);
   const [startTouched, setStartTouched] = useState(isEdit);
   const day = startLocal.slice(0, 10);
+  const monday = useMemo(() => {
+    const d = new Date(`${day || toLocalInput(new Date()).slice(0, 10)}T00:00`);
+    d.setDate(d.getDate() - ((d.getDay() + 6) % 7));
+    return d;
+  }, [day]);
   useEffect(() => {
-    if (!day) return;
-    const from = new Date(`${day}T00:00`), to = new Date(from.getTime() + 86400000);
+    const to = new Date(monday); to.setDate(to.getDate() + 7);
     odoo.searchRead(session, "calendar.event",
-      [["user_id", "=", session.uid], ["start", "<", toOdooUTC(to)], ["stop", ">", toOdooUTC(from)]],
-      ["id", "name", "start", "stop", "x_studio_annul"], 50, "start asc")
-      .then((rows: any[]) => setDayEvents(rows.filter(r => !r.x_studio_annul && r.id !== event?.id)))
-      .catch(() => setDayEvents([]));
-  }, [day, session, event?.id]);
+      [["user_id", "=", session.uid], ["start", "<", toOdooUTC(to)], ["stop", ">", toOdooUTC(monday)]],
+      ["id", "name", "start", "stop", "location", "x_studio_annul"], 200, "start asc")
+      .then((rows: any[]) => setWeekEvents(rows.filter(r => !r.x_studio_annul && r.id !== event?.id)))
+      .catch(() => setWeekEvents([]));
+  }, [monday, session, event?.id]);
+  const sameDayStr = (r: any) => toLocalInput(fromOdoo(r.start)).slice(0, 10) === day;
+  const dayEvents = useMemo(() => weekEvents.filter(sameDayStr), [weekEvents, day]); // eslint-disable-line react-hooks/exhaustive-deps
   const overlaps = useMemo(() => {
     const s = new Date(startLocal).getTime(), e = s + durationHours * 3600000;
     return isNaN(s) ? [] : dayEvents.filter(r => fromOdoo(r.start).getTime() < e && fromOdoo(r.stop).getTime() > s);
@@ -327,7 +334,8 @@ export default function AppointmentModal({ session, client: clientProp, event, a
   return (
     <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 200, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }} onClick={onClose}>
       <form onSubmit={handleSubmit} onClick={e => e.stopPropagation()}
-        style={{ width: "100%", maxWidth: 420, background: C.white, borderRadius: 20, padding: "28px 26px", boxShadow: C.shadowXl, fontFamily: "'DM Sans', sans-serif" }}>
+        style={{ width: "100%", maxWidth: 820, maxHeight: "calc(100vh - 40px)", overflowY: "auto" as const, background: C.white, borderRadius: 20, padding: "24px 24px", boxShadow: C.shadowXl, fontFamily: "'DM Sans', sans-serif", display: "flex", flexWrap: "wrap" as const, gap: 24, alignItems: "flex-start" }}>
+        <div style={{ flex: "1 1 340px", minWidth: 0 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 20 }}>
           <div style={{ width: 40, height: 40, borderRadius: 12, background: "#f0fdfa", border: "1.5px solid #ccfbf1", display: "flex", alignItems: "center", justifyContent: "center" }}>
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke={C.teal} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -344,25 +352,6 @@ export default function AppointmentModal({ session, client: clientProp, event, a
 
         {error && (
           <div style={{ background: C.redSoft, color: C.red, borderRadius: 10, padding: "10px 14px", fontSize: 13, marginBottom: 14 }}>{error}</div>
-        )}
-
-        {adminMode && (
-          <Field label="Étiquette">
-            <div style={{ display: "flex", flexWrap: "wrap" as const, gap: 8 }}>
-              {ADMIN_TAGS.map(tag => (
-                <button key={tag} type="button"
-                  onClick={() => { setAdminTag(tag); setTitle(tag); }}
-                  style={{
-                    padding: "7px 14px", borderRadius: 999, fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit",
-                    background: adminTag === tag ? C.teal : C.white,
-                    color: adminTag === tag ? "#fff" : C.textSec,
-                    border: `1.5px solid ${adminTag === tag ? C.teal : C.border}`,
-                  }}>
-                  {tag}
-                </button>
-              ))}
-            </div>
-          </Field>
         )}
 
         {canPickClient && (
@@ -451,6 +440,9 @@ export default function AppointmentModal({ session, client: clientProp, event, a
             {saving ? "Enregistrement…" : (isEdit ? "Enregistrer" : "Créer le RDV")}
           </button>
         </div>
+        </div>
+        <WeekPlanner monday={monday} day={day} events={weekEvents} startLocal={startLocal} durationHours={durationHours}
+          onPick={v => { setStartTouched(true); setStartLocal(v); }} />
       </form>
     </div>
   );
@@ -465,6 +457,72 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
     <div style={{ marginBottom: 14 }}>
       <label style={{ display: "block", fontSize: 12, fontWeight: 600, color: C.textSec, marginBottom: 6 }}>{label}</label>
       {children}
+    </div>
+  );
+}
+
+// Aperçu du calendrier pour planifier : semaine (nombre de RDV par jour, tap =
+// changer de jour) + journée choisie de 8 h à 20 h, avec le créneau proposé.
+// Tap sur un créneau vide = heure du RDV (au quart d'heure).
+const H0 = 8, H1 = 20, PX = 34;   // heures affichées, pixels par heure
+function WeekPlanner({ monday, day, events, startLocal, durationHours, onPick }: {
+  monday: Date; day: string; events: any[]; startLocal: string; durationHours: number; onPick: (v: string) => void;
+}) {
+  const days = Array.from({ length: 7 }, (_, i) => { const d = new Date(monday); d.setDate(d.getDate() + i); return d; });
+  const dayStr = (d: Date) => toLocalInput(d).slice(0, 10);
+  const hhmm = (d: Date) => d.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
+  const time = startLocal.slice(11, 16) || "09:00";
+  const shiftWeek = (n: number) => { const d = new Date(`${day}T${time}`); d.setDate(d.getDate() + n * 7); onPick(toLocalInput(d)); };
+  const top = (d: Date) => (d.getHours() + d.getMinutes() / 60 - H0) * PX;
+  const dayEv = events.filter(r => dayStr(fromOdoo(r.start)) === day);
+  const start = new Date(startLocal);
+  const navBtn: React.CSSProperties = { width: 26, height: 26, borderRadius: 7, border: `1px solid ${C.border}`, background: C.white, cursor: "pointer", color: C.textSec, fontSize: 13, padding: 0 };
+  return (
+    <div style={{ flex: "1 1 300px", minWidth: 0 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8 }}>
+        <div style={{ flex: 1, fontSize: 12, fontWeight: 700, color: C.textSec }}>Mon planning</div>
+        <button type="button" onClick={() => shiftWeek(-1)} style={navBtn} aria-label="Semaine précédente">‹</button>
+        <button type="button" onClick={() => shiftWeek(1)} style={navBtn} aria-label="Semaine suivante">›</button>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 4, marginBottom: 10 }}>
+        {days.map(d => {
+          const ds = dayStr(d), sel = ds === day;
+          const n = events.filter(r => dayStr(fromOdoo(r.start)) === ds).length;
+          return (
+            <button type="button" key={ds} onClick={() => onPick(`${ds}T${time}`)}
+              style={{ padding: "5px 0", borderRadius: 9, border: "none", cursor: "pointer", fontFamily: "inherit", background: sel ? C.teal : C.bg, color: sel ? "#fff" : C.text }}>
+              <div style={{ fontSize: 9.5, fontWeight: 700, opacity: 0.75 }}>{d.toLocaleDateString("fr-FR", { weekday: "short" }).replace(".", "")}</div>
+              <div style={{ fontSize: 14, fontWeight: 800 }}>{d.getDate()}</div>
+              <div style={{ fontSize: 9.5, fontWeight: 700, color: sel ? "#fff" : n ? C.teal : C.muted }}>{n ? `${n} RDV` : "libre"}</div>
+            </button>
+          );
+        })}
+      </div>
+      <div onClick={e => {
+          const y = e.clientY - e.currentTarget.getBoundingClientRect().top;
+          const mins = Math.max(0, Math.min((H1 - H0) * 60 - 15, Math.floor((y / PX) * 4) * 15));
+          onPick(`${day}T${String(H0 + Math.floor(mins / 60)).padStart(2, "0")}:${String(mins % 60).padStart(2, "0")}`);
+        }}
+        style={{ position: "relative" as const, height: (H1 - H0) * PX, borderRadius: 10, border: `1px solid ${C.border}`, background: C.white, cursor: "pointer", overflow: "hidden" }}>
+        {Array.from({ length: H1 - H0 }, (_, i) => (
+          <div key={i} style={{ position: "absolute" as const, left: 0, right: 0, top: i * PX, height: PX, borderTop: i ? `1px solid ${C.border}` : "none", fontSize: 9.5, color: C.muted, padding: "2px 5px", pointerEvents: "none" as const }}>{H0 + i}h</div>
+        ))}
+        {dayEv.map(r => {
+          const s = fromOdoo(r.start), e = fromOdoo(r.stop);
+          return (
+            <div key={r.id} title={`${hhmm(s)}–${hhmm(e)} ${r.name}${r.location ? ` · ${r.location}` : ""}`}
+              style={{ position: "absolute" as const, left: 32, right: 6, top: Math.max(0, top(s)), height: Math.max(14, top(e) - top(s) - 2), borderRadius: 6, background: "#e2e8f0", color: C.textSec, fontSize: 10.5, fontWeight: 700, padding: "2px 6px", overflow: "hidden", whiteSpace: "nowrap" as const, textOverflow: "ellipsis", pointerEvents: "none" as const }}>
+              {hhmm(s)} {r.name}
+            </div>
+          );
+        })}
+        {!isNaN(start.getTime()) && (
+          <div style={{ position: "absolute" as const, left: 32, right: 6, top: top(start), height: Math.max(14, durationHours * PX - 2), borderRadius: 6, background: "rgba(13,148,136,0.18)", border: `1.5px solid ${C.teal}`, color: C.tealDark, fontSize: 10.5, fontWeight: 800, padding: "2px 6px", pointerEvents: "none" as const }}>
+            {hhmm(start)} nouveau RDV
+          </div>
+        )}
+      </div>
+      <div style={{ fontSize: 10.5, color: C.muted, marginTop: 6 }}>Touche un créneau pour y placer le RDV.</div>
     </div>
   );
 }
