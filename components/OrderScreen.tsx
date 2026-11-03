@@ -1650,6 +1650,15 @@ function HomeScreen({ session, onNewOrder, onOpenClient, onToast, initialDate }:
           if (odoo.isNetworkError(e)) throw e;
           rows = await odoo.searchRead(session, "calendar.event", domain, BASE_FIELDS, 600, "start asc");
         }
+        // Client lié (nom + code postal) pour le titre affiché (cf. eventTitle).
+        const pids = Array.from(new Set(rows.filter(r => r.res_model === "res.partner" && r.res_id).map(r => r.res_id)));
+        if (pids.length) {
+          try {
+            const ps = await odoo.searchRead(session, "res.partner", [["id", "in", pids]], ["id", "name", "zip", "city"], pids.length);
+            const byId = new Map(ps.map((p: any) => [p.id, p]));
+            rows = rows.map(r => r.res_model === "res.partner" && byId.has(r.res_id) ? { ...r, _client: byId.get(r.res_id) } : r);
+          } catch { /* titre sans code postal */ }
+        }
         setEvents(rows);
       } catch {
         setEvents([]);
@@ -2097,8 +2106,9 @@ function HomeScreen({ session, onNewOrder, onOpenClient, onToast, initialDate }:
 // lu dans la description (« Client : NOM (CODE) — tél. »).
 function eventTitle(e: any): string {
   const line = descToText(e?.description || "").match(/Client\s*:\s*(.+)/i)?.[1] || "";
-  const client = line.replace(/\(.*$/, "").replace(/—.*$/, "").trim();
-  return client && !String(e?.name || "").toLowerCase().includes(client.toLowerCase()) ? `${e.name} — ${client}` : e?.name;
+  const name = e?._client?.name || line.replace(/\(.*$/, "").replace(/—.*$/, "").trim();
+  const client = name && `${name}${e?._client?.zip ? ` ${e._client.zip}` : e?._client?.city ? ` ${e._client.city}` : ""}`;
+  return client && !String(e?.name || "").toLowerCase().includes(name.toLowerCase()) ? `${e.name} — ${client}` : e?.name;
 }
 
 // Étiquette « Offre produit » d'un article dans le panier.
