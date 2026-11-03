@@ -2067,6 +2067,15 @@ function HomeScreen({ session, onNewOrder, onOpenClient, onToast, initialDate }:
 }
 
 // Petite ligne icône + texte pour l'aperçu RDV.
+// Étiquette « Offre produit » d'un article dans le panier.
+function OfferTag({ name }: { name: string }) {
+  return (
+    <span title={`Offre : ${name}`} style={{ flexShrink: 1, minWidth: 0, maxWidth: 150, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const, fontSize: 10, fontWeight: 800, color: "#fff", background: C.orange, borderRadius: 5, padding: "2px 6px" }}>
+      {name}
+    </span>
+  );
+}
+
 function Row({ icon, label }: { icon: string; label: string }) {
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
@@ -3484,6 +3493,12 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
                       </div>
                       {isFree && <div style={{ position: "absolute", top: 5, right: 5, background: C.green, color: "#fff", fontSize: 9, fontWeight: 700, borderRadius: 5, padding: "2px 5px" }}>OFFERT</div>}
                       {qty > 0 && <div style={{ position: "absolute", top: 5, left: 5, background: C.teal, color: "#fff", fontSize: 12, fontWeight: 800, borderRadius: 7, padding: "2px 8px" }}>{qty}</div>}
+                      {/* Offre de l'article (champ « Offre produit ») : visible dès la saisie */}
+                      {Array.isArray(p.x_offre_produit_id) && (
+                        <div title={`Offre : ${p.x_offre_produit_id[1]}`} style={{ position: "absolute", left: 5, right: 5, bottom: 5, background: C.orange, color: "#fff", fontSize: 9.5, fontWeight: 800, borderRadius: 5, padding: "2px 6px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const, textAlign: "center" as const }}>
+                          {p.x_offre_produit_id[1]}
+                        </div>
+                      )}
                     </div>
                     <div style={{ padding: "8px 10px 10px" }}>
                       <div style={{ fontSize: 10.5, color: C.muted, fontFamily: "monospace", marginBottom: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>{p.default_code}{p.barcode ? ` · ${p.barcode}` : ""}</div>
@@ -3615,6 +3630,7 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
                     <span style={{ width: 78, flexShrink: 0, fontSize: 11, fontFamily: "monospace", color: C.muted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>{item.product.default_code}</span>
                     <span style={{ width: 108, flexShrink: 0, fontSize: 11, fontFamily: "monospace", color: C.muted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>{item.product.barcode || ""}</span>
                     <span style={{ flex: 1, minWidth: 0, fontSize: 12.5, fontWeight: 600, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>{item.product.name}</span>
+                    {Array.isArray(item.product.x_offre_produit_id) && <OfferTag name={item.product.x_offre_produit_id[1]} />}
                     <div style={{ display: "flex", alignItems: "center", gap: 3, flexShrink: 0 }}>
                       <button onClick={() => onQtyChange(item.product, item.qty - 1)} style={{ width: 30, height: 30, borderRadius: 7, background: C.redSoft, border: "none", cursor: "pointer", color: C.red, fontSize: 15, fontWeight: 700 }}>−</button>
                       <button onClick={() => setPad({ product: item.product })} style={{ minWidth: 38, height: 30, borderRadius: 7, background: "#fff", border: `1px solid ${C.border}`, cursor: "pointer", fontSize: 13, fontWeight: 800, color: C.text, fontFamily: "inherit" }}>{item.qty}</button>
@@ -3635,6 +3651,7 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
                     {item.product.name}
                     {(item.product.default_code || item.product.barcode) && <span style={{ marginLeft: 6, fontSize: 10, fontWeight: 500, fontFamily: "monospace", color: C.muted }}>{[item.product.default_code, item.product.barcode].filter(Boolean).join(" · ")}</span>}
                   </span>
+                  {Array.isArray(item.product.x_offre_produit_id) && <OfferTag name={item.product.x_offre_produit_id[1]} />}
                   {(pricelistPct > 0 || pct + groupPct > 0) && (
                     <span style={{ flexShrink: 0, fontSize: 10, fontWeight: 700, color: C.orange }}>−{Math.min(100, pricelistPct + pct + groupPct)}%</span>
                   )}
