@@ -28,25 +28,10 @@ async function getCurrentUserPartnerId(session: odoo.OdooSession): Promise<numbe
   return _currentUserPartnerIdCache;
 }
 
-// Une automatisation Odoo Studio existante réécrit toujours le titre du RDV à partir du nom
-// de la 1ère étiquette (categ_ids[0].name) quand le client n'est pas participant — ce qui est
-// notre cas (volontairement, pour ne pas déclencher d'invitation Outlook). Plutôt que de toucher
-// à cette automatisation, on s'appuie dessus : on crée/réutilise une étiquette qui porte EXACTEMENT
-// le titre voulu, donc l'automatisation affiche le bon titre sans qu'on ait à changer quoi que ce
-// soit côté Odoo. (Seul effet de bord : le champ "Code Client CLI" reste vide, il n'est rempli par
-// l'automatisation que dans le cas — non utilisé ici — où le client est participant.)
-async function getOrCreateTagForTitle(session: odoo.OdooSession, title: string): Promise<number | null> {
-  const clean = title.trim();
-  if (!clean) return null;
-  try {
-    const existing = await odoo.searchRead(session, "calendar.event.type", [["name", "=ilike", clean]], ["id"], 1);
-    if (existing.length) return existing[0].id;
-    const newId = await odoo.create(session, "calendar.event.type", { name: clean });
-    return typeof newId === "number" ? newId : null;
-  } catch {
-    return null;
-  }
-}
+// Une automatisation Odoo Studio réécrit le titre du RDV avec le nom de sa 1re
+// étiquette (categ_ids[0]) et plante si le RDV n'en a pas : le type de RDV est
+// donc obligatoire. On choisit TOUJOURS un type existant — l'app ne crée plus
+// d'étiquette (avant, elle en créait une au nom du titre, qui polluait la liste).
 
 // Convertit une Date (locale navigateur) en chaîne UTC "YYYY-MM-DD HH:MM:SS" attendue par Odoo.
 function toOdooUTC(d: Date): string {
@@ -143,10 +128,19 @@ export default function AppointmentModal({ session, client: clientProp, event, a
     Array.isArray(event?.categ_ids) && event.categ_ids.length ? event.categ_ids[0] : ""
   );
   useEffect(() => {
-    odoo.searchRead(session, "calendar.event.type", [], ["id", "name"], 100, "name")
+    odoo.searchRead(session, "calendar.event.type", [], ["id", "name"], 200, "name")
       .then((rows: any[]) => setRdvTypes(rows))
       .catch(() => setRdvTypes([]));
   }, [session]);
+  // Type proposé d'office selon le cas (modifiable) : déplacement, RDV client, administratif.
+  useEffect(() => {
+    if (rdvTypeId !== "" || !rdvTypes.length) return;
+    const find = (re: RegExp) => rdvTypes.find(t => re.test(t.name))?.id;
+    const id = trip ? find(/tourn|d[ée]placement/i)
+      : client ? find(/visite commerciale client actif direct/i) ?? find(/visite commerciale/i)
+      : find(/^administratif/i);
+    if (id) setRdvTypeId(id);
+  }, [rdvTypes, trip, client]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Recherche client (nom, code, ville) : Odoo, cache local hors ligne.
   const [clientQuery, setClientQuery] = useState("");
@@ -223,6 +217,7 @@ export default function AppointmentModal({ session, client: clientProp, event, a
 
   const submitTrip = async () => {
     if (!destination.trim() || !tripFrom || !tripTo) { setError("Destination et dates requises"); return; }
+    if (typeof rdvTypeId !== "number") { setError("Choisis un type de RDV"); return; }
     if (tripTo < tripFrom) { setError("La date de fin est avant la date de début"); return; }
     setSaving(true);
     const name = `${destination.trim()}${zone.trim() ? ` (${zone.trim()})` : ""}`;
@@ -231,12 +226,10 @@ export default function AppointmentModal({ session, client: clientProp, event, a
       location: destination.trim(),
       description: [`Déplacement${zone.trim() ? ` — zone : ${zone.trim()}` : ""}`, note.trim()].filter(Boolean).join("\n\n"),
       user_id: session.uid,
+      categ_ids: [[6, 0, [rdvTypeId]]],
     };
     try {
-      // Étiquette au nom du déplacement : l'automatisation Studio recopie le
-      // nom de la 1re étiquette dans le titre (cf. getOrCreateTagForTitle).
-      const categId = await getOrCreateTagForTitle(session, name);
-      const vals = { ...values, ...(categId ? { categ_ids: [[6, 0, [categId]]] } : {}) };
+      const vals = values;
       if (isEdit) await odoo.write(session, "calendar.event", [event.id], vals);
       else await odoo.create(session, "calendar.event", vals);
       onToast(isEdit ? "Déplacement modifié" : "Déplacement ajouté au calendrier", "success");
@@ -256,6 +249,7 @@ export default function AppointmentModal({ session, client: clientProp, event, a
     setError("");
     if (trip) { await submitTrip(); return; }
     if (!title.trim() || !startLocal) { setError("Titre et date/heure requis"); return; }
+    if (typeof rdvTypeId !== "number") { setError("Choisis un type de RDV"); return; }
     setSaving(true);
     try {
       const start = new Date(startLocal); // interprété en heure locale du navigateur
@@ -290,6 +284,7 @@ export default function AppointmentModal({ session, client: clientProp, event, a
         location: location.trim(),
         description,
         user_id: session.uid,
+        categ_ids: [[6, 0, [rdvTypeId]]],
         // Code client (uniquement si rattaché à un client).
         ...(!isEdit && client?.ref ? { x_studio_code_client_cli_calendar: client.ref } : {}),
       };
@@ -307,18 +302,11 @@ export default function AppointmentModal({ session, client: clientProp, event, a
         ? { res_model: "res.partner", res_id: Number(client.id) }
         : {};
 
-      // Type de RDV choisi (étiquette) prioritaire ; sinon étiquette dérivée du titre.
-      const resolveCategId = async (): Promise<number | null> =>
-        (typeof rdvTypeId === "number" ? rdvTypeId : await getOrCreateTagForTitle(session, title));
 
       // ── MODE ÉDITION : write sur le RDV existant ──
       if (isEdit) {
         try {
-          const categId = await resolveCategId();
-          const values = {
-            ...baseValues,
-            ...(categId ? { categ_ids: [[6, 0, [categId]]] } : {}),
-          };
+          const values = baseValues;
           try {
             await odoo.write(session, "calendar.event", [event.id], { ...values, ...clientLink });
           } catch (linkErr: any) {
@@ -345,15 +333,11 @@ export default function AppointmentModal({ session, client: clientProp, event, a
 
       // ── MODE CRÉATION ──
       try {
-        const [organizerPartnerId, categId] = await Promise.all([
-          getCurrentUserPartnerId(session),
-          resolveCategId(),
-        ]);
+        const organizerPartnerId = await getCurrentUserPartnerId(session);
         // Important : le CLIENT n'est volontairement PAS ajouté comme participant.
         const values = {
           ...baseValues,
           ...(organizerPartnerId ? { partner_ids: [[6, 0, [organizerPartnerId]]] } : {}),
-          ...(categId ? { categ_ids: [[6, 0, [categId]]] } : {}),
         };
         try {
           await odoo.create(session, "calendar.event", { ...values, ...clientLink });
@@ -430,6 +414,12 @@ export default function AppointmentModal({ session, client: clientProp, event, a
           </Field>
           <Field label="Zone (optionnel)">
             <input value={zone} onChange={e => setZone(e.target.value)} placeholder="Ex. Sud-Est, 06…" style={inputStyle} />
+          </Field>
+          <Field label="Type de RDV">
+            <select value={rdvTypeId} onChange={e => setRdvTypeId(e.target.value ? Number(e.target.value) : "")} style={inputStyle}>
+              <option value="">— Choisir un type —</option>
+              {rdvTypes.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+            </select>
           </Field>
         </>}
 
@@ -608,12 +598,12 @@ function WeekPlanner({ monday, gridStart, day, events, startLocal, durationHours
               const n = events.filter(r => !r.allday && eventOnDay(r, d)).length;
               const tripHere = events.find(r => r.allday && eventOnDay(r, d));
               return (
-                <button type="button" key={ds} onClick={() => { onPick(`${ds}T${time}`); chooseView("week"); }} title={tripHere ? `Déplacement · ${tripHere.name}` : undefined}
+                <button type="button" key={ds} onClick={() => { onPick(`${ds}T${time}`); chooseView("week"); }} title={tripHere ? `Déplacement · ${(tripHere.location || tripHere.name)}` : undefined}
                   style={{ minHeight: 46, padding: "4px 0", borderRadius: 8, border: "none", cursor: "pointer", fontFamily: "inherit", opacity: out ? 0.4 : 1,
                     background: sel ? C.teal : tripHere ? C.orangeSoft : C.bg, color: sel ? "#fff" : C.text }}>
                   <div style={{ fontSize: 13, fontWeight: 800 }}>{d.getDate()}</div>
                   <div style={{ fontSize: 9, fontWeight: 700, color: sel ? "#fff" : n ? C.teal : C.muted }}>{n ? `${n} RDV` : "·"}</div>
-                  {tripHere && <div style={{ margin: "1px 2px 0", fontSize: 8, fontWeight: 800, color: sel ? "#fff" : C.orange, overflow: "hidden", whiteSpace: "nowrap" as const, textOverflow: "ellipsis" }}>{tripHere.name}</div>}
+                  {tripHere && <div style={{ margin: "1px 2px 0", fontSize: 8, fontWeight: 800, color: sel ? "#fff" : C.orange, overflow: "hidden", whiteSpace: "nowrap" as const, textOverflow: "ellipsis" }}>{(tripHere.location || tripHere.name)}</div>}
                 </button>
               );
             })}
@@ -632,14 +622,14 @@ function WeekPlanner({ monday, gridStart, day, events, startLocal, durationHours
               <div style={{ fontSize: 9.5, fontWeight: 700, opacity: 0.75 }}>{d.toLocaleDateString("fr-FR", { weekday: "short" }).replace(".", "")}</div>
               <div style={{ fontSize: 14, fontWeight: 800 }}>{d.getDate()}</div>
               <div style={{ fontSize: 9.5, fontWeight: 700, color: sel ? "#fff" : n ? C.teal : C.muted }}>{n ? `${n} RDV` : "libre"}</div>
-              {tripHere && <div title={tripHere.name} style={{ margin: "2px 3px 0", fontSize: 8.5, fontWeight: 800, borderRadius: 4, padding: "0 2px", background: sel ? "rgba(255,255,255,0.25)" : C.orangeSoft, color: sel ? "#fff" : C.orange, overflow: "hidden", whiteSpace: "nowrap" as const, textOverflow: "ellipsis" }}>{tripHere.name}</div>}
+              {tripHere && <div title={(tripHere.location || tripHere.name)} style={{ margin: "2px 3px 0", fontSize: 8.5, fontWeight: 800, borderRadius: 4, padding: "0 2px", background: sel ? "rgba(255,255,255,0.25)" : C.orangeSoft, color: sel ? "#fff" : C.orange, overflow: "hidden", whiteSpace: "nowrap" as const, textOverflow: "ellipsis" }}>{(tripHere.location || tripHere.name)}</div>}
             </button>
           );
         })}
       </div>
       {dayTrips.map(r => (
         <div key={r.id} style={{ marginBottom: 6, padding: "5px 9px", borderRadius: 8, background: C.orangeSoft, color: C.orange, fontSize: 11.5, fontWeight: 800 }}>
-          Déplacement · {r.name}
+          Déplacement · {r.location || r.name}
         </div>
       ))}
       <div onClick={e => {

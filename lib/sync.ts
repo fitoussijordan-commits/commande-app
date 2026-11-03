@@ -506,8 +506,8 @@ export async function queueAppointmentCancel(eventId: number, label: string): Pr
 
 // RDV créés hors ligne : une automatisation Odoo Studio (calendar.event) lit
 // record.categ_ids[0] et plante en IndexError si le RDV n'a pas d'étiquette.
-// En ligne, AppointmentModal crée une étiquette portant le titre AVANT le create ;
-// hors ligne c'est impossible. On fait donc cet enrichissement ICI, au rejeu,
+// AppointmentModal envoie désormais toujours le type choisi ; ceci ne sert plus
+// qu'aux RDV mis en file par une ancienne version. Enrichissement au rejeu,
 // quand le réseau est disponible. Best effort : si l'enrichissement échoue, on
 // tente le create brut (l'erreur remontera dans lastError, visible dans la file).
 async function enrichCalendarEventValues(session: odoo.OdooSession, values: any): Promise<any> {
@@ -516,7 +516,8 @@ async function enrichCalendarEventValues(session: odoo.OdooSession, values: any)
     if (!out.categ_ids && out.name) {
       const title = String(out.name).trim();
       const existing = await odoo.searchRead(session, "calendar.event.type", [["name", "=ilike", title]], ["id"], 1);
-      const categId = existing.length ? existing[0].id : await odoo.create(session, "calendar.event.type", { name: title });
+      // Étiquette existante seulement : l'app ne crée plus de types de RDV.
+      const categId = existing.length ? existing[0].id : null;
       if (typeof categId === "number") out.categ_ids = [[6, 0, [categId]]];
     }
     if (!out.partner_ids) {

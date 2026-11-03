@@ -176,7 +176,7 @@ export default function AgendaGlass({ session, onOpenPlanning }: {
                 background: "rgba(255,255,255,0.7)", opacity: cancelled(e) ? 0.55 : 1 }}>
               <span style={{ width: 4, alignSelf: "stretch", borderRadius: 2, background: cancelled(e) ? C.faint : C.teal }} />
               <span style={{ fontSize: 12.5, fontWeight: 800, color: C.tealDark, width: 42, flexShrink: 0 }}>{e.allday ? "Journée" : hhmm(fromOdoo(e.start))}</span>
-              <span style={{ fontSize: 13.5, fontWeight: 600, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const, textDecoration: cancelled(e) ? "line-through" : "none" }}>{e.label || e.name}</span>
+              <span style={{ fontSize: 13.5, fontWeight: 600, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const, textDecoration: cancelled(e) ? "line-through" : "none" }}>{e.label || (e.allday && e.location) || e.name}</span>
             </button>
           ))}
         </div>

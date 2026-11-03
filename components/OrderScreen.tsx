@@ -1957,7 +1957,7 @@ function HomeScreen({ session, onNewOrder, onOpenClient, onToast, initialDate }:
                     {list.filter(e => e.allday).map(e => (
                       <button key={e.id} onClick={() => setSelectedEvent(e)}
                         style={{ border: "none", borderRadius: 6, padding: "3px 6px", background: C.orangeSoft, color: C.orange, fontSize: 10.5, fontWeight: 800, textAlign: "left" as const, cursor: "pointer", fontFamily: "inherit", overflow: "hidden", whiteSpace: "nowrap" as const, textOverflow: "ellipsis", opacity: isCancelled(e) ? 0.5 : 1 }}>
-                        {e.name}
+                        {eventTitle(e)}
                       </button>
                     ))}
                   </div>
@@ -2125,6 +2125,8 @@ function eventClient(e: any): string {
 }
 
 function eventTitle(e: any): string {
+  // Déplacement : Odoo remplace le titre par le type ; la destination est dans le lieu.
+  if (e?.allday && e.location) return e.location;
   const line = descToText(e?.description || "").match(/Client\s*:\s*(.+)/i)?.[1] || "";
   const name = e?._client?.name || line.replace(/\(.*$/, "").replace(/—.*$/, "").trim();
   const client = name && `${name}${e?._client?.city ? ` - ${e._client.city}` : ""}`;
