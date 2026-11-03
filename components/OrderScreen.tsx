@@ -1484,6 +1484,14 @@ function HomeScreen({ session, onNewOrder, onOpenClient, onToast, initialDate }:
   onToast: (msg: string, type?: "success" | "error" | "info") => void;
 }) {
   const [events, setEvents] = useState<any[]>([]);
+  // Couleur des étiquettes Odoo (calendar.event.type.color, index 1–11 de la
+  // palette Odoo) : le planning reprend les couleurs du calendrier Odoo.
+  const [tagColors, setTagColors] = useState<Map<number, number>>(new Map());
+  useEffect(() => {
+    odoo.searchRead(session, "calendar.event.type", [], ["id", "color"], 500)
+      .then((rows: any[]) => setTagColors(new Map(rows.map(r => [r.id, Number(r.color) || 0]))))
+      .catch(() => {});
+  }, [session]);
   const [loading, setLoading] = useState(true);
   const [weekOffset, setWeekOffset] = useState(() => initialDate
     ? Math.round((startOfWeek(initialDate).getTime() - startOfWeek(new Date()).getTime()) / (7 * 86400000))
@@ -1634,7 +1642,7 @@ function HomeScreen({ session, onNewOrder, onOpenClient, onToast, initialDate }:
         // de RDV (cf. AppointmentModal) : plus besoin de la retrouver au code,
         // qui n'est pas unique. Repli sans ces champs s'ils n'existent pas sur
         // l'instance — sinon la semaine entière s'afficherait vide.
-        const BASE_FIELDS = ["id", "name", "start", "stop", ...ALLDAY_FIELDS, "location", "description", "x_studio_code_client_cli_calendar", "x_studio_annul", "active"];
+        const BASE_FIELDS = ["id", "name", "start", "stop", "categ_ids", ...ALLDAY_FIELDS, "location", "description", "x_studio_code_client_cli_calendar", "x_studio_annul", "active"];
         let rows: any[];
         try {
           rows = await odoo.searchRead(session, "calendar.event", domain, [...BASE_FIELDS, "res_model", "res_id"], 600, "start asc");
@@ -1813,6 +1821,15 @@ function HomeScreen({ session, onNewOrder, onOpenClient, onToast, initialDate }:
     }
   };
 
+  // Palette Odoo (o_color_1 … o_color_11) : fond clair + texte foncé de la teinte.
+  const ODOO_COLORS: Record<number, string> = {
+    1: "#F06050", 2: "#F4A460", 3: "#F7CD1F", 4: "#6CC1ED", 5: "#814968", 6: "#EB7E7F",
+    7: "#2C8397", 8: "#475577", 9: "#D6145F", 10: "#30C381", 11: "#9365B8",
+  };
+  const eventColor = (e: any, idx: number) => {
+    const c = ODOO_COLORS[tagColors.get((e.categ_ids || [])[0]) || 0];
+    return c ? { bg: `${c}2e`, text: `color-mix(in srgb, ${c} 70%, #000)`, bar: c } : EVENT_COLORS[idx % EVENT_COLORS.length];
+  };
   const EVENT_COLORS = [
     { bg: "#f0fdfa", text: C.tealDark },
     { bg: "#eff6ff", text: "#1d4ed8" },
@@ -1892,7 +1909,7 @@ function HomeScreen({ session, onNewOrder, onOpenClient, onToast, initialDate }:
                     {d.getDate()}
                   </div>
                   {dayEvents.slice(0, 3).map((e, idx) => {
-                    const col = EVENT_COLORS[idx % EVENT_COLORS.length];
+                    const col = eventColor(e, idx);
                     return (
                       <button key={e.id} onClick={ev => { ev.stopPropagation(); setSelectedEvent(e); }}
                         style={{ display: "flex", alignItems: "center", gap: 4, width: "100%", border: "none", borderRadius: 6, padding: "3px 5px", cursor: "pointer", fontFamily: "inherit", textAlign: "left" as const,
@@ -1953,7 +1970,7 @@ function HomeScreen({ session, onNewOrder, onOpenClient, onToast, initialDate }:
                 {dayEvents.length === 0 ? (
                   <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, color: isToday ? "rgba(255,255,255,0.5)" : C.border }}>—</div>
                 ) : dayEvents.map((e, idx) => {
-                  const col = EVENT_COLORS[idx % EVENT_COLORS.length];
+                  const col = eventColor(e, idx);
                   return (
                     <button key={e.id} onClick={() => setSelectedEvent(e)} title="Voir le rendez-vous"
                       style={{ background: isCancelled(e) ? "#f8fafc" : col.bg, border: "none", borderRadius: 10, padding: "8px 10px", cursor: "pointer", fontFamily: "inherit", textAlign: "left" as const, width: "100%", boxShadow: isToday ? "0 4px 10px rgba(15,23,42,0.12)" : "none", opacity: isCancelled(e) ? 0.6 : 1 }}>
