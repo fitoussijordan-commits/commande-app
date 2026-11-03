@@ -1,5 +1,5 @@
 "use client";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import * as odoo from "@/lib/odoo";
 import * as sync from "@/lib/sync";
 import { descToText, routeLines, ROUTE_LINE } from "@/lib/text";
@@ -8,7 +8,7 @@ const C = {
   bg: "#f8fafc", white: "#fff", text: "#0f172a", textSec: "#334155",
   muted: "#94a3b8", border: "#e2e8f0",
   teal: "#0d9488", tealDark: "#0f766e",
-  red: "#dc2626", redSoft: "#fef2f2",
+  red: "#dc2626", redSoft: "#fef2f2", orange: "#ea580c", orangeSoft: "#fff7ed",
   shadowXl: "0 20px 25px rgba(0,0,0,0.10), 0 8px 10px rgba(0,0,0,0.04)",
 };
 
@@ -87,8 +87,18 @@ function odooUTCToLocalInput(s: string): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
-export default function AppointmentModal({ session, client, event, adminMode, onClose, onToast }: Props) {
+const clientAddress = (c: any) =>
+  c?.street ? [c.street, [c.zip, c.city].filter(Boolean).join(" ")].filter(Boolean).join(", ") : (c?.city || "");
+const pad2 = (n: number) => String(n).padStart(2, "0");
+const toLocalInput = (d: Date) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}T${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+const fromOdoo = (s: string) => new Date(String(s).replace(" ", "T") + "Z");
+
+export default function AppointmentModal({ session, client: clientProp, event, adminMode, onClose, onToast }: Props) {
   const isEdit = Boolean(event);
+  // Client choisi dans la fenêtre (bouton + du planning : RDV sans client au départ).
+  const [picked, setPicked] = useState<any>(null);
+  const client = clientProp || picked;
+  const canPickClient = !isEdit && !clientProp;
   const [adminTag, setAdminTag] = useState(ADMIN_TAGS[0]);
 
   // En édition : pré-remplissage depuis le RDV existant.
@@ -111,8 +121,7 @@ export default function AppointmentModal({ session, client, event, adminMode, on
   const [startLocal, setStartLocal] = useState(initStart);
   const [durationHours, setDurationHours] = useState(initDuration);
   // Adresse complète par défaut : elle sert au lien Waze / Plans.
-  const [location, setLocation] = useState(event?.location
-    || (client?.street ? [client.street, [client.zip, client.city].filter(Boolean).join(" ")].filter(Boolean).join(", ") : client?.city) || "");
+  const [location, setLocation] = useState(event?.location || clientAddress(client));
   const [note, setNote] = useState(initNote);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -127,6 +136,64 @@ export default function AppointmentModal({ session, client, event, adminMode, on
       .then((rows: any[]) => setRdvTypes(rows))
       .catch(() => setRdvTypes([]));
   }, [session]);
+
+  // Recherche client (nom, code, ville) : Odoo, cache local hors ligne.
+  const [clientQuery, setClientQuery] = useState("");
+  const [clientResults, setClientResults] = useState<any[]>([]);
+  useEffect(() => {
+    const q = clientQuery.trim();
+    if (!canPickClient || q.length < 2) { setClientResults([]); return; }
+    const t = setTimeout(async () => {
+      try {
+        setClientResults(await odoo.searchRead(session, "res.partner",
+          ["|", "|", ["name", "ilike", q], ["ref", "ilike", q], ["city", "ilike", q], ["customer_rank", ">", 0], ["active", "=", true]],
+          ["id", "name", "ref", "street", "zip", "city", "phone"], 8));
+      } catch {
+        try { setClientResults(await sync.searchCachedClients(q, 8)); } catch { setClientResults([]); }
+      }
+    }, 250);
+    return () => clearTimeout(t);
+  }, [clientQuery, canPickClient, session]);
+  const pickClient = (c: any | null) => {
+    setPicked(c); setClientQuery(""); setClientResults([]);
+    if (c) { setTitle(`RDV — ${c.name}`); setLocation(clientAddress(c)); }
+    else { setTitle(adminTag); setLocation(""); }
+  };
+
+  // Chevauchement : RDV du jour choisi (hors annulés et hors celui qu'on modifie).
+  const [dayEvents, setDayEvents] = useState<any[]>([]);
+  const [startTouched, setStartTouched] = useState(isEdit);
+  const day = startLocal.slice(0, 10);
+  useEffect(() => {
+    if (!day) return;
+    const from = new Date(`${day}T00:00`), to = new Date(from.getTime() + 86400000);
+    odoo.searchRead(session, "calendar.event",
+      [["user_id", "=", session.uid], ["start", "<", toOdooUTC(to)], ["stop", ">", toOdooUTC(from)]],
+      ["id", "name", "start", "stop", "x_studio_annul"], 50, "start asc")
+      .then((rows: any[]) => setDayEvents(rows.filter(r => !r.x_studio_annul && r.id !== event?.id)))
+      .catch(() => setDayEvents([]));
+  }, [day, session, event?.id]);
+  const overlaps = useMemo(() => {
+    const s = new Date(startLocal).getTime(), e = s + durationHours * 3600000;
+    return isNaN(s) ? [] : dayEvents.filter(r => fromOdoo(r.start).getTime() < e && fromOdoo(r.stop).getTime() > s);
+  }, [startLocal, durationHours, dayEvents]);
+  // Prochain créneau libre de la même durée, par pas de 15 min, dans la journée.
+  const nextFree = useMemo(() => {
+    let s = new Date(startLocal).getTime();
+    if (isNaN(s)) return null;
+    const dur = durationHours * 3600000, end = new Date(`${day}T21:00`).getTime();
+    for (let i = 0; i < 60 && s + dur <= end; i++) {
+      const clash = dayEvents.find(r => fromOdoo(r.start).getTime() < s + dur && fromOdoo(r.stop).getTime() > s);
+      if (!clash) return new Date(s);
+      s = Math.ceil(fromOdoo(clash.stop).getTime() / 900000) * 900000;
+    }
+    return null;
+  }, [startLocal, durationHours, dayEvents, day]);
+  // Nouveau RDV : l'heure proposée saute d'office les créneaux déjà pris.
+  useEffect(() => {
+    if (startTouched || !overlaps.length || !nextFree) return;
+    setStartLocal(toLocalInput(nextFree));
+  }, [overlaps, nextFree, startTouched]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -298,6 +365,34 @@ export default function AppointmentModal({ session, client, event, adminMode, on
           </Field>
         )}
 
+        {canPickClient && (
+          <Field label="Client (optionnel)">
+            {picked ? (
+              <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "9px 12px", borderRadius: 10, border: `1.5px solid ${C.teal}`, background: "#f0fdfa" }}>
+                <span style={{ flex: 1, minWidth: 0, fontSize: 14, fontWeight: 700, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>
+                  {picked.name}<span style={{ fontWeight: 500, color: C.muted }}>{[picked.ref, picked.city].filter(Boolean).map(x => ` · ${x}`).join("")}</span>
+                </span>
+                <button type="button" onClick={() => pickClient(null)} title="Retirer le client" style={{ background: "none", border: "none", cursor: "pointer", color: C.muted, fontSize: 14 }}>✕</button>
+              </div>
+            ) : (
+              <div style={{ position: "relative" as const }}>
+                <input value={clientQuery} onChange={e => setClientQuery(e.target.value)} placeholder="Nom, code ou ville…" style={inputStyle} />
+                {clientResults.length > 0 && (
+                  <div style={{ position: "absolute" as const, left: 0, right: 0, top: "100%", marginTop: 4, background: C.white, border: `1px solid ${C.border}`, borderRadius: 10, boxShadow: C.shadowXl, zIndex: 5, maxHeight: 220, overflowY: "auto" as const }}>
+                    {clientResults.map(c => (
+                      <button type="button" key={c.id} onClick={() => pickClient(c)}
+                        style={{ display: "block", width: "100%", textAlign: "left" as const, padding: "9px 12px", background: "none", border: "none", borderBottom: `1px solid ${C.border}`, cursor: "pointer", fontFamily: "inherit" }}>
+                        <div style={{ fontSize: 13, fontWeight: 700, color: C.text }}>{c.name}</div>
+                        <div style={{ fontSize: 11, color: C.muted }}>{[c.ref, c.city].filter(Boolean).join(" · ")}</div>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </Field>
+        )}
+
         <Field label="Titre">
           <input value={title} onChange={e => setTitle(e.target.value)} style={inputStyle} />
         </Field>
@@ -310,7 +405,19 @@ export default function AppointmentModal({ session, client, event, adminMode, on
         </Field>
 
         <Field label="Date et heure">
-          <input type="datetime-local" value={startLocal} onChange={e => setStartLocal(e.target.value)} style={inputStyle} />
+          <input type="datetime-local" value={startLocal} onChange={e => { setStartTouched(true); setStartLocal(e.target.value); }}
+            style={{ ...inputStyle, borderColor: overlaps.length ? C.orange : C.border }} />
+          {overlaps.length > 0 && (
+            <div style={{ marginTop: 6, padding: "8px 10px", borderRadius: 8, background: C.orangeSoft, color: C.orange, fontSize: 12, fontWeight: 600, lineHeight: 1.4 }}>
+              Chevauche : {overlaps.map(r => `${fromOdoo(r.start).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })} ${r.name}`).join(" ; ")}
+              {nextFree && (
+                <button type="button" onClick={() => setStartLocal(toLocalInput(nextFree))}
+                  style={{ marginLeft: 8, background: "none", border: "none", padding: 0, color: C.orange, fontWeight: 800, textDecoration: "underline", cursor: "pointer", fontFamily: "inherit", fontSize: 12 }}>
+                  Décaler à {nextFree.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}
+                </button>
+              )}
+            </div>
+          )}
         </Field>
 
         <Field label="Durée">

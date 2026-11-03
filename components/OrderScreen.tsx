@@ -1394,7 +1394,7 @@ const LOC_RADIUS_KM = 1;
 // parent_id / type servent à écarter les adresses enfants (voir dedupeClients).
 // customer_rank : sert à départager plusieurs fiches partageant le même ref
 // (cf. pickClient) — c'est la fiche qui reçoit réellement les commandes.
-const CLIENT_FIELDS = ["id", "name", "ref", "city", "country_id", "property_product_pricelist", "email", "phone", "is_company", "x_nbre_visites_realisees", "parent_id", "type", "customer_rank", "x_evolution_ca_n_n_1", "x_ca_n_1", "x_statut_client_id", "category_id"];
+const CLIENT_FIELDS = ["id", "name", "ref", "street", "zip", "city", "country_id", "property_product_pricelist", "email", "phone", "is_company", "x_nbre_visites_realisees", "parent_id", "type", "customer_rank", "x_evolution_ca_n_n_1", "x_ca_n_1", "x_statut_client_id", "category_id"];
 
 // Évolution du CA année N vs N-1 (onglet « Conditions commerciales » de la fiche
 // client Odoo, champ x_evolution_ca_n_n_1).
