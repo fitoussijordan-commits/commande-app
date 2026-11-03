@@ -11,6 +11,7 @@
 // avec un CA N-1 > 0.
 import { useEffect, useState } from "react";
 import * as odoo from "@/lib/odoo";
+import { linkedPartnerId } from "@/lib/calendar";
 import * as sync from "@/lib/sync";
 import { GLASS } from "@/components/glass";
 
@@ -78,7 +79,7 @@ export default function VisitPriority({ session, onOpenClient }: {
         const last = new Map<number, Date>(), next = new Map<number, Date>();
         for (const e of events) {
           if (e.x_studio_annul) continue;
-          const c = e.res_model === "res.partner" && byId.get(Number(e.res_id))
+          const c = linkedPartnerId(e) && byId.get(linkedPartnerId(e)!)
             || byRef.get(String(e.x_studio_code_client_cli_calendar || "").trim().toUpperCase());
           if (!c) continue;
           const d = odooDate(e.start);

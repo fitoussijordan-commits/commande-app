@@ -25,7 +25,7 @@ import { apiUrl } from "@/lib/apiBase";
 import * as loyalty from "@/lib/loyalty";
 import { PriceItem, sortPriceItems, applyPricelist, resolveBaseLists } from "@/lib/pricing";
 import { descToText, routeUrls } from "@/lib/text";
-import { eventOnDay, ALLDAY_FIELDS } from "@/lib/calendar";
+import { eventOnDay, ALLDAY_FIELDS, linkedPartnerId } from "@/lib/calendar";
 import { pickClientAmong } from "@/lib/clients";
 
 // ── Palette ───────────────────────────────────────────────────────────────────
@@ -1516,7 +1516,7 @@ function HomeScreen({ session, onNewOrder, onOpenClient, onToast, initialDate }:
   useEffect(() => {
     setEventAddress("");
     const e = selectedEvent;
-    if (!e || e.res_model !== "res.partner" || !e.res_id) return;
+    if (!e || !linkedPartnerId(e)) return;
     odoo.searchRead(session, "res.partner", [["id", "=", e.res_id]], ["street", "zip", "city"], 1)
       .then(([p]: any[]) => { if (p?.street) setEventAddress([p.street, [p.zip, p.city].filter(Boolean).join(" ")].filter(Boolean).join(", ")); })
       .catch(() => {});
@@ -1651,12 +1651,12 @@ function HomeScreen({ session, onNewOrder, onOpenClient, onToast, initialDate }:
           rows = await odoo.searchRead(session, "calendar.event", domain, BASE_FIELDS, 600, "start asc");
         }
         // Client lié (nom + ville) pour le titre affiché (cf. eventTitle).
-        const pids = Array.from(new Set(rows.filter(r => r.res_model === "res.partner" && r.res_id).map(r => r.res_id)));
+        const pids = Array.from(new Set(rows.filter(r => linkedPartnerId(r)).map(r => linkedPartnerId(r)!)));
         if (pids.length) {
           try {
             const ps = await odoo.searchRead(session, "res.partner", [["id", "in", pids]], ["id", "name", "city"], pids.length);
             const byId = new Map(ps.map((p: any) => [p.id, p]));
-            rows = rows.map(r => r.res_model === "res.partner" && byId.has(r.res_id) ? { ...r, _client: byId.get(r.res_id) } : r);
+            rows = rows.map(r => { const pid = linkedPartnerId(r); return pid && byId.has(pid) ? { ...r, _client: byId.get(pid) } : r; });
           } catch { /* titre sans ville */ }
         }
         setEvents(rows);
@@ -1734,7 +1734,7 @@ function HomeScreen({ session, onNewOrder, onOpenClient, onToast, initialDate }:
       //    à re-chercher : aucune ambiguïté possible, même si 160 fiches
       //    partagent le même ref. Les RDV créés avant ce correctif n'ont pas ce
       //    lien et retombent sur la recherche par code, plus bas.
-      if (e.res_model === "res.partner" && Number(e.res_id) > 0) {
+      if (linkedPartnerId(e)) {
         const id = Number(e.res_id);
         try {
           const cached = await sync.getCachedClients();
@@ -1940,65 +1940,113 @@ function HomeScreen({ session, onNewOrder, onOpenClient, onToast, initialDate }:
         </div>
       )}
 
-      {/* Vue semaine — 7 colonnes façon cartes, glissables gauche/droite */}
-      {view === "week" && <div
-        ref={gridRef}
-        onTouchStart={onTouchStart}
-        onTouchMove={onTouchMove}
-        onTouchEnd={onTouchEnd}
-        style={{
-          flex: 1,
-          display: "grid", gridTemplateColumns: "repeat(7, minmax(120px, 1fr))", gap: 12,
-          alignItems: "stretch",
-          transform: "translateX(0px)",
-          willChange: "transform",
-          touchAction: "pan-y" as const,
-        }}
-      >
-        {days.map((d, i) => {
-          const dayEvents = eventsByDay[i];
-          const isToday = sameDay(d, today);
-          const isPast = d < today && !isToday;
-          return (
-            <div key={i} style={{
-              display: "flex", flexDirection: "column" as const, borderRadius: 18,
-              // Aujourd'hui : simple encadré (le fond vert masquait les couleurs des RDV).
-              background: C.white, border: `2px solid ${isToday ? C.teal : "transparent"}`,
-              boxShadow: isToday ? "0 8px 20px rgba(13,148,136,0.18)" : "0 2px 8px rgba(15,23,42,0.05)",
-              opacity: isPast ? 0.55 : 1, overflow: "hidden",
-            }}>
-              {/* En-tête jour */}
-              <div style={{ padding: "14px 8px 10px", textAlign: "center" as const, flexShrink: 0 }}>
-                <div style={{ fontSize: 10, fontWeight: 700, color: isToday ? C.teal : C.muted, textTransform: "uppercase" as const, letterSpacing: "0.04em" }}>{WEEKDAY_LABELS[i].slice(0, 3)}</div>
-                <div style={{ fontSize: 22, fontWeight: 800, marginTop: 2, color: isToday ? C.tealDark : C.text }}>
-                  {d.getDate()}
-                </div>
+      {/* Vue semaine — grille horaire façon Outlook : les RDV sont placés à leur
+          heure, sur leur durée ; les déplacements (journée entière) en bandeau. */}
+      {view === "week" && (() => {
+        const PXH = 52;                                   // pixels par heure
+        const hourOf = (x: Date) => x.getHours() + x.getMinutes() / 60;
+        const timed = eventsByDay.map(list => list.filter(e => !e.allday));
+        const allHours = timed.flat().flatMap(e => [hourOf(odooToLocalDate(e.start)), hourOf(odooToLocalDate(e.stop || e.start))]);
+        const H0 = Math.min(8, ...allHours.map(Math.floor));
+        const H1 = Math.max(20, ...allHours.map(Math.ceil));
+        // RDV qui se chevauchent : côte à côte (colonnes attribuées au fil de l'eau).
+        const lanes = (list: any[]) => {
+          const ends: number[] = [];
+          const out = new Map<number, { lane: number; of: number }>();
+          const sorted = [...list].sort((x, y) => odooToLocalDate(x.start).getTime() - odooToLocalDate(y.start).getTime());
+          const groups: any[][] = []; let cur: any[] = []; let curEnd = 0;
+          for (const e of sorted) {
+            const st = odooToLocalDate(e.start).getTime(), en = odooToLocalDate(e.stop || e.start).getTime();
+            if (cur.length && st >= curEnd) { groups.push(cur); cur = []; ends.length = 0; }
+            let lane = ends.findIndex(t => t <= st); if (lane < 0) { lane = ends.length; ends.push(en); } else ends[lane] = en;
+            out.set(e.id, { lane, of: 0 }); cur.push(e); curEnd = Math.max(curEnd, en);
+          }
+          if (cur.length) groups.push(cur);
+          for (const g of groups) { const n = Math.max(...g.map(e => out.get(e.id)!.lane)) + 1; g.forEach(e => out.get(e.id)!.of = n); }
+          return out;
+        };
+        const hasTrips = eventsByDay.some(list => list.some(e => e.allday));
+        const cols = "44px repeat(7, minmax(110px, 1fr))";
+        return (
+          <div ref={gridRef} onTouchStart={onTouchStart} onTouchMove={onTouchMove} onTouchEnd={onTouchEnd}
+            style={{ flex: 1, background: C.white, borderRadius: 18, boxShadow: "0 2px 8px rgba(15,23,42,0.05)", overflow: "hidden", touchAction: "pan-y" as const, display: "flex", flexDirection: "column" as const }}>
+            {/* En-têtes des jours */}
+            <div style={{ display: "grid", gridTemplateColumns: cols, borderBottom: `1px solid ${C.border}` }}>
+              <div />
+              {days.map((d, i) => {
+                const isToday = sameDay(d, today);
+                return (
+                  <div key={i} style={{ padding: "10px 4px 8px", textAlign: "center" as const, borderLeft: `1px solid ${C.border}` }}>
+                    <div style={{ fontSize: 10, fontWeight: 700, color: isToday ? C.teal : C.muted, textTransform: "uppercase" as const, letterSpacing: "0.04em" }}>{WEEKDAY_LABELS[i].slice(0, 3)}</div>
+                    <div style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", minWidth: 32, height: 32, borderRadius: 16, marginTop: 2, fontSize: 18, fontWeight: 800,
+                      color: isToday ? "#fff" : C.text, background: isToday ? C.teal : "transparent" }}>{d.getDate()}</div>
+                  </div>
+                );
+              })}
+            </div>
+            {/* Déplacements (journée entière) */}
+            {hasTrips && (
+              <div style={{ display: "grid", gridTemplateColumns: cols, borderBottom: `1px solid ${C.border}` }}>
+                <div style={{ fontSize: 9, color: C.muted, padding: "6px 4px", textAlign: "right" as const }}>Journée</div>
+                {eventsByDay.map((list, i) => (
+                  <div key={i} style={{ borderLeft: `1px solid ${C.border}`, padding: 3, display: "flex", flexDirection: "column" as const, gap: 3 }}>
+                    {list.filter(e => e.allday).map(e => (
+                      <button key={e.id} onClick={() => setSelectedEvent(e)}
+                        style={{ border: "none", borderRadius: 6, padding: "3px 6px", background: C.orangeSoft, color: C.orange, fontSize: 10.5, fontWeight: 800, textAlign: "left" as const, cursor: "pointer", fontFamily: "inherit", overflow: "hidden", whiteSpace: "nowrap" as const, textOverflow: "ellipsis", opacity: isCancelled(e) ? 0.5 : 1 }}>
+                        {e.name}
+                      </button>
+                    ))}
+                  </div>
+                ))}
               </div>
-
-              {/* Événements du jour */}
-              <div style={{ flex: 1, padding: "0 8px 10px", display: "flex", flexDirection: "column" as const, gap: 6, minHeight: 80 }}>
-                {dayEvents.length === 0 ? (
-                  <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, color: C.border }}>—</div>
-                ) : dayEvents.map((e, idx) => {
-                  const col = eventColor(e, idx);
+            )}
+            {/* Grille horaire */}
+            <div style={{ flex: 1, overflowY: "auto" as const }}>
+              <div style={{ display: "grid", gridTemplateColumns: cols, position: "relative" as const, height: (H1 - H0) * PXH }}>
+                <div style={{ position: "relative" as const }}>
+                  {Array.from({ length: H1 - H0 }, (_, h) => (
+                    <div key={h} style={{ position: "absolute" as const, top: h * PXH - 6, right: 6, fontSize: 10, color: C.muted }}>{h ? `${H0 + h}:00` : ""}</div>
+                  ))}
+                </div>
+                {days.map((d, i) => {
+                  const isToday = sameDay(d, today);
+                  const lane = lanes(timed[i]);
+                  const nowTop = (hourOf(new Date()) - H0) * PXH;
                   return (
-                    <button key={e.id} onClick={() => setSelectedEvent(e)} title="Voir le rendez-vous"
-                      style={{ background: isCancelled(e) ? "#f8fafc" : col.bg, border: "none", borderRadius: 10, padding: "8px 10px", cursor: "pointer", fontFamily: "inherit", textAlign: "left" as const, width: "100%", boxShadow: "none", opacity: isCancelled(e) ? 0.6 : 1 }}>
-                      <div style={{ fontSize: 10, fontWeight: 800, color: isCancelled(e) ? C.muted : col.text }}>
-                        {e.allday ? "Déplacement" : odooToLocalDate(e.start).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}
-                        {/* Objet de la visite en petit à côté de l'heure ; le client en titre */}
-                        {eventClient(e) && <span style={{ fontWeight: 600, opacity: 0.85 }}> · {e.name}</span>}
-                        {isCancelled(e) && " · Annulé"}
-                      </div>
-                      <div style={{ fontSize: 11, fontWeight: 700, color: C.text, marginTop: 2, lineHeight: 1.3, overflow: "hidden", display: "-webkit-box" as const, WebkitLineClamp: 2, WebkitBoxOrient: "vertical" as const, textDecoration: isCancelled(e) ? "line-through" : "none" }}>{eventClient(e) || e.name}</div>
-                    </button>
+                    <div key={i} style={{ position: "relative" as const, borderLeft: `1px solid ${C.border}`, background: isToday ? "rgba(13,148,136,0.04)" : d < today ? "#fafbfc" : "transparent" }}>
+                      {Array.from({ length: H1 - H0 }, (_, h) => (
+                        <div key={h} style={{ position: "absolute" as const, left: 0, right: 0, top: h * PXH, borderTop: h ? `1px solid ${C.border}` : "none" }} />
+                      ))}
+                      {isToday && nowTop > 0 && nowTop < (H1 - H0) * PXH && (
+                        <div style={{ position: "absolute" as const, left: 0, right: 0, top: nowTop, height: 2, background: C.red, zIndex: 2 }} />
+                      )}
+                      {timed[i].map((e, idx) => {
+                        const st = odooToLocalDate(e.start), en = odooToLocalDate(e.stop || e.start);
+                        const top = (hourOf(st) - H0) * PXH;
+                        const height = Math.max(22, (hourOf(en) - hourOf(st)) * PXH - 2);
+                        const { lane: l, of } = lane.get(e.id) || { lane: 0, of: 1 };
+                        const col = eventColor(e, idx);
+                        const cancelled = isCancelled(e);
+                        return (
+                          <button key={e.id} onClick={() => setSelectedEvent(e)} title={`${hhmmFR(st)}–${hhmmFR(en)} ${eventTitle(e)}`}
+                            style={{ position: "absolute" as const, top, height, left: `calc(${(l / of) * 100}% + 2px)`, width: `calc(${100 / of}% - 4px)`,
+                              background: cancelled ? "#f8fafc" : col.bg, border: "none", borderLeft: `3px solid ${cancelled ? C.border : ("bar" in col ? col.bar : col.text)}`,
+                              borderRadius: 6, padding: "2px 5px", cursor: "pointer", fontFamily: "inherit", textAlign: "left" as const, overflow: "hidden", opacity: cancelled ? 0.6 : 1, zIndex: 1 }}>
+                            <div style={{ fontSize: 9.5, fontWeight: 800, color: cancelled ? C.muted : col.text, whiteSpace: "nowrap" as const, overflow: "hidden", textOverflow: "ellipsis" }}>
+                              {hhmmFR(st)}{eventClient(e) && <span style={{ fontWeight: 600, opacity: 0.85 }}> · {e.name}</span>}{cancelled && " · Annulé"}
+                            </div>
+                            <div style={{ fontSize: 10.5, fontWeight: 700, color: C.text, lineHeight: 1.25, overflow: "hidden", textDecoration: cancelled ? "line-through" : "none" }}>{eventClient(e) || e.name}</div>
+                          </button>
+                        );
+                      })}
+                    </div>
                   );
                 })}
               </div>
             </div>
-          );
-        })}
-      </div>}
+          </div>
+        );
+      })()}
 
       {/* ── Aperçu d'un RDV (heure, lieu, client, notes) avant d'ouvrir la fiche ── */}
       {selectedEvent && (() => {
@@ -2107,6 +2155,8 @@ function HomeScreen({ session, onNewOrder, onOpenClient, onToast, initialDate }:
 // Titre affiché d'un RDV : le titre Odoo est souvent réécrit avec le type
 // (« Animation ») par l'automatisation Studio ; on y ajoute le client lié,
 // lu dans la description (« Client : NOM (CODE) — tél. »).
+const hhmmFR = (d: Date) => d.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
+
 // Client lié affiché (nom + ville), vide si le RDV n'a pas de client.
 function eventClient(e: any): string {
   const line = descToText(e?.description || "").match(/Client\s*:\s*(.+)/i)?.[1] || "";

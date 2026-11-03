@@ -11,3 +11,11 @@ export function eventOnDay(e: any, d: Date): boolean {
 }
 
 export const ALLDAY_FIELDS = ["allday", "start_date", "stop_date"];
+
+// Client lié au RDV (« document lié » d'Odoo, posé par AppointmentModal).
+// res_model peut revenir vide quand Odoo ne garde que res_model_id : un res_id
+// seul vient alors forcément de l'app, qui ne lie que des fiches client.
+export function linkedPartnerId(e: any): number | null {
+  const id = Number(e?.res_id) || 0;
+  return id > 0 && (!e?.res_model || e.res_model === "res.partner") ? id : null;
+}

@@ -5,7 +5,7 @@
 import { useEffect, useMemo, useState } from "react";
 import * as odoo from "@/lib/odoo";
 import { GLASS, GLASS_PILL } from "@/components/glass";
-import { eventOnDay, ALLDAY_FIELDS } from "@/lib/calendar";
+import { eventOnDay, ALLDAY_FIELDS, linkedPartnerId } from "@/lib/calendar";
 
 const C = {
   text: "#0f172a", textSec: "#334155", muted: "#64748b", faint: "#94a3b8",
@@ -76,13 +76,13 @@ export default function AgendaGlass({ session, onOpenPlanning }: {
           rows = await odoo.searchRead(session, "calendar.event", domain, BASE, 600, "start asc");
         }
         // RDV lié à un client : « Visite de <client> à <ville> ».
-        const ids = Array.from(new Set(rows.filter(r => r.res_model === "res.partner" && r.res_id).map(r => r.res_id)));
+        const ids = Array.from(new Set(rows.filter(r => linkedPartnerId(r)).map(r => linkedPartnerId(r)!)));
         if (ids.length) {
           try {
             const partners = await odoo.searchRead(session, "res.partner", [["id", "in", ids]], ["id", "name", "city"], ids.length);
             const byId = new Map(partners.map((p: any) => [p.id, p]));
             rows = rows.map(r => {
-              const p: any = r.res_model === "res.partner" && byId.get(r.res_id);
+              const p: any = linkedPartnerId(r) && byId.get(linkedPartnerId(r)!);
               return p ? { ...r, label: `Visite de ${p.name}${p.city ? ` à ${p.city}` : r.location ? ` à ${r.location}` : ""}` } : r;
             });
           } catch {}
