@@ -2980,6 +2980,10 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
   }, [session]);
   // Vue liste : une ligne par article, le panier prend toute la largeur.
   const [listView, setListView] = useState(false);
+  // Récap du panier replié par défaut (expédition, type, offres, note, détail
+  // du total) : il mangeait la moitié de la hauteur du panier. Choix mémorisé.
+  const [recapOpen, setRecapOpen] = useState(() => { try { return localStorage.getItem("wms_recap_open") === "1"; } catch { return false; } });
+  const toggleRecap = () => setRecapOpen(o => { try { localStorage.setItem("wms_recap_open", o ? "0" : "1"); } catch {} return !o; });
   // Type de gratuité appliqué à toutes les gratuités (Coffre DC par défaut).
   const [giftType, setGiftType] = useState(DEFAULT_FREE_TYPE);
   const offerGift = (p: any) => {
@@ -3778,7 +3782,22 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
 
         {/* Bloc récap sombre — note + total + validation */}
         <div style={{ padding: "0 12px 12px" }}>
-          <div style={{ background: "#0f172a", borderRadius: 18, padding: "14px 14px 16px", boxShadow: "0 12px 28px rgba(15,23,42,0.35)" }}>
+          <div style={{ background: "#0f172a", borderRadius: 18, padding: recapOpen ? "14px 14px 16px" : "10px 12px 12px", boxShadow: "0 12px 28px rgba(15,23,42,0.35)" }}>
+            {/* Résumé cliquable : ouvre / replie le détail */}
+            <button onClick={toggleRecap} title={recapOpen ? "Replier" : "Expédition, type, offres, note"}
+              style={{ width: "100%", display: "flex", alignItems: "center", gap: 6, padding: "4px 2px", marginBottom: recapOpen ? 10 : 8, background: "none", border: "none", cursor: "pointer", fontFamily: "inherit", color: "rgba(255,255,255,0.7)", fontSize: 11.5, fontWeight: 700, textAlign: "left" as const, minWidth: 0 }}>
+              <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>
+                {[
+                  shipping && `Expé. ${shipping.expedition.toLocaleDateString("fr-FR", { day: "2-digit", month: "2-digit" })}`,
+                  meta?.typeField && (meta.typeOptions.find(o => o.value === orderType)?.label || "Type ?"),
+                  offerIds.length > 0 && `${offerIds.length} offre${offerIds.length > 1 ? "s" : ""}`,
+                  note.trim() && "Note",
+                  shippingFee && `+${fmtPrice(SHIPPING_FEE_HT)} port`,
+                ].filter(Boolean).join(" · ") || "Détails de la commande"}
+              </span>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6" style={{ flexShrink: 0, transform: recapOpen ? "rotate(180deg)" : "none", transition: "transform 0.2s" }}><path d="M6 15l6-6 6 6"/></svg>
+            </button>
+            {recapOpen && <>
             {shipping && (() => {
               const d = (x: Date) => x.toLocaleDateString("fr-FR", { weekday: "short", day: "numeric", month: "short" });
               return (
@@ -3836,8 +3855,10 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
             )}
             <textarea value={note} onChange={e => setNote(e.target.value)} placeholder="Note pour la commande..."
               rows={2} style={{ width: "100%", boxSizing: "border-box" as const, marginBottom: 12, padding: "9px 11px", border: "1px solid rgba(255,255,255,0.12)", borderRadius: 10, fontSize: 12, fontFamily: "inherit", resize: "none" as const, background: "rgba(255,255,255,0.06)", color: "#fff", outline: "none" }} />
+            </>}
 
-            <div style={{ borderTop: "1px solid rgba(255,255,255,0.1)", paddingTop: 10, display: "flex", flexDirection: "column" as const, gap: 5, marginBottom: 12 }}>
+            <div style={{ borderTop: recapOpen ? "1px solid rgba(255,255,255,0.1)" : "none", paddingTop: recapOpen ? 10 : 0, display: "flex", flexDirection: "column" as const, gap: 5, marginBottom: recapOpen ? 12 : 8 }}>
+              {recapOpen && <>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                 <span style={{ fontSize: 12, color: "rgba(255,255,255,0.55)" }}>Sous-total</span>
                 <span style={{ fontSize: 13, fontWeight: 600, color: "rgba(255,255,255,0.85)" }}>{fmtPrice(cartTotal)}</span>
@@ -3854,7 +3875,8 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
                   <span style={{ fontSize: 13, fontWeight: 700, color: "#fbbf24" }}>+{fmtPrice(SHIPPING_FEE_HT)}</span>
                 </div>
               )}
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", paddingTop: 4 }}>
+              </>}
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", paddingTop: recapOpen ? 4 : 0 }}>
                 <span style={{ fontSize: 13, fontWeight: 700, color: "#fff", display: "flex", alignItems: "center", gap: 8 }}>
                   Total HT
                   {cartCount > 0 && (
@@ -3871,15 +3893,17 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
             {/* Le bouton annonce la mise en file AVANT la validation quand on est hors
                  ligne — pas de surprise après coup. */}
             <button onClick={onValidate} disabled={submitting || cartCount === 0}
-              style={{ width: "100%", padding: "14px 0", background: cartCount === 0 ? "rgba(255,255,255,0.12)" : submitting ? "rgba(94,234,212,0.4)" : "#2dd4bf", color: cartCount === 0 ? "rgba(255,255,255,0.4)" : "#0f172a", border: "none", borderRadius: 999, fontSize: 14, fontWeight: 800, cursor: cartCount === 0 ? "default" : "pointer", fontFamily: "inherit", transition: "all 0.2s" }}>
+              style={{ width: "100%", padding: recapOpen ? "14px 0" : "11px 0", background: cartCount === 0 ? "rgba(255,255,255,0.12)" : submitting ? "rgba(94,234,212,0.4)" : "#2dd4bf", color: cartCount === 0 ? "rgba(255,255,255,0.4)" : "#0f172a", border: "none", borderRadius: 999, fontSize: 14, fontWeight: 800, cursor: cartCount === 0 ? "default" : "pointer", fontFamily: "inherit", transition: "all 0.2s" }}>
               {submitting ? "Création…"
                 : cartCount === 0 ? "Panier vide"
                 : !navOnline ? "Enregistrer hors ligne · envoi auto"
                 : `Créer le devis${freeItems.length > 0 ? " + BC gratuit" : ""} →`}
             </button>
-            <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", textAlign: "center" as const, marginTop: 8 }}>
-              {navOnline ? "Prix Odoo appliqués à la création" : "Hors ligne — la commande partira au retour du réseau"}
-            </div>
+            {(recapOpen || !navOnline) && (
+              <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", textAlign: "center" as const, marginTop: 8 }}>
+                {navOnline ? "Prix Odoo appliqués à la création" : "Hors ligne — la commande partira au retour du réseau"}
+              </div>
+            )}
           </div>
         </div>
       </div>
