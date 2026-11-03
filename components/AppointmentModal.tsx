@@ -589,29 +589,41 @@ function WeekPlanner({ monday, gridStart, day, events, startLocal, durationHours
       </div>
       {view === "month" ? (
         <div>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", marginBottom: 3 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(7, minmax(0, 1fr))", marginBottom: 3 }}>
             {["L", "M", "M", "J", "V", "S", "D"].map((l, i) => <div key={i} style={{ textAlign: "center" as const, fontSize: 10, fontWeight: 700, color: C.muted }}>{l}</div>)}
           </div>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 3 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(7, minmax(0, 1fr))", gap: 3 }}>
             {monthDays.map(d => {
               const ds = dayStr(d), sel = ds === day, out = ds.slice(0, 7) !== day.slice(0, 7);
               const n = events.filter(r => !r.allday && eventOnDay(r, d)).length;
               const tripHere = events.find(r => r.allday && eventOnDay(r, d));
               return (
-                <button type="button" key={ds} onClick={() => { onPick(`${ds}T${time}`); chooseView("week"); }} title={tripHere ? `Déplacement · ${(tripHere.location || tripHere.name)}` : undefined}
-                  style={{ minHeight: 46, padding: "4px 0", borderRadius: 8, border: "none", cursor: "pointer", fontFamily: "inherit", opacity: out ? 0.4 : 1,
-                    background: sel ? C.teal : tripHere ? C.orangeSoft : C.bg, color: sel ? "#fff" : C.text }}>
-                  <div style={{ fontSize: 13, fontWeight: 800 }}>{d.getDate()}</div>
-                  <div style={{ fontSize: 9, fontWeight: 700, color: sel ? "#fff" : n ? C.teal : C.muted }}>{n ? `${n} RDV` : "·"}</div>
-                  {tripHere && <div style={{ margin: "1px 2px 0", fontSize: 8, fontWeight: 800, color: sel ? "#fff" : C.orange, overflow: "hidden", whiteSpace: "nowrap" as const, textOverflow: "ellipsis" }}>{(tripHere.location || tripHere.name)}</div>}
+                <button type="button" key={ds} onClick={() => { onPick(`${ds}T${time}`); chooseView("week"); }}
+                  title={[n ? `${n} RDV` : "", tripHere ? `Déplacement · ${tripHere.location || tripHere.name}` : ""].filter(Boolean).join(" — ") || undefined}
+                  style={{ position: "relative" as const, height: 44, padding: 0, borderRadius: 9, border: "none", cursor: "pointer", fontFamily: "inherit", opacity: out ? 0.35 : 1, overflow: "hidden",
+                    display: "flex", flexDirection: "column" as const, alignItems: "center", justifyContent: "center", gap: 3,
+                    background: sel ? C.teal : "transparent", color: sel ? "#fff" : C.text }}>
+                  <span style={{ fontSize: 13, fontWeight: 800 }}>{d.getDate()}</span>
+                  {/* Points = RDV (3 max) */}
+                  <span style={{ display: "flex", gap: 2, height: 5 }}>
+                    {Array.from({ length: Math.min(n, 3) }).map((_, i) => (
+                      <span key={i} style={{ width: 5, height: 5, borderRadius: "50%", background: sel ? "#fff" : C.teal }} />
+                    ))}
+                  </span>
+                  {/* Déplacement : liseré orange en bas de la case */}
+                  {tripHere && <span style={{ position: "absolute" as const, left: 4, right: 4, bottom: 3, height: 3, borderRadius: 2, background: sel ? "#fff" : C.orange }} />}
                 </button>
               );
             })}
           </div>
-          <div style={{ fontSize: 10.5, color: C.muted, marginTop: 6 }}>Touche un jour pour voir ses créneaux.</div>
+          <div style={{ display: "flex", gap: 12, fontSize: 10.5, color: C.muted, marginTop: 8 }}>
+            <span><span style={{ display: "inline-block", width: 6, height: 6, borderRadius: "50%", background: C.teal, marginRight: 4 }} />RDV</span>
+            <span><span style={{ display: "inline-block", width: 12, height: 3, borderRadius: 2, background: C.orange, marginRight: 4, verticalAlign: "middle" }} />Déplacement</span>
+            <span style={{ marginLeft: "auto" }}>Touche un jour pour ses créneaux</span>
+          </div>
         </div>
       ) : <>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 4, marginBottom: 10 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(7, minmax(0, 1fr))", gap: 4, marginBottom: 10 }}>
         {days.map(d => {
           const ds = dayStr(d), sel = ds === day;
           const n = events.filter(r => !r.allday && eventOnDay(r, d)).length;
