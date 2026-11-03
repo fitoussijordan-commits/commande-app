@@ -180,14 +180,20 @@ export default function AppointmentModal({ session, client: clientProp, event, a
     d.setDate(d.getDate() - ((d.getDay() + 6) % 7));
     return d;
   }, [day]);
+  // Chargé sur toute la grille du mois (6 semaines) : sert aux vues semaine et mois.
+  const gridStart = useMemo(() => {
+    const d = new Date(`${day || toLocalInput(new Date()).slice(0, 10)}T00:00`);
+    d.setDate(1); d.setDate(d.getDate() - ((d.getDay() + 6) % 7));
+    return d;
+  }, [day.slice(0, 7)]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
-    const to = new Date(monday); to.setDate(to.getDate() + 7);
+    const to = new Date(gridStart); to.setDate(to.getDate() + 42);
     odoo.searchRead(session, "calendar.event",
-      [["user_id", "=", session.uid], ["start", "<", toOdooUTC(to)], ["stop", ">", toOdooUTC(monday)]],
+      [["user_id", "=", session.uid], ["start", "<", toOdooUTC(to)], ["stop", ">", toOdooUTC(gridStart)]],
       ["id", "name", "start", "stop", ...ALLDAY_FIELDS, "location", "x_studio_annul"], 200, "start asc")
       .then((rows: any[]) => setWeekEvents(rows.filter(r => !r.x_studio_annul && r.id !== event?.id)))
       .catch(() => setWeekEvents([]));
-  }, [monday, session, event?.id]);
+  }, [gridStart, session, event?.id]);
   // Créneaux occupés du jour (les déplacements, journée entière, n'en bloquent pas).
   const dayEvents = useMemo(() => weekEvents.filter(r => !r.allday && eventOnDay(r, new Date(`${day}T12:00`))), [weekEvents, day]);
   const overlaps = useMemo(() => {
@@ -514,7 +520,7 @@ export default function AppointmentModal({ session, client: clientProp, event, a
           </button>
         </div>
         </div>
-        <WeekPlanner monday={monday} day={day} events={weekEvents} startLocal={startLocal} durationHours={durationHours}
+        <WeekPlanner monday={monday} gridStart={gridStart} day={day} events={weekEvents} startLocal={startLocal} durationHours={durationHours}
           hideSlot={trip}
           onPick={v => {
             if (trip) { const d = v.slice(0, 10); setTripFrom(d); if (tripTo < d) setTripTo(d); setStartLocal(`${d}T${startLocal.slice(11, 16) || "09:00"}`); return; }
@@ -542,14 +548,22 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 // changer de jour) + journée choisie de 8 h à 20 h, avec le créneau proposé.
 // Tap sur un créneau vide = heure du RDV (au quart d'heure).
 const H0 = 8, H1 = 20, PX = 34;   // heures affichées, pixels par heure
-function WeekPlanner({ monday, day, events, startLocal, durationHours, onPick, hideSlot }: {
-  monday: Date; day: string; events: any[]; startLocal: string; durationHours: number; onPick: (v: string) => void; hideSlot?: boolean;
+function WeekPlanner({ monday, gridStart, day, events, startLocal, durationHours, onPick, hideSlot }: {
+  monday: Date; gridStart: Date; day: string; events: any[]; startLocal: string; durationHours: number; onPick: (v: string) => void; hideSlot?: boolean;
 }) {
+  const [view, setView] = useState<"week" | "month">(() => { try { return localStorage.getItem("wms_rdv_planner_view") === "month" ? "month" : "week"; } catch { return "week"; } });
+  const chooseView = (v: "week" | "month") => { setView(v); try { localStorage.setItem("wms_rdv_planner_view", v); } catch {} };
   const days = Array.from({ length: 7 }, (_, i) => { const d = new Date(monday); d.setDate(d.getDate() + i); return d; });
+  const monthDays = Array.from({ length: 42 }, (_, i) => { const d = new Date(gridStart); d.setDate(d.getDate() + i); return d; });
+  const monthLabel = new Date(`${day}T12:00`).toLocaleDateString("fr-FR", { month: "long", year: "numeric" }).replace(/^./, c => c.toUpperCase());
   const dayStr = (d: Date) => toLocalInput(d).slice(0, 10);
   const hhmm = (d: Date) => d.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
   const time = startLocal.slice(11, 16) || "09:00";
-  const shiftWeek = (n: number) => { const d = new Date(`${day}T${time}`); d.setDate(d.getDate() + n * 7); onPick(toLocalInput(d)); };
+  const shiftWeek = (n: number) => {
+    const d = new Date(`${day}T${time}`);
+    if (view === "month") d.setMonth(d.getMonth() + n, 1); else d.setDate(d.getDate() + n * 7);
+    onPick(toLocalInput(d));
+  };
   const top = (d: Date) => (d.getHours() + d.getMinutes() / 60 - H0) * PX;
   const dayRef = new Date(`${day}T12:00`);
   const dayEv = events.filter(r => !r.allday && eventOnDay(r, dayRef));
@@ -559,10 +573,44 @@ function WeekPlanner({ monday, day, events, startLocal, durationHours, onPick, h
   return (
     <div style={{ flex: "1 1 300px", minWidth: 0 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8 }}>
-        <div style={{ flex: 1, fontSize: 12, fontWeight: 700, color: C.textSec }}>Mon planning</div>
-        <button type="button" onClick={() => shiftWeek(-1)} style={navBtn} aria-label="Semaine précédente">‹</button>
-        <button type="button" onClick={() => shiftWeek(1)} style={navBtn} aria-label="Semaine suivante">›</button>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontSize: 12, fontWeight: 700, color: C.textSec }}>Mon planning</div>
+          <div style={{ fontSize: 13, fontWeight: 800, color: C.text }}>{monthLabel}</div>
+        </div>
+        <div style={{ display: "flex", background: C.bg, borderRadius: 8, padding: 2 }}>
+          {([["week", "Semaine"], ["month", "Mois"]] as const).map(([v, l]) => (
+            <button type="button" key={v} onClick={() => chooseView(v)}
+              style={{ height: 24, padding: "0 9px", borderRadius: 6, border: "none", cursor: "pointer", fontFamily: "inherit", fontSize: 11, fontWeight: 700,
+                background: view === v ? C.white : "transparent", color: view === v ? C.tealDark : C.muted, boxShadow: view === v ? "0 1px 3px rgba(15,23,42,0.1)" : "none" }}>{l}</button>
+          ))}
+        </div>
+        <button type="button" onClick={() => shiftWeek(-1)} style={navBtn} aria-label="Précédent">‹</button>
+        <button type="button" onClick={() => shiftWeek(1)} style={navBtn} aria-label="Suivant">›</button>
       </div>
+      {view === "month" ? (
+        <div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", marginBottom: 3 }}>
+            {["L", "M", "M", "J", "V", "S", "D"].map((l, i) => <div key={i} style={{ textAlign: "center" as const, fontSize: 10, fontWeight: 700, color: C.muted }}>{l}</div>)}
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 3 }}>
+            {monthDays.map(d => {
+              const ds = dayStr(d), sel = ds === day, out = ds.slice(0, 7) !== day.slice(0, 7);
+              const n = events.filter(r => !r.allday && eventOnDay(r, d)).length;
+              const tripHere = events.find(r => r.allday && eventOnDay(r, d));
+              return (
+                <button type="button" key={ds} onClick={() => { onPick(`${ds}T${time}`); chooseView("week"); }} title={tripHere ? `Déplacement · ${tripHere.name}` : undefined}
+                  style={{ minHeight: 46, padding: "4px 0", borderRadius: 8, border: "none", cursor: "pointer", fontFamily: "inherit", opacity: out ? 0.4 : 1,
+                    background: sel ? C.teal : tripHere ? C.orangeSoft : C.bg, color: sel ? "#fff" : C.text }}>
+                  <div style={{ fontSize: 13, fontWeight: 800 }}>{d.getDate()}</div>
+                  <div style={{ fontSize: 9, fontWeight: 700, color: sel ? "#fff" : n ? C.teal : C.muted }}>{n ? `${n} RDV` : "·"}</div>
+                  {tripHere && <div style={{ margin: "1px 2px 0", fontSize: 8, fontWeight: 800, color: sel ? "#fff" : C.orange, overflow: "hidden", whiteSpace: "nowrap" as const, textOverflow: "ellipsis" }}>{tripHere.name}</div>}
+                </button>
+              );
+            })}
+          </div>
+          <div style={{ fontSize: 10.5, color: C.muted, marginTop: 6 }}>Touche un jour pour voir ses créneaux.</div>
+        </div>
+      ) : <>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 4, marginBottom: 10 }}>
         {days.map(d => {
           const ds = dayStr(d), sel = ds === day;
@@ -609,6 +657,7 @@ function WeekPlanner({ monday, day, events, startLocal, durationHours, onPick, h
         )}
       </div>
       <div style={{ fontSize: 10.5, color: C.muted, marginTop: 6 }}>Touche un créneau pour y placer le RDV.</div>
+      </>}
     </div>
   );
 }
