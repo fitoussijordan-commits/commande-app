@@ -803,7 +803,8 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
         ...Object.entries(templateInfo).filter(([g, t]) => groupsInCart.has(g) && t.note).map(([, t]) => String(t.note)),
       ];
       const internalNote = internalLines.join("\n");
-      if (internalNote && m?.internalNoteField) metaVals[m.internalNoteField] = internalNote;
+      // Champ « Note interne » du devis laissé vide pour l'instant (un champ Studio
+      // dédié viendra) : ces lignes vont en note interne dans le chatter.
 
       // Franco : sous 250 € HT net → 10 € HT de frais de livraison.
       const netHt = cartNet(cart, loyalty.computeLineDiscounts(appliedPromos, promoCart(cart)), eventDiscount, groupDiscounts);
@@ -918,8 +919,8 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
         return;
       }
 
-      // Pas de champ « Note interne » sur la commande : note interne dans le chatter.
-      if (internalNote && !m?.internalNoteField) {
+      // Ruptures et notes de campagne : note interne dans le chatter.
+      if (internalNote) {
         const html = internalNote.split("\n").map(l => l.replace(/&/g, "&amp;").replace(/</g, "&lt;")).join("<br/>");
         odoo.callMethod(session, "sale.order", "message_post", [[mainId]],
           { body: html, message_type: "comment", subtype_xmlid: "mail.mt_note" }).catch(() => {});
