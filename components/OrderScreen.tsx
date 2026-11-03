@@ -2108,7 +2108,7 @@ function eventTitle(e: any): string {
   const line = descToText(e?.description || "").match(/Client\s*:\s*(.+)/i)?.[1] || "";
   const name = e?._client?.name || line.replace(/\(.*$/, "").replace(/—.*$/, "").trim();
   const client = name && `${name}${e?._client?.city ? ` ${e._client.city}` : ""}`;
-  return client && !String(e?.name || "").toLowerCase().includes(name.toLowerCase()) ? `${e.name} — ${client}` : e?.name;
+  return client && !String(e?.name || "").toLowerCase().includes(name.toLowerCase()) ? `${client} — ${e.name}` : e?.name;
 }
 
 // Étiquette « Offre produit » d'un article dans le panier.
