@@ -1964,8 +1964,9 @@ function HomeScreen({ session, onNewOrder, onOpenClient, onToast, initialDate }:
                 ))}
               </div>
             )}
-            {/* Grille horaire */}
-            <div style={{ flex: 1, overflowY: "auto" as const }}>
+            {/* Grille horaire — sans défilement propre : une barre de défilement
+                ici décalait les colonnes par rapport aux en-têtes des jours. */}
+            <div>
               <div style={{ display: "grid", gridTemplateColumns: cols, position: "relative" as const, height: (H1 - H0) * PXH }}>
                 <div style={{ position: "relative" as const }}>
                   {Array.from({ length: H1 - H0 }, (_, h) => (
