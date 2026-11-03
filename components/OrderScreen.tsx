@@ -3265,6 +3265,10 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
   };
 
   const cartItems = orderedCart(cart);
+  // Loupe du panier : filtre les lignes (nom, réf., EAN) sans toucher au panier.
+  const [cartSearch, setCartSearch] = useState<string | null>(null);
+  const cartWords = fold(cartSearch || "").split(/\s+/).filter(Boolean);
+  const shownCartItems = cartWords.length ? cartItems.filter(i => !i.note && matchesSearch(i.product, cartWords)) : cartItems;
   const cartCount = cartItems.reduce((s, i) => s + i.qty, 0);
   const cartTotal = cartItems.reduce((s, i) => s + i.qty * i.unitPrice, 0);
   const freeCount = freeItems.reduce((s, i) => s + i.qty, 0);
@@ -3553,6 +3557,11 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
           <div style={{ fontSize: 13, fontWeight: 700, display: "flex", alignItems: "center", gap: 7 }}>
             <Icon name="cart" size={14} />
             <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>Panier — {client.name}</span>
+            {/* Loupe : chercher dans le panier */}
+            <button onClick={() => setCartSearch(v => v === null ? "" : null)} title="Chercher dans le panier"
+              style={{ width: 30, height: 30, borderRadius: 8, background: cartSearch !== null ? "#fff" : "rgba(255,255,255,0.15)", border: "none", color: cartSearch !== null ? "#0f766e" : "#fff", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+              <Icon name="search" size={15} />
+            </button>
             {/* Ligne de commentaire */}
             <button onClick={() => onAddNote("")} title="Ajouter une ligne de commentaire"
               style={{ width: 30, height: 30, borderRadius: 8, background: "rgba(255,255,255,0.15)", border: "none", color: "#fff", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
@@ -3571,6 +3580,14 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
           </div>
         </div>
 
+        {cartSearch !== null && (
+          <div style={{ padding: "8px 12px 0", display: "flex", alignItems: "center", gap: 8 }}>
+            <input autoFocus value={cartSearch} onChange={e => setCartSearch(e.target.value)} placeholder="Chercher dans le panier (nom, réf., EAN)…"
+              onKeyDown={e => { if (e.key === "Escape") setCartSearch(null); }}
+              style={{ flex: 1, minWidth: 0, height: 34, padding: "0 10px", borderRadius: 9, border: `1.5px solid ${C.tealMid}`, fontSize: 13, fontFamily: "inherit", color: C.text, outline: "none" }} />
+            {cartWords.length > 0 && <span style={{ fontSize: 11, fontWeight: 700, color: C.muted, flexShrink: 0 }}>{shownCartItems.length} / {cartItems.filter(i => !i.note).length}</span>}
+          </div>
+        )}
         {/* Liste articles */}
         <div style={{ flex: 1, overflowY: "auto" as const, padding: "10px 12px" }}>
           {cartItems.length === 0 ? (
@@ -3579,8 +3596,8 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
               <div style={{ fontSize: 12 }}>Ajoute des produits</div>
             </div>
           ) : (
-            cartItems.map((item, idx) => {
-              const prevGroup = idx > 0 ? cartItems[idx - 1].group : undefined;
+            shownCartItems.map((item, idx) => {
+              const prevGroup = idx > 0 ? shownCartItems[idx - 1].group : undefined;
               // Séparateur quand on change de MEA ; « Autres articles » après une MEA.
               const sepLabel = item.group !== prevGroup && (idx > 0 || item.group)
                 ? (item.group || "Autres articles") : null;
