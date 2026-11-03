@@ -4,6 +4,7 @@ import * as odoo from "@/lib/odoo";
 import * as sync from "@/lib/sync";
 import { descToText, routeLines, ROUTE_LINE } from "@/lib/text";
 import { eventOnDay, ALLDAY_FIELDS } from "@/lib/calendar";
+import { dedupeClients } from "@/lib/clients";
 
 const C = {
   bg: "#f8fafc", white: "#fff", text: "#0f172a", textSec: "#334155",
@@ -155,11 +156,12 @@ export default function AppointmentModal({ session, client: clientProp, event, a
     if (!canPickClient || q.length < 2) { setClientResults([]); return; }
     const t = setTimeout(async () => {
       try {
-        setClientResults(await odoo.searchRead(session, "res.partner",
+        // Comme l'écran client : sans les contacts / adresses enfants ni doublons.
+        setClientResults(dedupeClients(await odoo.searchRead(session, "res.partner",
           ["|", "|", ["name", "ilike", q], ["ref", "ilike", q], ["city", "ilike", q], ["customer_rank", ">", 0], ["active", "=", true]],
-          ["id", "name", "ref", "street", "zip", "city", "phone"], 8));
+          ["id", "name", "ref", "street", "zip", "city", "phone", "parent_id", "type", "is_company"], 30)).slice(0, 10));
       } catch {
-        try { setClientResults(await sync.searchCachedClients(q, 8)); } catch { setClientResults([]); }
+        try { setClientResults(dedupeClients(await sync.searchCachedClients(q, 30)).slice(0, 10)); } catch { setClientResults([]); }
       }
     }, 250);
     return () => clearTimeout(t);

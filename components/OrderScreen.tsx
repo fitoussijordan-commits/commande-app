@@ -25,6 +25,7 @@ import { apiUrl } from "@/lib/apiBase";
 import * as loyalty from "@/lib/loyalty";
 import { PriceItem, sortPriceItems, applyPricelist, resolveBaseLists } from "@/lib/pricing";
 import { descToText, routeUrls } from "@/lib/text";
+import { dedupeClients } from "@/lib/clients";
 import { eventOnDay, ALLDAY_FIELDS, linkedPartnerId } from "@/lib/calendar";
 import { pickClientAmong } from "@/lib/clients";
 
@@ -1413,46 +1414,6 @@ function fmtEvolution(v: unknown): string | null {
 
 // Types d'adresse Odoo qui ne sont PAS des clients commandables : ce sont des
 // adresses rattachées à une société mère (livraison, facturation…).
-const ADDRESS_TYPES = new Set(["delivery", "invoice", "other", "private"]);
-
-// Score de « fiche la plus légitime » quand deux enregistrements se disputent le
-// même code client : société > fiche racine > fiche renseignée.
-function clientScore(c: any): number {
-  return (c.is_company ? 4 : 0) + (c.parent_id ? 0 : 2) + (c.phone ? 1 : 0);
-}
-
-// Dédoublonne les résultats de recherche client.
-//
-// Odoo peut renvoyer DEUX enregistrements res.partner pour ce qui est, côté
-// utilisateur, un seul client : la société mère et une de ses adresses enfants
-// (livraison/facturation) portant le même nom et le même code. L'adresse enfant
-// n'apparaît pas comme une ligne séparée dans la liste Contacts d'Odoo — elle vit
-// dans l'onglet « Contacts & Adresses » — mais si elle a customer_rank > 0 elle
-// remonte quand même dans un search_read, d'où le doublon à l'écran.
-//
-// Deux passes : on écarte les adresses enfants, puis, en filet de sécurité, on ne
-// garde qu'une fiche par couple (code, nom).
-function dedupeClients(rows: any[]): any[] {
-  // Passe 1 — adresses enfants. Repli sur la liste brute si le filtre vide tout
-  // (instance Odoo sans champ `type`, ou cache préchargé avant cette version).
-  const roots = rows.filter(c => !(c.parent_id && ADDRESS_TYPES.has(c.type)));
-  const base = roots.length ? roots : rows;
-
-  // Passe 2 — doublons réels sur (code, nom). Sans code, on ne touche à rien :
-  // deux clients distincts peuvent légitimement porter le même nom.
-  const bestByKey = new Map<string, number>();
-  const out: any[] = [];
-  for (const c of base) {
-    const ref = (c.ref || "").trim().toLowerCase();
-    if (!ref) { out.push(c); continue; }
-    const key = `${ref}|${(c.name || "").trim().toLowerCase()}`;
-    const at = bestByKey.get(key);
-    if (at === undefined) { bestByKey.set(key, out.push(c) - 1); continue; }
-    if (clientScore(c) > clientScore(out[at])) out[at] = c;
-  }
-  return out;
-}
-
 // ═══════════════════════════════════════════════════════════════════════════
 // ACCUEIL — planning de la semaine du commercial connecté
 // ═══════════════════════════════════════════════════════════════════════════
