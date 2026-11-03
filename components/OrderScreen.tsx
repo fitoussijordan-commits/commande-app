@@ -3468,7 +3468,7 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
                       <div style={{ fontSize: 10.5, color: C.muted, fontFamily: "monospace", marginBottom: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>{p.default_code}{p.barcode ? ` · ${p.barcode}` : ""}</div>
                       <div style={{ fontSize: 12.5, fontWeight: 600, color: C.text, lineHeight: 1.3, height: 33, overflow: "hidden" }}>{p.name}</div>
                       {saleStep(p) > 1 && (
-                        <div style={{ fontSize: 10, fontWeight: 700, color: C.tealDark, background: C.tealSoft, borderRadius: 5, padding: "1px 6px", marginTop: 3, display: "inline-block" }}>par {saleStep(p)}</div>
+                        <div style={{ fontSize: 10, fontWeight: 700, color: C.tealDark, background: C.tealSoft, borderRadius: 5, padding: "1px 6px", marginTop: 3, display: "inline-block" }}>min {saleStep(p)}</div>
                       )}
                       {activeCatId === FAV_CAT_ID && p.totalQty != null && (
                         <div style={{ fontSize: 10, fontWeight: 700, color: C.orange, background: C.orangeSoft, borderRadius: 5, padding: "2px 6px", marginTop: 3, display: "inline-block" }}>
@@ -3624,7 +3624,7 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
                     <span>{item.qty} × {fmtPrice(item.unitPrice)}</span>
                     {item.priceLocked && <span style={{ color: C.teal, fontWeight: 700 }}>prix fixé</span>}
                     {hasPricelistDiscount && <span style={{ textDecoration: "line-through" }}>{fmtPrice(catalog)}</span>}
-                    {saleStep(item.product) > 1 && <span style={{ color: C.tealDark, fontWeight: 700 }}>par {saleStep(item.product)}</span>}
+                    {saleStep(item.product) > 1 && <span style={{ color: C.tealDark, fontWeight: 700 }}>min {saleStep(item.product)}</span>}
                     {(pricelistPct > 0 || pct + groupPct > 0) && (
                       <span style={{ background: C.orangeSoft, color: C.orange, borderRadius: 5, padding: "1px 6px", fontWeight: 700 }}>
                         −{Math.min(100, pricelistPct + pct + groupPct)}%

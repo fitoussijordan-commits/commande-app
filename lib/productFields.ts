@@ -4,8 +4,8 @@
 // une fois par session ; dernière liste connue gardée pour le hors ligne).
 //
 //   • x_type_de_produit_id : regroupement « Type de produit » du catalogue.
-//   • min_qty              : quantité minimum de vente (« par 2 ») — la quantité
-//                            commandée est toujours un multiple de cette valeur.
+//   • min_qty              : quantité minimum de vente (« min 2 ») — au-delà,
+//                            n'importe quelle quantité (2, 3, 4…).
 import * as odoo from "@/lib/odoo";
 
 const OPTIONAL = ["x_type_de_produit_id", "min_qty"];
@@ -25,16 +25,16 @@ export async function optionalProductFields(session: odoo.OdooSession): Promise<
   }
 }
 
-// Pas de vente de l'article : 1, ou sa quantité minimum (2 → 2, 4, 6…).
+// Quantité minimum de vente de l'article : 1, ou sa min_qty (2 → 2, 3, 4…).
 export function saleStep(product: any): number {
   const n = Math.round(Number(product?.min_qty) || 0);
   return n > 1 ? n : 1;
 }
 
-// Quantité ramenée sur un multiple du pas : vers le haut quand on augmente,
-// vers le bas quand on diminue (4 → « − » → 2, jamais coincé à 3).
+// Quantité ramenée au minimum de vente : sous le minimum, on monte au minimum,
+// sauf en retirant une unité (« − » depuis le minimum → 0, jamais coincé à 1).
 export function snapQty(product: any, qty: number, previous: number): number {
-  const step = saleStep(product);
-  if (step === 1 || qty <= 0) return qty;
-  return qty >= previous ? Math.ceil(qty / step) * step : Math.floor(qty / step) * step;
+  const min = saleStep(product);
+  if (min === 1 || qty <= 0 || qty >= min) return qty;
+  return previous - qty === 1 ? 0 : min;
 }
