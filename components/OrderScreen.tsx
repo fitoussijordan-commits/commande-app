@@ -450,6 +450,16 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
   // « Type de commande » et « Offres commandées » saisis dans l'app (champs Odoo).
   const [orderType, setOrderType] = useState<string | number | "">("");
   const [offerIds, setOfferIds] = useState<number[]>([]);
+  // Offres des articles du panier (champ « Offre produit » de l'article) :
+  // ajoutées d'office aux « Offres commandées ».
+  const autoOffers = useMemo(() => {
+    const m = new Map<number, string>();
+    for (const it of [...Object.values(cart), ...giftItems]) {
+      const o = (it as any).product?.x_offre_produit_id;
+      if (Array.isArray(o) && o[0] && (("qty" in it) ? (it as any).qty > 0 : true)) m.set(o[0], o[1]);
+    }
+    return Array.from(m, ([id, name]) => ({ id, name }));
+  }, [cart, giftItems]);
   // Infos des modèles ajoutés (MEA / implantation) : note interne de campagne, date d'expédition.
   const [templateInfo, setTemplateInfo] = useState<Record<string, { note?: string; shipDate?: string }>>({});
   const refreshPendingDrafts = useCallback(() => setPendingDrafts(listDrafts()), []);
@@ -782,7 +792,8 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
       const metaVals: any = {};
       const m = await orderMeta(session).catch(() => null);
       if (m?.typeField && orderType !== "") metaVals[m.typeField] = orderType;
-      if (m?.offersField && offerIds.length) metaVals[m.offersField] = [[6, 0, offerIds]];
+      const allOfferIds = Array.from(new Set([...offerIds, ...autoOffers.map(o => o.id)]));
+      if (m?.offersField && allOfferIds.length) metaVals[m.offersField] = [[6, 0, allOfferIds]];
       // Note INTERNE (jamais imprimée sur le devis) : ruptures à vérifier par le
       // service client + notes de suivi des campagnes ajoutées (ex. SERUM26).
       const ruptures = cartRuptures(cart);
@@ -1350,7 +1361,7 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
           shipping={directLogistics ? shippingPlan : null} onChangeExpedition={setWantedExpedition}
           onAddNote={addNote} onNoteText={setNoteText}
           groupDiscounts={groupDiscounts} setGroupDiscounts={setGroupDiscounts}
-          orderType={orderType} setOrderType={setOrderType} offerIds={offerIds} setOfferIds={setOfferIds}
+          orderType={orderType} setOrderType={setOrderType} offerIds={offerIds} setOfferIds={setOfferIds} autoOffers={autoOffers}
           onTemplateApplied={(name, info) => setTemplateInfo(prev => ({ ...prev, [name]: info }))} />
       )}
 
@@ -2894,12 +2905,13 @@ function ClientHistory({ session, client }: { session: odoo.OdooSession; client:
 // ═══════════════════════════════════════════════════════════════════════════
 // ÉTAPE 2 — Catalogue + Panier persistant
 // ═══════════════════════════════════════════════════════════════════════════
-function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submitting, note, setNote, client, priceItems, onToast, appliedPromos, giftItems, setGiftItems, freeTypes, eventDiscount, setEventDiscount, shipping, onChangeExpedition, onAddNote, onNoteText, groupDiscounts, setGroupDiscounts, orderType, setOrderType, offerIds, setOfferIds, onTemplateApplied }: {
+function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submitting, note, setNote, client, priceItems, onToast, appliedPromos, giftItems, setGiftItems, freeTypes, eventDiscount, setEventDiscount, shipping, onChangeExpedition, onAddNote, onNoteText, groupDiscounts, setGroupDiscounts, orderType, setOrderType, offerIds, setOfferIds, autoOffers, onTemplateApplied }: {
   onAddNote: (text: string, kind?: "line_note" | "line_section", group?: string) => void;
   onNoteText: (id: number, text: string) => void;
   groupDiscounts: Record<string, number>; setGroupDiscounts: React.Dispatch<React.SetStateAction<Record<string, number>>>;
   orderType: string | number | ""; setOrderType: (v: string | number | "") => void;
   offerIds: number[]; setOfferIds: React.Dispatch<React.SetStateAction<number[]>>;
+  autoOffers: { id: number; name: string }[];
   onTemplateApplied: (name: string, info: { note?: string; shipDate?: string }) => void;
   // Commande transmise directement à la logistique : dates prévues (sinon null).
   shipping?: ShippingPlan | null;
@@ -2982,6 +2994,7 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
   const [listView, setListView] = useState(false);
   // Récap du panier replié par défaut (expédition, type, offres, note, détail
   // du total) : il mangeait la moitié de la hauteur du panier. Choix mémorisé.
+  const allOffers = Array.from(new Set([...autoOffers.map(o => o.id), ...offerIds])).map(id => ({ id }));
   const [recapOpen, setRecapOpen] = useState(() => { try { return localStorage.getItem("wms_recap_open") === "1"; } catch { return false; } });
   const toggleRecap = () => setRecapOpen(o => { try { localStorage.setItem("wms_recap_open", o ? "0" : "1"); } catch {} return !o; });
   // Type de gratuité appliqué à toutes les gratuités (Coffre DC par défaut).
@@ -3769,7 +3782,7 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
                 {[
                   shipping && `Expé. ${shipping.expedition.toLocaleDateString("fr-FR", { day: "2-digit", month: "2-digit" })}`,
                   meta?.typeField && (meta.typeOptions.find(o => o.value === orderType)?.label || "Type ?"),
-                  offerIds.length > 0 && `${offerIds.length} offre${offerIds.length > 1 ? "s" : ""}`,
+                  allOffers.length > 0 && `${allOffers.length} offre${allOffers.length > 1 ? "s" : ""}`,
                   note.trim() && "Note",
                   shippingFee && `+${fmtPrice(SHIPPING_FEE_HT)} port`,
                 ].filter(Boolean).join(" · ") || "Détails de la commande"}
@@ -3814,8 +3827,14 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
                     {meta.typeOptions.map(o => <option key={String(o.value)} value={String(o.value)}>{o.label}</option>)}
                   </select>
                 )}
-                {meta?.offersField && offers.length > 0 && (
+                {meta?.offersField && (offers.length > 0 || autoOffers.length > 0) && (
                   <div style={{ display: "flex", flexWrap: "wrap" as const, gap: 5, alignItems: "center" }}>
+                    {/* Offres des articles du panier : automatiques, sans croix */}
+                    {autoOffers.filter(o => !offerIds.includes(o.id)).map(o => (
+                      <span key={`auto-${o.id}`} title="Offre d'un article du panier" style={{ display: "inline-flex", alignItems: "center", padding: "3px 8px", borderRadius: 999, background: "rgba(251,146,60,0.18)", color: "#fdba74", fontSize: 11, fontWeight: 700 }}>
+                        {o.name}
+                      </span>
+                    ))}
                     {offerIds.map(id => (
                       <span key={id} style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "3px 4px 3px 8px", borderRadius: 999, background: "rgba(251,146,60,0.18)", color: "#fdba74", fontSize: 11, fontWeight: 700 }}>
                         {offers.find(o => o.id === id)?.name || `Offre #${id}`}
@@ -3826,7 +3845,7 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
                       onChange={e => { const id = Number(e.target.value); if (id) setOfferIds(prev => prev.includes(id) ? prev : [...prev, id]); }}
                       style={{ flex: 1, minWidth: 120, height: 30, padding: "0 6px", borderRadius: 8, border: "1px solid rgba(255,255,255,0.12)", background: "rgba(255,255,255,0.06)", color: "rgba(255,255,255,0.75)", fontSize: 11.5, fontFamily: "inherit", colorScheme: "dark" as const }}>
                       <option value="">+ Offre commandée…</option>
-                      {offers.filter(o => !offerIds.includes(o.id)).map(o => <option key={o.id} value={o.id}>{o.name}</option>)}
+                      {offers.filter(o => !allOffers.some(a => a.id === o.id)).map(o => <option key={o.id} value={o.id}>{o.name}</option>)}
                     </select>
                   </div>
                 )}

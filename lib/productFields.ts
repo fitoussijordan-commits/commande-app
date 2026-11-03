@@ -6,9 +6,11 @@
 //   • x_type_de_produit_id : regroupement « Type de produit » du catalogue.
 //   • min_qty              : quantité minimum de vente (« min 2 ») — au-delà,
 //                            n'importe quelle quantité (2, 3, 4…).
+//   • x_offre_produit_id   : offre de l'article (MEA Cures 2026…) → reportée
+//                            dans « Offres commandées » de la commande.
 import * as odoo from "@/lib/odoo";
 
-const OPTIONAL = ["x_type_de_produit_id", "min_qty"];
+const OPTIONAL = ["x_type_de_produit_id", "min_qty", "x_offre_produit_id"];
 const LS_KEY = "wms_product_optional_fields";
 let _extra: string[] | null = null;
 
