@@ -1900,7 +1900,7 @@ function HomeScreen({ session, onNewOrder, onOpenClient, onToast, initialDate }:
                         <span style={{ fontSize: 9.5, fontWeight: 800, color: isCancelled(e) ? C.muted : col.text, flexShrink: 0 }}>
                           {e.allday ? "Déplacement" : odooToLocalDate(e.start).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}
                         </span>
-                        <span style={{ fontSize: 10, fontWeight: 600, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const, textDecoration: isCancelled(e) ? "line-through" : "none" }}>{e.name}</span>
+                        <span style={{ fontSize: 10, fontWeight: 600, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const, textDecoration: isCancelled(e) ? "line-through" : "none" }}>{eventTitle(e)}</span>
                       </button>
                     );
                   })}
@@ -1961,7 +1961,7 @@ function HomeScreen({ session, onNewOrder, onOpenClient, onToast, initialDate }:
                         {e.allday ? "Déplacement" : odooToLocalDate(e.start).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}
                         {isCancelled(e) && " · Annulé"}
                       </div>
-                      <div style={{ fontSize: 11, fontWeight: 700, color: C.text, marginTop: 2, lineHeight: 1.3, overflow: "hidden", display: "-webkit-box" as const, WebkitLineClamp: 2, WebkitBoxOrient: "vertical" as const, textDecoration: isCancelled(e) ? "line-through" : "none" }}>{e.name}</div>
+                      <div style={{ fontSize: 11, fontWeight: 700, color: C.text, marginTop: 2, lineHeight: 1.3, overflow: "hidden", display: "-webkit-box" as const, WebkitLineClamp: 2, WebkitBoxOrient: "vertical" as const, textDecoration: isCancelled(e) ? "line-through" : "none" }}>{eventTitle(e)}</div>
                     </button>
                   );
                 })}
@@ -1998,7 +1998,7 @@ function HomeScreen({ session, onNewOrder, onOpenClient, onToast, initialDate }:
               style={{ width: "100%", maxWidth: 420, background: C.white, borderRadius: 22, boxShadow: C.shadowXl, fontFamily: "'DM Sans', sans-serif", overflow: "hidden" }}>
               <div style={{ background: "linear-gradient(135deg, #0d9488, #0f766e)", padding: "22px 24px", color: "#fff" }}>
                 <div style={{ fontSize: 11, fontWeight: 700, opacity: 0.85, textTransform: "uppercase" as const, letterSpacing: "0.05em", marginBottom: 6 }}>Rendez-vous</div>
-                <div style={{ fontSize: 20, fontWeight: 800, lineHeight: 1.25 }}>{e.name}</div>
+                <div style={{ fontSize: 20, fontWeight: 800, lineHeight: 1.25 }}>{eventTitle(e)}</div>
               </div>
               <div style={{ padding: "20px 24px", display: "flex", flexDirection: "column" as const, gap: 14 }}>
                 <Row icon="calendar" label={dateStr} />
@@ -2075,6 +2075,15 @@ function HomeScreen({ session, onNewOrder, onOpenClient, onToast, initialDate }:
 }
 
 // Petite ligne icône + texte pour l'aperçu RDV.
+// Titre affiché d'un RDV : le titre Odoo est souvent réécrit avec le type
+// (« Animation ») par l'automatisation Studio ; on y ajoute le client lié,
+// lu dans la description (« Client : NOM (CODE) — tél. »).
+function eventTitle(e: any): string {
+  const line = descToText(e?.description || "").match(/Client\s*:\s*(.+)/i)?.[1] || "";
+  const client = line.replace(/\(.*$/, "").replace(/—.*$/, "").trim();
+  return client && !String(e?.name || "").toLowerCase().includes(client.toLowerCase()) ? `${e.name} — ${client}` : e?.name;
+}
+
 // Étiquette « Offre produit » d'un article dans le panier.
 function OfferTag({ name }: { name: string }) {
   return (
