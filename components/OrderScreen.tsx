@@ -3275,7 +3275,7 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
   }, 0);
   const netTotal = cartTotal - discountTotal;
   const shippingFee = needsShippingFee(netTotal);
-  const [showCheck, setShowCheck] = useState(false);
+  const [showCheck, setShowCheck] = useState<boolean | "validate">(false);
 
   // Ruptures de stock : produits dont la quantité commandée dépasse le stock
   // prévisionnel (virtual_available). AVERTISSEMENT seulement — le devis reste
@@ -3907,7 +3907,8 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
 
             {/* Le bouton annonce la mise en file AVANT la validation quand on est hors
                  ligne — pas de surprise après coup. */}
-            <button onClick={onValidate} disabled={submitting || cartCount === 0}
+            {/* Le check s'ouvre d'office : la création se confirme depuis le check */}
+            <button onClick={() => setShowCheck("validate")} disabled={submitting || cartCount === 0}
               style={{ width: "100%", padding: recapOpen ? "14px 0" : "11px 0", background: cartCount === 0 ? "rgba(255,255,255,0.12)" : submitting ? "rgba(94,234,212,0.4)" : "#2dd4bf", color: cartCount === 0 ? "rgba(255,255,255,0.4)" : "#0f172a", border: "none", borderRadius: 999, fontSize: 14, fontWeight: 800, cursor: cartCount === 0 ? "default" : "pointer", fontFamily: "inherit", transition: "all 0.2s" }}>
               {submitting ? "Création…"
                 : cartCount === 0 ? "Panier vide"
@@ -3938,7 +3939,9 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
           giftValue={giftItems.reduce((s, g) => s + g.qty * (g.product.lst_price || 0), 0)}
           giftCount={giftItems.reduce((s, g) => s + g.qty, 0)}
           ruptures={cartRuptures(cart)} shippingFee={shippingFee}
-          onClose={() => setShowCheck(false)} />
+          onClose={() => setShowCheck(false)}
+          onConfirm={showCheck === "validate" ? () => { setShowCheck(false); onValidate(); } : undefined}
+          confirmLabel={!navOnline ? "Enregistrer hors ligne" : `Créer le devis${freeItems.length > 0 ? " + BC gratuit" : ""}`} />
       )}
 
       {/* ── Modale zoom image ── */}

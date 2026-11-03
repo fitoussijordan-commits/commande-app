@@ -3,7 +3,8 @@
 //   • montant comparé aux commandes des 12 derniers mois du client ;
 //   • gratuités : valeur catalogue et part de la commande (quota à définir) ;
 //   • ruptures et franco de port.
-// Informatif : rien n'est bloqué.
+// Informatif : rien n'est bloqué. S'ouvre d'office à la validation du devis :
+// on confirme la création depuis ici (ou on revient au panier).
 import { useEffect, useState } from "react";
 import * as odoo from "@/lib/odoo";
 import { FRANCO_HT, SHIPPING_FEE_HT } from "@/lib/franco";
@@ -23,9 +24,11 @@ interface Props {
   ruptures: { name: string; code?: string; qty: number; stock: number }[];
   shippingFee: boolean;
   onClose: () => void;
+  onConfirm?: () => void;                   // ouvert à la validation : bouton de création
+  confirmLabel?: string;
 }
 
-export default function OrderCheck({ session, client, netTotal, giftValue, giftCount, ruptures, shippingFee, onClose }: Props) {
+export default function OrderCheck({ session, client, netTotal, giftValue, giftCount, ruptures, shippingFee, onClose, onConfirm, confirmLabel }: Props) {
   const [hist, setHist] = useState<{ avg: number; count: number; last?: { name: string; amount: number; date: string } } | null>(null);
   const [histError, setHistError] = useState(false);
 
@@ -96,6 +99,19 @@ export default function OrderCheck({ session, client, netTotal, giftValue, giftC
             ? <>Sous le franco de {eur(FRANCO_HT)} HT : frais de livraison de <strong>{eur(SHIPPING_FEE_HT)} HT</strong> ajoutés. Il manque {eur(FRANCO_HT - netTotal)}.</>
             : netTotal > 0 ? <>Franco atteint ({eur(FRANCO_HT)} HT).</> : "Panier vide."}
         </Row>
+
+        {onConfirm && (
+          <div style={{ display: "flex", gap: 10, marginTop: 6 }}>
+            <button onClick={onClose}
+              style={{ flex: 1, padding: "13px 0", borderRadius: 999, border: `1.5px solid ${C.border}`, background: C.white, color: C.textSec, fontSize: 14, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+              Modifier
+            </button>
+            <button onClick={onConfirm} autoFocus
+              style={{ flex: 2, padding: "13px 0", borderRadius: 999, border: "none", background: "#2dd4bf", color: C.text, fontSize: 14, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>
+              {confirmLabel || "Créer le devis"} →
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );
