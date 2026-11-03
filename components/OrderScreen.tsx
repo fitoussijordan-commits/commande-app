@@ -1985,9 +1985,11 @@ function HomeScreen({ session, onNewOrder, onOpenClient, onToast, initialDate }:
                       style={{ background: isCancelled(e) ? "#f8fafc" : col.bg, border: "none", borderRadius: 10, padding: "8px 10px", cursor: "pointer", fontFamily: "inherit", textAlign: "left" as const, width: "100%", boxShadow: isToday ? "0 4px 10px rgba(15,23,42,0.12)" : "none", opacity: isCancelled(e) ? 0.6 : 1 }}>
                       <div style={{ fontSize: 10, fontWeight: 800, color: isCancelled(e) ? C.muted : col.text }}>
                         {e.allday ? "Déplacement" : odooToLocalDate(e.start).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}
+                        {/* Objet de la visite en petit à côté de l'heure ; le client en titre */}
+                        {eventClient(e) && <span style={{ fontWeight: 600, opacity: 0.85 }}> · {e.name}</span>}
                         {isCancelled(e) && " · Annulé"}
                       </div>
-                      <div style={{ fontSize: 11, fontWeight: 700, color: C.text, marginTop: 2, lineHeight: 1.3, overflow: "hidden", display: "-webkit-box" as const, WebkitLineClamp: 2, WebkitBoxOrient: "vertical" as const, textDecoration: isCancelled(e) ? "line-through" : "none" }}>{eventTitle(e)}</div>
+                      <div style={{ fontSize: 11, fontWeight: 700, color: C.text, marginTop: 2, lineHeight: 1.3, overflow: "hidden", display: "-webkit-box" as const, WebkitLineClamp: 2, WebkitBoxOrient: "vertical" as const, textDecoration: isCancelled(e) ? "line-through" : "none" }}>{eventClient(e) || e.name}</div>
                     </button>
                   );
                 })}
@@ -2104,6 +2106,13 @@ function HomeScreen({ session, onNewOrder, onOpenClient, onToast, initialDate }:
 // Titre affiché d'un RDV : le titre Odoo est souvent réécrit avec le type
 // (« Animation ») par l'automatisation Studio ; on y ajoute le client lié,
 // lu dans la description (« Client : NOM (CODE) — tél. »).
+// Client lié affiché (nom + ville), vide si le RDV n'a pas de client.
+function eventClient(e: any): string {
+  const line = descToText(e?.description || "").match(/Client\s*:\s*(.+)/i)?.[1] || "";
+  const name = e?._client?.name || line.replace(/\(.*$/, "").replace(/—.*$/, "").trim();
+  return name ? `${name}${e?._client?.city ? ` ${e._client.city}` : ""}` : "";
+}
+
 function eventTitle(e: any): string {
   const line = descToText(e?.description || "").match(/Client\s*:\s*(.+)/i)?.[1] || "";
   const name = e?._client?.name || line.replace(/\(.*$/, "").replace(/—.*$/, "").trim();
