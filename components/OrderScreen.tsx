@@ -3600,6 +3600,7 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
                     <span title={stockOk ? "En stock" : `Stock insuffisant : ${Math.floor(item.product.virtual_available || 0)} dispo`}
                       style={{ width: 8, height: 8, borderRadius: "50%", flexShrink: 0, background: stockOk ? C.green : C.red }} />
                     <span style={{ width: 78, flexShrink: 0, fontSize: 11, fontFamily: "monospace", color: C.muted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>{item.product.default_code}</span>
+                    <span style={{ width: 108, flexShrink: 0, fontSize: 11, fontFamily: "monospace", color: C.muted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>{item.product.barcode || ""}</span>
                     <span style={{ flex: 1, minWidth: 0, fontSize: 12.5, fontWeight: 600, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>{item.product.name}</span>
                     <div style={{ display: "flex", alignItems: "center", gap: 3, flexShrink: 0 }}>
                       <button onClick={() => onQtyChange(item.product, item.qty - 1)} style={{ width: 30, height: 30, borderRadius: 7, background: C.redSoft, border: "none", cursor: "pointer", color: C.red, fontSize: 15, fontWeight: 700 }}>−</button>
@@ -3619,7 +3620,7 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
                     style={{ width: 8, height: 8, borderRadius: "50%", flexShrink: 0, background: stockOk ? C.green : C.red }} />
                   <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const, fontSize: 12, fontWeight: 600, color: C.text }}>
                     {item.product.name}
-                    {item.product.default_code && <span style={{ marginLeft: 6, fontSize: 10, fontWeight: 500, fontFamily: "monospace", color: C.muted }}>{item.product.default_code}</span>}
+                    {(item.product.default_code || item.product.barcode) && <span style={{ marginLeft: 6, fontSize: 10, fontWeight: 500, fontFamily: "monospace", color: C.muted }}>{[item.product.default_code, item.product.barcode].filter(Boolean).join(" · ")}</span>}
                   </span>
                   {(pricelistPct > 0 || pct + groupPct > 0) && (
                     <span style={{ flexShrink: 0, fontSize: 10, fontWeight: 700, color: C.orange }}>−{Math.min(100, pricelistPct + pct + groupPct)}%</span>
