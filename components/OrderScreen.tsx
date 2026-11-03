@@ -3266,8 +3266,16 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
   });
   const hasStockIssue = overStockItems.length > 0;
   // Produits de vente (réf. en 1) : nombre de références et quantité totale — suivis par les DC.
-  const saleLines = cartItems.filter(i => !i.note && i.qty > 0 && /^1/.test(String(i.product.default_code || "")));
-  const saleQty = saleLines.reduce((s, i) => s + i.qty, 0);
+  // Compteurs par famille de référence (1 vente, 3 testeur, 5 échantillon, 7 MEA) :
+  // lignes du panier + gratuités (un testeur offert reste un testeur).
+  const refCounts = (prefix: string, withGifts: boolean) => {
+    const lines = [...cartItems.filter(i => !i.note && i.qty > 0), ...(withGifts ? giftItems : [])]
+      .filter(i => String(i.product.default_code || "").startsWith(prefix));
+    return { refs: new Set(lines.map(i => i.product.id)).size, qty: lines.reduce((s, i) => s + i.qty, 0) };
+  };
+  const familyCounts = ([["vente", "1", false], ["testeurs", "3", true], ["éch.", "5", true], ["MEA", "7", true]] as const)
+    .map(([label, prefix, gifts]) => ({ label, ...refCounts(prefix, gifts) }))
+    .filter(c => c.refs > 0);
   const giftQtyById = new Map<number, number>(giftItems.map(g => [g.product.id, g.qty]));
 
   return (
@@ -3528,7 +3536,7 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
           </div>
           <div style={{ fontSize: 11, opacity: 0.85, marginTop: 2 }}>
             {cartCount} article{cartCount > 1 ? "s" : ""} · {fmtPrice(cartTotal)}
-            {saleLines.length > 0 && <span style={{ marginLeft: 6 }}>· vente : {saleLines.length} réf. / {saleQty} pcs</span>}
+            {familyCounts.map(c => <span key={c.label} style={{ marginLeft: 6 }}>· {c.label} : {c.refs} réf. / {c.qty} pcs</span>)}
             {freeCount > 0 && <span style={{ marginLeft: 6, background: "rgba(255,255,255,0.2)", borderRadius: 5, padding: "1px 6px" }}>+{freeCount} offerts</span>}
           </div>
         </div>
