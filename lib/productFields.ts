@@ -8,23 +8,35 @@
 //                            n'importe quelle quantité (2, 3, 4…).
 //   • x_offre_produit_id   : offre de l'article (MEA Cures 2026…) → reportée
 //                            dans « Offres commandées » de la commande.
+//   • PPC (Studio)         : prix public conseillé, affiché à titre indicatif.
 import * as odoo from "@/lib/odoo";
 
 const OPTIONAL = ["x_type_de_produit_id", "min_qty", "x_offre_produit_id"];
 const LS_KEY = "wms_product_optional_fields";
 let _extra: string[] | null = null;
+// PPC (prix public conseillé) : champ Studio repéré à son libellé « PPC ».
+let _ppc: string | null = null;
+try { _ppc = JSON.parse(localStorage.getItem(LS_KEY) || "[]").find((f: string) => !OPTIONAL.includes(f)) || null; } catch {}
 
 export async function optionalProductFields(session: odoo.OdooSession): Promise<string[]> {
   if (_extra) return _extra;
   try {
-    const fields = await odoo.callMethod(session, "product.product", "fields_get", [OPTIONAL], { attributes: ["type"] });
+    const fields = await odoo.callMethod(session, "product.product", "fields_get", [], { attributes: ["string", "type"] });
     _extra = OPTIONAL.filter(f => f in (fields || {}));
+    _ppc = Object.entries(fields || {}).find(([, f]: [string, any]) =>
+      /^\s*(ppc|prix public conseill)/i.test(String(f.string || "")) && ["float", "monetary"].includes(f.type))?.[0] || null;
+    if (_ppc) _extra.push(_ppc);
     try { localStorage.setItem(LS_KEY, JSON.stringify(_extra)); } catch {}
     return _extra;
   } catch (e) {
     if (!odoo.isNetworkError(e)) { _extra = []; return _extra; }
     try { return JSON.parse(localStorage.getItem(LS_KEY) || "[]"); } catch { return []; }
   }
+}
+
+// PPC de l'article (0 si inconnu).
+export function ppcOf(product: any): number {
+  return _ppc ? Number(product?.[_ppc]) || 0 : 0;
 }
 
 // Quantité minimum de vente de l'article : 1, ou sa min_qty (2 → 2, 3, 4…).
