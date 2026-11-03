@@ -813,7 +813,7 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
       const mainPayload: any = {
         partner_id: client.id, state: "draft",
         ...(pricelistId ? { pricelist_id: pricelistId } : {}),
-        note: orderNote,
+        [sync.CHATTER_KEY]: orderNote,   // note de la commande → chatter (cf. sync.createOrder)
         ...tagVals,
         ...shipVals,
         ...joinVals,
@@ -877,12 +877,12 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
       let mainId: number;
       try {
         try {
-          mainId = await odoo.create(session, "sale.order", mainPayload);
+          mainId = await sync.createOrder(session, mainPayload);
         } catch (e1: any) {
           // Champ « Date d'expédition prévue » absent de cette base : on crée sans.
           if (odoo.isNetworkError(e1) || !(EXPEDITION_FIELD in mainPayload) || !String(e1?.message || "").includes(EXPEDITION_FIELD)) throw e1;
           delete mainPayload[EXPEDITION_FIELD];
-          mainId = await odoo.create(session, "sale.order", mainPayload);
+          mainId = await sync.createOrder(session, mainPayload);
           onToast("Champ « Date d'expédition prévue » introuvable — devis créé sans", "info");
         }
       } catch (e: any) {

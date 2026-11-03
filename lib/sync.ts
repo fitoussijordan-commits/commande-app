@@ -426,6 +426,21 @@ export async function transmitJoined(
   return errors.length ? `commandes jointes — ${errors.join(" ; ")}` : undefined;
 }
 
+// Note de la commande : publiée dans le chatter du devis (et non dans le champ
+// « note », imprimé en bas du devis). Portée dans le payload sous CHATTER_KEY,
+// retirée avant la création — aussi pour les commandes rejouées hors ligne.
+export const CHATTER_KEY = "__chatter_note";
+export async function createOrder(session: odoo.OdooSession, payload: any): Promise<number> {
+  const { [CHATTER_KEY]: text, ...vals } = payload;
+  const id = await odoo.create(session, "sale.order", vals);
+  if (text && String(text).trim()) {
+    const html = String(text).trim().split("\n").map(l => l.replace(/&/g, "&amp;").replace(/</g, "&lt;")).join("<br/>");
+    await odoo.callMethod(session, "sale.order", "message_post", [[id]],
+      { body: html, message_type: "comment", subtype_xmlid: "mail.mt_note" }).catch(() => {});
+  }
+  return id;
+}
+
 export async function queueOrder(
   clientName: string,
   total: number,
@@ -568,7 +583,7 @@ export async function flushQueue(
         let transmitError = "";
         if (order.payloads && order.payloads.length) {
           for (const payload of order.payloads) {
-            const oid = await odoo.create(session, "sale.order", payload);
+            const oid = await createOrder(session, payload);
             resultIds.push(oid);
           }
           // Commande directe logistique : confirmation APRÈS création. Un échec ne
