@@ -1975,8 +1975,10 @@ function HomeScreen({ session, onNewOrder, onOpenClient, onToast, initialDate }:
               <div />
               {days.map((d, i) => {
                 const isToday = sameDay(d, today);
+                // Jour touché dans l'agenda de l'accueil : mis en avant.
+                const isFocus = !!initialDate && sameDay(d, initialDate) && !isToday;
                 return (
-                  <div key={i} style={{ padding: "10px 4px 8px", textAlign: "center" as const, borderLeft: `1px solid ${C.border}` }}>
+                  <div key={i} style={{ padding: "10px 4px 8px", textAlign: "center" as const, borderLeft: `1px solid ${C.border}`, background: isFocus ? "rgba(13,148,136,0.10)" : "transparent" }}>
                     <div style={{ fontSize: 10, fontWeight: 700, color: isToday ? C.teal : C.muted, textTransform: "uppercase" as const, letterSpacing: "0.04em" }}>{WEEKDAY_LABELS[i].slice(0, 3)}</div>
                     <div style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", minWidth: 32, height: 32, borderRadius: 16, marginTop: 2, fontSize: 18, fontWeight: 800,
                       color: isToday ? "#fff" : C.text, background: isToday ? C.teal : "transparent" }}>{d.getDate()}</div>
@@ -2012,7 +2014,7 @@ function HomeScreen({ session, onNewOrder, onOpenClient, onToast, initialDate }:
                   const isToday = sameDay(d, today);
                   const lane = lanes(timed[i]);
                   return (
-                    <div key={i} style={{ position: "relative" as const, borderLeft: `1px solid ${C.border}`, background: isToday ? "rgba(13,148,136,0.10)" : d < today ? "#fafbfc" : "transparent" }}>
+                    <div key={i} style={{ position: "relative" as const, borderLeft: `1px solid ${C.border}`, background: isToday || (!!initialDate && sameDay(d, initialDate)) ? "rgba(13,148,136,0.10)" : d < today ? "#fafbfc" : "transparent" }}>
                       {Array.from({ length: H1 - H0 }, (_, h) => (
                         <div key={h} style={{ position: "absolute" as const, left: 0, right: 0, top: h * PXH, borderTop: h ? `1px solid ${C.border}` : "none" }} />
                       ))}
