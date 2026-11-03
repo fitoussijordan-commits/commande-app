@@ -1390,7 +1390,8 @@ function fmtDistance(km: number): string {
   return km < 1 ? `${Math.round(km * 1000)} m` : `${km.toFixed(1)} km`;
 }
 // Rayon de recherche du mode localisation — facile à ajuster si besoin.
-const LOC_RADIUS_KM = 1;
+const LOC_RADIUS_KM = 1;                       // rayon par défaut
+const LOC_RADII_KM = [1, 2, 5, 10, 20, 50];   // choix proposés
 
 // is_company sert au départage quand plusieurs fiches partagent le même code (ref).
 // parent_id / type servent à écarter les adresses enfants (voir dedupeClients).
@@ -2165,7 +2166,8 @@ function ClientStep({ session, onSelect, onImportBon, onOpenPlanning }: {
   const [locMode, setLocMode] = useState(false);
   const [locLoading, setLocLoading] = useState(false);
   const [locError, setLocError] = useState("");
-  const [nearby, setNearby] = useState<any[]>([]);
+  const [nearby, setNearby] = useState<any[]>([]);   // clients géolocalisés, triés par distance (tous rayons)
+  const [radius, setRadius] = useState(LOC_RADIUS_KM);
   // « Mes clients » (vendeur = moi) par défaut ; bouton pour voir tous les clients.
   const [mine, setMine] = useState(getMineOnly);
   const toggleMine = () => setMine(m => { setMineOnly(!m); return !m; });
@@ -2206,7 +2208,7 @@ function ClientStep({ session, onSelect, onImportBon, onOpenPlanning }: {
       try {
         rows = await odoo.searchRead(session, "res.partner",
           [["customer_rank", ">", 0], ["active", "=", true], ["partner_latitude", "!=", 0], ["partner_longitude", "!=", 0], NOT_SUPPLIER, ...mineDomain(session.uid, mine)],
-          [...CLIENT_FIELDS, "partner_latitude", "partner_longitude"], 500);
+          [...CLIENT_FIELDS, "partner_latitude", "partner_longitude"], 3000);
       } catch {
         // Hors ligne → clients géolocalisés depuis le cache préchargé.
         rows = await sync.getCachedClients();
@@ -2214,11 +2216,8 @@ function ClientStep({ session, onSelect, onImportBon, onOpenPlanning }: {
       const withDist = rows
         .filter((r: any) => r.partner_latitude && r.partner_longitude)
         .map((r: any) => ({ ...r, _distKm: haversineKm(latitude, longitude, r.partner_latitude, r.partner_longitude) }))
-        .filter((r: any) => r._distKm <= LOC_RADIUS_KM)
+        .filter((r: any) => r._distKm <= LOC_RADII_KM[LOC_RADII_KM.length - 1])
         .sort((a: any, b: any) => a._distKm - b._distKm);
-      if (!withDist.length) {
-        setLocError(`Aucun client à moins de ${fmtDistance(LOC_RADIUS_KM)} de ta position`);
-      }
       setNearby(withDist);
       setLocMode(true);
     } catch (e: any) {
@@ -2230,7 +2229,8 @@ function ClientStep({ session, onSelect, onImportBon, onOpenPlanning }: {
 
   // Dédoublonnage à l'affichage : couvre d'un seul coup la recherche en ligne, le
   // repli sur le cache hors ligne et la liste « clients proches ».
-  const displayed = dedupeClients(q.length >= 2 ? results : (locMode ? nearby : []))
+  const nearbyShown = nearby.filter(r => r._distKm <= radius);
+  const displayed = dedupeClients(q.length >= 2 ? results : (locMode ? nearbyShown : []))
     .filter(c => !mine || isMine(c, session.uid));
 
   // Agenda + clients prioritaires : affichés tant qu'on ne cherche pas.
@@ -2289,8 +2289,21 @@ function ClientStep({ session, onSelect, onImportBon, onOpenPlanning }: {
         </div>
 
         {locMode && !locLoading && !locError && (
-          <div style={{ fontSize: 12, color: C.teal, fontWeight: 600, marginBottom: 10, textAlign: "center" as const }}>
-            Clients à moins de {fmtDistance(LOC_RADIUS_KM)} — {nearby.length} résultat{nearby.length > 1 ? "s" : ""}
+          <div style={{ marginBottom: 10, textAlign: "center" as const }}>
+            {/* Rayon de recherche : 1 km par défaut, élargissable */}
+            <div style={{ display: "inline-flex", gap: 4, flexWrap: "wrap" as const, justifyContent: "center", marginBottom: 6 }}>
+              {LOC_RADII_KM.map(km => (
+                <button key={km} onClick={() => setRadius(km)}
+                  style={{ padding: "5px 11px", borderRadius: 999, border: `1.5px solid ${radius === km ? C.teal : C.border}`, background: radius === km ? C.teal : C.white, color: radius === km ? "#fff" : C.textSec, fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+                  {km} km
+                </button>
+              ))}
+            </div>
+            <div style={{ fontSize: 12, color: nearbyShown.length ? C.teal : C.red, fontWeight: 600 }}>
+              {nearbyShown.length
+                ? <>Clients à moins de {fmtDistance(radius)} — {nearbyShown.length} résultat{nearbyShown.length > 1 ? "s" : ""}</>
+                : <>Aucun client à moins de {fmtDistance(radius)} — élargis le rayon</>}
+            </div>
           </div>
         )}
         {locError && (
