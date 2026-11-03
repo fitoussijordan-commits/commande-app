@@ -3604,54 +3604,29 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
                     <button onClick={() => onQtyChange(item.product, 0)} title="Retirer" style={{ flexShrink: 0, width: 24, height: 24, background: "transparent", border: "none", cursor: "pointer", color: C.muted, fontSize: 13 }}>✕</button>
                   </div>
                 ) : (
-                <div style={{ marginBottom: 8, padding: "10px 10px", background: C.bg, borderRadius: 10 }}>
-                  {/* Étage 1 : pastille stock + nom complet + croix de suppression rapide */}
-                  <div style={{ display: "flex", alignItems: "flex-start", gap: 8, marginBottom: 2 }}>
-                    <span title={stockOk ? "En stock" : `Stock insuffisant : ${Math.floor(item.product.virtual_available || 0)} dispo`}
-                      style={{ width: 9, height: 9, borderRadius: "50%", flexShrink: 0, marginTop: 4, background: stockOk ? C.green : C.red }} />
-                    <div style={{ flex: 1, minWidth: 0, fontSize: 12.5, fontWeight: 700, color: C.text, lineHeight: 1.3 }}>{item.product.name}</div>
-                    <button onClick={() => onQtyChange(item.product, 0)}
-                      title="Retirer cet article du panier"
-                      aria-label={`Retirer ${item.product.name} du panier`}
-                      style={{ flexShrink: 0, width: 26, height: 26, marginTop: -2, marginRight: -2, borderRadius: 7, background: "transparent", border: "none", cursor: "pointer", color: C.muted, fontSize: 15, lineHeight: 1, fontFamily: "inherit", display: "flex", alignItems: "center", justifyContent: "center" }}
-                      onMouseEnter={e => { e.currentTarget.style.background = C.redSoft; e.currentTarget.style.color = C.red; }}
-                      onMouseLeave={e => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = C.muted; }}>
-                      ✕
+                /* Vue compacte : tout sur une ligne (détail complet dans la vue liste) */
+                <div title={[item.product.default_code, `${item.qty} × ${fmtPrice(item.unitPrice)}`, item.priceLocked && "prix fixé"].filter(Boolean).join(" · ")}
+                  style={{ display: "flex", alignItems: "center", gap: 6, padding: "4px 2px 4px 4px", borderBottom: `1px solid ${C.border}` }}>
+                  <span title={stockOk ? "En stock" : `Stock insuffisant : ${Math.floor(item.product.virtual_available || 0)} dispo`}
+                    style={{ width: 8, height: 8, borderRadius: "50%", flexShrink: 0, background: stockOk ? C.green : C.red }} />
+                  <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const, fontSize: 12, fontWeight: 600, color: C.text }}>
+                    {item.product.name}
+                    {item.product.default_code && <span style={{ marginLeft: 6, fontSize: 10, fontWeight: 500, fontFamily: "monospace", color: C.muted }}>{item.product.default_code}</span>}
+                  </span>
+                  {(pricelistPct > 0 || pct + groupPct > 0) && (
+                    <span style={{ flexShrink: 0, fontSize: 10, fontWeight: 700, color: C.orange }}>−{Math.min(100, pricelistPct + pct + groupPct)}%</span>
+                  )}
+                  <div style={{ display: "flex", alignItems: "center", gap: 2, flexShrink: 0 }}>
+                    <button onClick={() => onQtyChange(item.product, item.qty - 1)} style={{ width: 26, height: 26, borderRadius: 6, background: C.redSoft, border: "none", cursor: "pointer", color: C.red, fontSize: 14, fontWeight: 700, lineHeight: 1, padding: 0 }}>−</button>
+                    <button onClick={() => setPad({ product: item.product })} title={saleStep(item.product) > 1 ? `Saisir une quantité (min ${saleStep(item.product)})` : "Saisir une quantité"}
+                      style={{ minWidth: 32, height: 26, borderRadius: 6, background: "#fff", border: `1px solid ${saleStep(item.product) > 1 ? C.tealMid : C.border}`, cursor: "pointer", fontSize: 12.5, fontWeight: 800, color: C.text, fontFamily: "inherit", padding: "0 4px" }}>
+                      {item.qty}
                     </button>
+                    <button onClick={() => onQtyChange(item.product, item.qty + 1)} style={{ width: 26, height: 26, borderRadius: 6, background: C.tealSoft, border: "none", cursor: "pointer", color: C.teal, fontSize: 14, fontWeight: 700, lineHeight: 1, padding: 0 }}>+</button>
                   </div>
-                  <div style={{ fontSize: 10, color: C.muted, display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" as const, marginBottom: 8 }}>
-                    {item.product.default_code && <span style={{ fontFamily: "monospace" }}>{item.product.default_code}</span>}
-                    <span>{item.qty} × {fmtPrice(item.unitPrice)}</span>
-                    {item.priceLocked && <span style={{ color: C.teal, fontWeight: 700 }}>prix fixé</span>}
-                    {hasPricelistDiscount && <span style={{ textDecoration: "line-through" }}>{fmtPrice(catalog)}</span>}
-                    {saleStep(item.product) > 1 && <span style={{ color: C.tealDark, fontWeight: 700 }}>min {saleStep(item.product)}</span>}
-                    {(pricelistPct > 0 || pct + groupPct > 0) && (
-                      <span style={{ background: C.orangeSoft, color: C.orange, borderRadius: 5, padding: "1px 6px", fontWeight: 700 }}>
-                        −{Math.min(100, pricelistPct + pct + groupPct)}%
-                      </span>
-                    )}
-                  </div>
-                  {/* Étage 2 : boutons − / + à gauche, prix à droite */}
-                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                      <button onClick={() => onQtyChange(item.product, item.qty - 1)} style={{ width: 36, height: 36, borderRadius: 8, background: C.redSoft, border: "none", cursor: "pointer", color: C.red, fontSize: 17, fontWeight: 700, lineHeight: 1 }}>−</button>
-                      <button onClick={() => setPad({ product: item.product })} title="Saisir une quantité"
-                        style={{ minWidth: 40, height: 36, borderRadius: 8, background: "#fff", border: `1px solid ${C.border}`, cursor: "pointer", fontSize: 14, fontWeight: 800, color: C.text, fontFamily: "inherit", padding: "0 6px" }}>
-                        {item.qty}
-                      </button>
-                      <button onClick={() => onQtyChange(item.product, item.qty + 1)} style={{ width: 36, height: 36, borderRadius: 8, background: C.tealSoft, border: "none", cursor: "pointer", color: C.teal, fontSize: 17, fontWeight: 700, lineHeight: 1 }}>+</button>
-                    </div>
-                    <div style={{ textAlign: "right" as const }}>
-                      {pct + groupPct > 0 ? (
-                        <>
-                          <div style={{ fontSize: 10, color: C.muted, textDecoration: "line-through" }}>{fmtPrice(gross)}</div>
-                          <div style={{ fontSize: 14, fontWeight: 800, color: C.orange }}>{fmtPrice(net)}</div>
-                        </>
-                      ) : (
-                        <div style={{ fontSize: 14, fontWeight: 800, color: C.text }}>{fmtPrice(gross)}</div>
-                      )}
-                    </div>
-                  </div>
+                  <span style={{ width: 62, flexShrink: 0, textAlign: "right" as const, fontSize: 12, fontWeight: 800, color: pct + groupPct > 0 ? C.orange : C.text }}>{fmtPrice(net)}</span>
+                  <button onClick={() => onQtyChange(item.product, 0)} title="Retirer" aria-label={`Retirer ${item.product.name} du panier`}
+                    style={{ flexShrink: 0, width: 20, height: 24, background: "transparent", border: "none", cursor: "pointer", color: C.muted, fontSize: 12, padding: 0 }}>✕</button>
                 </div>
                 )}
                 </div>
@@ -3673,34 +3648,29 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
                 </select>
               </div>
               {giftItems.map((g, i) => (
-                <div key={i} style={{ marginBottom: 6, paddingBottom: 8, borderBottom: i < giftItems.length - 1 ? `1px solid ${C.green}22` : "none" }}>
-                  {/* Ligne façon produit : nom complet + croix */}
-                  <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 6 }}>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontSize: 11.5, color: C.text, fontWeight: 700, lineHeight: 1.3 }}>{g.product.name}</div>
-                      {g.product.default_code && (
-                        <div style={{ fontSize: 9.5, color: C.muted, fontFamily: "monospace", marginTop: 1 }}>{g.product.default_code}</div>
-                      )}
-                    </div>
-                    <button onClick={() => setGiftItems(prev => prev.filter((_, j) => j !== i))} title="Retirer"
-                      style={{ background: "none", border: "none", cursor: "pointer", color: C.red, fontSize: 15, lineHeight: 1, flexShrink: 0 }}>✕</button>
+                /* Une ligne par gratuité ; le type se choisit en tête du bloc (choix
+                   par ligne seulement s'il manque). */
+                <div key={i} style={{ display: "flex", alignItems: "center", gap: 6, padding: "3px 0", borderBottom: i < giftItems.length - 1 ? `1px solid ${C.green}22` : "none", flexWrap: g.type ? "nowrap" as const : "wrap" as const }}>
+                  <span title={g.product.default_code || ""} style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const, fontSize: 11.5, fontWeight: 600, color: C.text }}>
+                    {g.product.name}
+                    {g.product.default_code && <span style={{ marginLeft: 6, fontSize: 9.5, fontWeight: 500, fontFamily: "monospace", color: C.muted }}>{g.product.default_code}</span>}
+                  </span>
+                  <div style={{ display: "flex", alignItems: "center", gap: 2, flexShrink: 0 }}>
+                    <button onClick={() => setGiftItems(prev => prev.map((x, j) => j === i ? { ...x, qty: Math.max(1, x.qty - 1) } : x))}
+                      style={{ width: 24, height: 24, borderRadius: 6, background: C.redSoft, border: "none", cursor: "pointer", color: C.red, fontSize: 14, fontWeight: 700, lineHeight: 1, padding: 0 }}>−</button>
+                    <span style={{ minWidth: 24, textAlign: "center" as const, fontSize: 12, fontWeight: 800, color: C.text }}>{g.qty}</span>
+                    <button onClick={() => setGiftItems(prev => prev.map((x, j) => j === i ? { ...x, qty: x.qty + 1 } : x))}
+                      style={{ width: 24, height: 24, borderRadius: 6, background: "#fff", border: `1px solid ${C.green}44`, cursor: "pointer", color: C.green, fontSize: 14, fontWeight: 700, lineHeight: 1, padding: 0 }}>+</button>
                   </div>
-                  {/* Stepper − / + comme les produits du panier + libellé "offert" */}
-                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 5 }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                      <button onClick={() => setGiftItems(prev => prev.map((x, j) => j === i ? { ...x, qty: Math.max(1, x.qty - 1) } : x))}
-                        style={{ width: 30, height: 30, borderRadius: 8, background: C.redSoft, border: "none", cursor: "pointer", color: C.red, fontSize: 16, fontWeight: 700, lineHeight: 1 }}>−</button>
-                      <span style={{ minWidth: 26, textAlign: "center" as const, fontSize: 13, fontWeight: 800, color: C.text }}>{g.qty}</span>
-                      <button onClick={() => setGiftItems(prev => prev.map((x, j) => j === i ? { ...x, qty: x.qty + 1 } : x))}
-                        style={{ width: 30, height: 30, borderRadius: 8, background: C.greenSoft, border: `1px solid ${C.green}44`, cursor: "pointer", color: C.green, fontSize: 16, fontWeight: 700, lineHeight: 1 }}>+</button>
-                    </div>
-                    <span style={{ fontSize: 11, fontWeight: 700, color: C.green }}>offert · 0,00 €</span>
-                  </div>
-                  <select value={g.type} onChange={e => setGiftItems(prev => prev.map((x, j) => j === i ? { ...x, type: e.target.value } : x))}
-                    style={{ width: "100%", marginTop: 5, padding: "5px 6px", fontSize: 11, borderRadius: 6, border: `1px solid ${g.type ? C.green : C.red}`, background: "#fff", color: C.text, fontFamily: "inherit" }}>
-                    <option value="">— Type de gratuité —</option>
-                    {freeTypes.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
-                  </select>
+                  <button onClick={() => setGiftItems(prev => prev.filter((_, j) => j !== i))} title="Retirer"
+                    style={{ flexShrink: 0, width: 20, height: 24, background: "none", border: "none", cursor: "pointer", color: C.muted, fontSize: 12, padding: 0 }}>✕</button>
+                  {!g.type && (
+                    <select value={g.type} onChange={e => setGiftItems(prev => prev.map((x, j) => j === i ? { ...x, type: e.target.value } : x))}
+                      style={{ width: "100%", padding: "3px 6px", fontSize: 11, borderRadius: 6, border: `1px solid ${C.red}`, background: "#fff", color: C.text, fontFamily: "inherit" }}>
+                      <option value="">— Type de gratuité —</option>
+                      {freeTypes.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
+                    </select>
+                  )}
                 </div>
               ))}
               {/* Récap gratuités */}
