@@ -429,8 +429,6 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
   const [submitting, setSubmitting] = useState(false);
   const [done, setDone] = useState<{ mainId: number | null; freeId: number | null; mainName?: string; freeName?: string; offline?: boolean; ruptures?: number } | null>(null);
   const [note, setNote] = useState("");
-  // Note interne saisie (champ « Note interne » du devis, jamais imprimée).
-  const [internalNoteText, setInternalNoteText] = useState("");
   // Brouillon détecté pour le client qu'on vient de sélectionner (jamais un autre client — pas de fuite visuelle)
   const [resumePrompt, setResumePrompt] = useState<Draft | null>(null);
   // Liste de tous les brouillons en attente (tous clients confondus) — accès discret, jamais affiché tout seul
@@ -657,7 +655,7 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
   const enterOrderMode = () => {
     if (!client) return;
     setCart({});
-    setNote(""); setInternalNoteText("");
+    setNote("");
     setAppliedPromos({});
     setGiftItems([]);
     setEventDiscount(0);
@@ -801,7 +799,6 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
       const ruptures = cartRuptures(cart);
       const groupsInCart = new Set(Object.values(cart).map(i => i.group).filter(Boolean) as string[]);
       const internalLines = [
-        ...(internalNoteText.trim() ? [internalNoteText.trim()] : []),
         ...(ruptures.length ? [`RUPTURES À VÉRIFIER : ${ruptures.map(r => `${r.code || r.name} (${r.qty} dem. / ${r.stock} dispo)`).join(", ")}`] : []),
         ...Object.entries(templateInfo).filter(([g, t]) => groupsInCart.has(g) && t.note).map(([, t]) => String(t.note)),
       ];
@@ -996,12 +993,12 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
           )}
         </div>
         <div style={{ display: "flex", gap: 12, justifyContent: "center" }}>
-          <button onClick={() => { setDone(null); setCart({}); setClient(null); setNote(""); setInternalNoteText(""); setResumePrompt(null); setAppliedPromos({}); setStep("client"); }}
+          <button onClick={() => { setDone(null); setCart({}); setClient(null); setNote(""); setResumePrompt(null); setAppliedPromos({}); setStep("client"); }}
             style={{ padding: "14px 28px", background: C.teal, color: "#fff", border: "none", borderRadius: 12, fontSize: 15, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
             Nouvelle commande
           </button>
           {/* Mène au planning (avant : doublon exact de « Nouvelle commande ») */}
-          <button onClick={() => { setDone(null); setCart({}); setClient(null); setNote(""); setInternalNoteText(""); setResumePrompt(null); setAppliedPromos({}); setPlanningDate(null); setStep("home"); }}
+          <button onClick={() => { setDone(null); setCart({}); setClient(null); setNote(""); setResumePrompt(null); setAppliedPromos({}); setPlanningDate(null); setStep("home"); }}
             style={{ display: "flex", alignItems: "center", gap: 8, padding: "14px 24px", background: C.bg, color: C.muted, border: `1px solid ${C.border}`, borderRadius: 12, fontSize: 15, cursor: "pointer", fontFamily: "inherit" }}>
             <Icon name="calendar" size={16} /> Mon planning
           </button>
@@ -1357,7 +1354,7 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
       {step === "catalog" && client && (
         <CatalogStep session={session} cart={cart} onQtyChange={setQty} freeItems={freeItems}
           onValidate={handleValidate} submitting={submitting}
-          note={note} setNote={setNote} internalNote={internalNoteText} setInternalNote={setInternalNoteText} client={client} priceItems={priceItems} onToast={onToast}
+          note={note} setNote={setNote} client={client} priceItems={priceItems} onToast={onToast}
           appliedPromos={appliedPromos}
           giftItems={giftItems} setGiftItems={setGiftItems} freeTypes={freeTypes}
           eventDiscount={eventDiscount} setEventDiscount={setEventDiscount}
@@ -2917,7 +2914,7 @@ function ClientHistory({ session, client }: { session: odoo.OdooSession; client:
 // ═══════════════════════════════════════════════════════════════════════════
 // ÉTAPE 2 — Catalogue + Panier persistant
 // ═══════════════════════════════════════════════════════════════════════════
-function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submitting, note, setNote, internalNote, setInternalNote, client, priceItems, onToast, appliedPromos, giftItems, setGiftItems, freeTypes, eventDiscount, setEventDiscount, shipping, onChangeExpedition, onAddNote, onNoteText, groupDiscounts, setGroupDiscounts, orderType, setOrderType, offerIds, setOfferIds, autoOffers, onTemplateApplied }: {
+function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submitting, note, setNote, client, priceItems, onToast, appliedPromos, giftItems, setGiftItems, freeTypes, eventDiscount, setEventDiscount, shipping, onChangeExpedition, onAddNote, onNoteText, groupDiscounts, setGroupDiscounts, orderType, setOrderType, offerIds, setOfferIds, autoOffers, onTemplateApplied }: {
   onAddNote: (text: string, kind?: "line_note" | "line_section", group?: string) => void;
   onNoteText: (id: number, text: string) => void;
   groupDiscounts: Record<string, number>; setGroupDiscounts: React.Dispatch<React.SetStateAction<Record<string, number>>>;
@@ -2932,7 +2929,6 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
   onQtyChange: (p: any, q: number, price?: number, group?: string, keepZero?: boolean) => void; freeItems: FreeItem[];
   onValidate: () => void; submitting: boolean;
   note: string; setNote: (n: string) => void; client: any;
-  internalNote: string; setInternalNote: (n: string) => void;
   priceItems: PriceItem[];
   onToast: (msg: string, type?: "success" | "error" | "info") => void;
   appliedPromos: Record<number, loyalty.AppliedPromo>;
@@ -3805,7 +3801,6 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
                   meta?.typeField && (meta.typeOptions.find(o => o.value === orderType)?.label || "Type ?"),
                   allOffers.length > 0 && `${allOffers.length} offre${allOffers.length > 1 ? "s" : ""}`,
                   note.trim() && "Note",
-                  internalNote.trim() && "Note interne",
                   shippingFee && `+${fmtPrice(SHIPPING_FEE_HT)} port`,
                 ].filter(Boolean).join(" · ") || "Détails de la commande"}
               </span>
@@ -3872,10 +3867,6 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
                   </div>
                 )}
               </div>
-            )}
-            {meta?.internalNoteField && (
-              <textarea value={internalNote} onChange={e => setInternalNote(e.target.value)} placeholder="Note interne (service client, jamais imprimée)…"
-                rows={2} style={{ width: "100%", boxSizing: "border-box" as const, marginBottom: 8, padding: "9px 11px", border: "1px solid rgba(251,191,36,0.35)", borderRadius: 10, fontSize: 12, fontFamily: "inherit", resize: "none" as const, background: "rgba(251,191,36,0.08)", color: "#fff", outline: "none" }} />
             )}
             <textarea value={note} onChange={e => setNote(e.target.value)} placeholder="Note pour la commande..."
               rows={2} style={{ width: "100%", boxSizing: "border-box" as const, marginBottom: 12, padding: "9px 11px", border: "1px solid rgba(255,255,255,0.12)", borderRadius: 10, fontSize: 12, fontFamily: "inherit", resize: "none" as const, background: "rgba(255,255,255,0.06)", color: "#fff", outline: "none" }} />
