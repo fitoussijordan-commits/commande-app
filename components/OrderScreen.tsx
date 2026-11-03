@@ -3515,13 +3515,8 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
                       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 5, marginBottom: 6 }}>
                         <div style={{ display: "flex", flexDirection: "column" as const, gap: 1 }}>
                           <span style={{ fontSize: 15, fontWeight: 800, color: hasDiscount ? C.green : C.tealDark }}>{clientPrice > 0 ? fmtPrice(clientPrice) : "—"}</span>
-                          {(hasDiscount || ppcOf(p) > 0) && (
-                            <span style={{ fontSize: 10, color: C.muted }}>
-                              {hasDiscount && <span style={{ textDecoration: "line-through" }}>{fmtPrice(p.lst_price)}</span>}
-                              {hasDiscount && ppcOf(p) > 0 && " · "}
-                              {ppcOf(p) > 0 && <span title="Prix public conseillé">PPC {fmtPrice(ppcOf(p))}</span>}
-                            </span>
-                          )}
+                          {hasDiscount && <span style={{ fontSize: 10, color: C.muted, textDecoration: "line-through" }}>{fmtPrice(p.lst_price)}</span>}
+                          {ppcOf(p) > 0 && <span title="Prix public conseillé" style={{ fontSize: 9.5, color: C.muted }}>PPC {fmtPrice(ppcOf(p))}</span>}
                         </div>
                         <span style={{ fontSize: 10.5, fontWeight: 600, color: stock > 0 ? C.green : C.red, background: stock > 0 ? C.greenSoft : C.redSoft, borderRadius: 5, padding: "2px 6px" }}>{stock > 0 ? stock : "Rupture"}</span>
                       </div>
