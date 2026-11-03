@@ -1962,14 +1962,15 @@ function HomeScreen({ session, onNewOrder, onOpenClient, onToast, initialDate }:
           return (
             <div key={i} style={{
               display: "flex", flexDirection: "column" as const, borderRadius: 18,
-              background: isToday ? "#0f766e" : C.white,
-              boxShadow: isToday ? "0 16px 32px rgba(13,148,136,0.28)" : "0 2px 8px rgba(15,23,42,0.05)",
+              // Aujourd'hui : simple encadré (le fond vert masquait les couleurs des RDV).
+              background: C.white, border: `2px solid ${isToday ? C.teal : "transparent"}`,
+              boxShadow: isToday ? "0 8px 20px rgba(13,148,136,0.18)" : "0 2px 8px rgba(15,23,42,0.05)",
               opacity: isPast ? 0.55 : 1, overflow: "hidden",
             }}>
               {/* En-tête jour */}
               <div style={{ padding: "14px 8px 10px", textAlign: "center" as const, flexShrink: 0 }}>
-                <div style={{ fontSize: 10, fontWeight: 700, color: isToday ? "rgba(255,255,255,0.75)" : C.muted, textTransform: "uppercase" as const, letterSpacing: "0.04em" }}>{WEEKDAY_LABELS[i].slice(0, 3)}</div>
-                <div style={{ fontSize: 22, fontWeight: 800, marginTop: 2, color: isToday ? "#fff" : C.text }}>
+                <div style={{ fontSize: 10, fontWeight: 700, color: isToday ? C.teal : C.muted, textTransform: "uppercase" as const, letterSpacing: "0.04em" }}>{WEEKDAY_LABELS[i].slice(0, 3)}</div>
+                <div style={{ fontSize: 22, fontWeight: 800, marginTop: 2, color: isToday ? C.tealDark : C.text }}>
                   {d.getDate()}
                 </div>
               </div>
@@ -1977,12 +1978,12 @@ function HomeScreen({ session, onNewOrder, onOpenClient, onToast, initialDate }:
               {/* Événements du jour */}
               <div style={{ flex: 1, padding: "0 8px 10px", display: "flex", flexDirection: "column" as const, gap: 6, minHeight: 80 }}>
                 {dayEvents.length === 0 ? (
-                  <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, color: isToday ? "rgba(255,255,255,0.5)" : C.border }}>—</div>
+                  <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, color: C.border }}>—</div>
                 ) : dayEvents.map((e, idx) => {
                   const col = eventColor(e, idx);
                   return (
                     <button key={e.id} onClick={() => setSelectedEvent(e)} title="Voir le rendez-vous"
-                      style={{ background: isCancelled(e) ? "#f8fafc" : col.bg, border: "none", borderRadius: 10, padding: "8px 10px", cursor: "pointer", fontFamily: "inherit", textAlign: "left" as const, width: "100%", boxShadow: isToday ? "0 4px 10px rgba(15,23,42,0.12)" : "none", opacity: isCancelled(e) ? 0.6 : 1 }}>
+                      style={{ background: isCancelled(e) ? "#f8fafc" : col.bg, border: "none", borderRadius: 10, padding: "8px 10px", cursor: "pointer", fontFamily: "inherit", textAlign: "left" as const, width: "100%", boxShadow: "none", opacity: isCancelled(e) ? 0.6 : 1 }}>
                       <div style={{ fontSize: 10, fontWeight: 800, color: isCancelled(e) ? C.muted : col.text }}>
                         {e.allday ? "Déplacement" : odooToLocalDate(e.start).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}
                         {/* Objet de la visite en petit à côté de l'heure ; le client en titre */}
