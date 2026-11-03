@@ -1495,12 +1495,19 @@ function HomeScreen({ session, onNewOrder, onOpenClient, onToast, initialDate }:
   // Perf : on manipule directement le transform du DOM (via gridRef) pendant le
   // glissement, sans setState → aucun re-render par frame = suivi du doigt fluide.
   const gridRef = useRef<HTMLDivElement>(null);
-  const touchRef = useRef<{ x: number; y: number; dx: number; locked: null | "h" | "v" }>({ x: 0, y: 0, dx: 0, locked: null });
+  const touchRef = useRef<{ x: number; y: number; dx: number; locked: null | "h" | "v" | "card" }>({ x: 0, y: 0, dx: 0, locked: null });
+  // Glisser-déposer d'un RDV dans la grille horaire (souris : on glisse ; tactile :
+  // appui long puis glisser). Pas de 15 min, durée conservée.
+  const bodyRef = useRef<HTMLDivElement>(null);
+  const dragRef = useRef<any>(null);
+  const [drag, setDrag] = useState<{ id: number; col: number; startMin: number; durMin: number } | null>(null);
   const SWIPE_EASE = "transform 0.32s cubic-bezier(0.22,1,0.36,1)";
 
   const onTouchStart = (e: React.TouchEvent) => {
     const t = e.touches[0];
-    touchRef.current = { x: t.clientX, y: t.clientY, dx: 0, locked: null };
+    // Toucher une carte RDV ne change pas de semaine (elle peut être déplacée).
+    const onCard = !!(e.target as HTMLElement).closest?.("[data-rdv]");
+    touchRef.current = { x: t.clientX, y: t.clientY, dx: 0, locked: onCard ? "card" : null };
     if (gridRef.current) gridRef.current.style.transition = "none";
   };
   const onTouchMove = (e: React.TouchEvent) => {
@@ -1629,6 +1636,66 @@ function HomeScreen({ session, onNewOrder, onOpenClient, onToast, initialDate }:
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session, rangeStart.getTime(), rangeEnd.getTime(), reloadKey]);
+
+  const DRAG_PXH = 52, DRAG_GUTTER = 44;
+  const dragTarget = (clientX: number, clientY: number, d: any) => {
+    const el = bodyRef.current; if (!el) return null;
+    const r = el.getBoundingClientRect();
+    const colW = (r.width - DRAG_GUTTER) / 7;
+    const col = Math.max(0, Math.min(6, Math.floor((clientX - r.left - DRAG_GUTTER) / colW)));
+    const raw = d.h0 * 60 + ((clientY - r.top - d.offsetY) / DRAG_PXH) * 60;
+    const startMin = Math.max(0, Math.min(24 * 60 - d.durMin, Math.round(raw / 15) * 15));
+    return { col, startMin };
+  };
+  const onCardPointerDown = (ev: React.PointerEvent, e: any, h0: number) => {
+    if (isCancelled(e) || e.allday) return;
+    const st = odooToLocalDate(e.start), en = odooToLocalDate(e.stop || e.start);
+    const rect = (ev.currentTarget as HTMLElement).getBoundingClientRect();
+    const d: any = { e, h0, x0: ev.clientX, y0: ev.clientY, offsetY: ev.clientY - rect.top, durMin: Math.max(15, Math.round((en.getTime() - st.getTime()) / 60000)), active: false, touch: ev.pointerType !== "mouse" };
+    try { (ev.currentTarget as HTMLElement).setPointerCapture(ev.pointerId); } catch {}
+    if (d.touch) d.timer = setTimeout(() => { d.active = true; const t = dragTarget(d.x0, d.y0, d); if (t) setDrag({ id: e.id, durMin: d.durMin, ...t }); }, 300);
+    dragRef.current = d;
+  };
+  const onCardPointerMove = (ev: React.PointerEvent) => {
+    const d = dragRef.current; if (!d) return;
+    const dist = Math.hypot(ev.clientX - d.x0, ev.clientY - d.y0);
+    if (!d.active) {
+      if (d.touch) { if (dist > 8) { clearTimeout(d.timer); dragRef.current = null; } return; }
+      if (dist < 5) return;
+      d.active = true;
+    }
+    const t = dragTarget(ev.clientX, ev.clientY, d);
+    if (t) setDrag({ id: d.e.id, durMin: d.durMin, ...t });
+  };
+  const onCardPointerUp = async (ev: React.PointerEvent) => {
+    const d = dragRef.current; dragRef.current = null;
+    if (!d) return;
+    clearTimeout(d.timer);
+    if (!d.active) { setSelectedEvent(d.e); return; }   // simple tap : ouvre le RDV
+    const t = dragTarget(ev.clientX, ev.clientY, d);
+    setDrag(null);
+    if (!t) return;
+    const day = days[t.col];
+    const start = new Date(day.getFullYear(), day.getMonth(), day.getDate(), Math.floor(t.startMin / 60), t.startMin % 60);
+    const stop = new Date(start.getTime() + d.durMin * 60000);
+    const utc = (x: Date) => x.toISOString().slice(0, 19).replace("T", " ");
+    const vals = { start: utc(start), stop: utc(stop) };
+    if (vals.start === d.e.start) return;
+    setEvents(prev => prev.map(x => x.id === d.e.id ? { ...x, ...vals } : x));   // affichage immédiat
+    const label = `${start.toLocaleDateString("fr-FR", { weekday: "short", day: "numeric" })} ${hhmmFR(start)}`;
+    try {
+      await odoo.write(session, "calendar.event", [d.e.id], vals);
+      onToast(`RDV déplacé : ${label}`, "success");
+    } catch (err: any) {
+      if (odoo.isNetworkError(err)) {
+        await sync.queueAppointmentEdit(d.e.id, d.e.name, vals);
+        onToast(`RDV déplacé hors ligne (${label}) — envoyé au retour du réseau`, "info");
+      } else {
+        onToast("Odoo a refusé le déplacement : " + (err?.message || err), "error");
+        setReloadKey(k => k + 1);
+      }
+    }
+  };
 
   // Un RDV est annulé s'il porte le flag Studio OU s'il est archivé dans Odoo.
   // Les deux, parce qu'il existe des RDV annulés AVANT l'archivage (l'app ne
@@ -1967,7 +2034,7 @@ function HomeScreen({ session, onNewOrder, onOpenClient, onToast, initialDate }:
             {/* Grille horaire — sans défilement propre : une barre de défilement
                 ici décalait les colonnes par rapport aux en-têtes des jours. */}
             <div>
-              <div style={{ display: "grid", gridTemplateColumns: cols, position: "relative" as const, height: (H1 - H0) * PXH }}>
+              <div ref={bodyRef} style={{ display: "grid", gridTemplateColumns: cols, position: "relative" as const, height: (H1 - H0) * PXH }}>
                 <div style={{ position: "relative" as const }}>
                   {Array.from({ length: H1 - H0 }, (_, h) => (
                     <div key={h} style={{ position: "absolute" as const, top: h * PXH - 6, right: 6, fontSize: 10, color: C.muted }}>{h ? `${H0 + h}:00` : ""}</div>
@@ -1989,8 +2056,12 @@ function HomeScreen({ session, onNewOrder, onOpenClient, onToast, initialDate }:
                         const col = eventColor(e, idx);
                         const cancelled = isCancelled(e);
                         return (
-                          <button key={e.id} onClick={() => setSelectedEvent(e)} title={`${hhmmFR(st)}–${hhmmFR(en)} ${eventTitle(e)}`}
+                          <button key={e.id} data-rdv onClick={cancelled ? () => setSelectedEvent(e) : undefined} title={`${hhmmFR(st)}–${hhmmFR(en)} ${eventTitle(e)}`}
+                            onPointerDown={ev => onCardPointerDown(ev, e, H0)} onPointerMove={onCardPointerMove} onPointerUp={onCardPointerUp}
+                            onPointerCancel={() => { clearTimeout(dragRef.current?.timer); dragRef.current = null; setDrag(null); }}
+                            onKeyDown={ev => { if (ev.key === "Enter" || ev.key === " ") setSelectedEvent(e); }}
                             style={{ position: "absolute" as const, top, height, left: `calc(${(l / of) * 100}% + 2px)`, width: `calc(${100 / of}% - 4px)`,
+                              touchAction: cancelled ? "auto" : "none", userSelect: "none" as const, visibility: drag?.id === e.id ? "hidden" as const : "visible" as const,
                               background: cancelled ? "#f8fafc" : col.bg, border: "none", borderLeft: `3px solid ${cancelled ? C.border : ("bar" in col ? col.bar : col.text)}`,
                               borderRadius: 6, padding: "2px 5px", cursor: "pointer", fontFamily: "inherit", textAlign: "left" as const, overflow: "hidden", opacity: cancelled ? 0.6 : 1, zIndex: 1 }}>
                             <div style={{ fontSize: 9.5, fontWeight: 800, color: cancelled ? C.muted : col.text, whiteSpace: "nowrap" as const, overflow: "hidden", textOverflow: "ellipsis" }}>
@@ -2003,6 +2074,22 @@ function HomeScreen({ session, onNewOrder, onOpenClient, onToast, initialDate }:
                     </div>
                   );
                 })}
+                {/* Fantôme du RDV en cours de déplacement */}
+                {drag && (() => {
+                  const e = events.find(x => x.id === drag.id);
+                  if (!e) return null;
+                  const end = drag.startMin + drag.durMin;
+                  const hm = (m: number) => `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
+                  return (
+                    <div style={{ position: "absolute" as const, pointerEvents: "none" as const, zIndex: 5,
+                      left: `calc(${DRAG_GUTTER}px + (100% - ${DRAG_GUTTER}px) * ${drag.col} / 7 + 2px)`, width: `calc((100% - ${DRAG_GUTTER}px) / 7 - 4px)`,
+                      top: (drag.startMin / 60 - H0) * PXH, height: Math.max(22, drag.durMin / 60 * PXH - 2),
+                      background: "rgba(13,148,136,0.18)", border: `2px dashed ${C.teal}`, borderRadius: 6, padding: "2px 5px", boxShadow: "0 8px 20px rgba(15,23,42,0.15)" }}>
+                      <div style={{ fontSize: 10, fontWeight: 800, color: C.tealDark }}>{hm(drag.startMin)} – {hm(end)}</div>
+                      <div style={{ fontSize: 10.5, fontWeight: 700, color: C.text, overflow: "hidden", whiteSpace: "nowrap" as const, textOverflow: "ellipsis" }}>{eventClient(e) || e.name}</div>
+                    </div>
+                  );
+                })()}
               </div>
             </div>
           </div>
