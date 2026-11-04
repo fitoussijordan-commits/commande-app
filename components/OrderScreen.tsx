@@ -9,7 +9,7 @@ import AssistantScreen from "@/components/AssistantScreen";
 import BonCommandeScreen, { ImportedLine } from "@/components/BonCommandeScreen";
 import QtyPad from "@/components/QtyPad";
 import PerimesReportScreen from "@/components/PerimesReportScreen";
-import VisitPriority from "@/components/VisitPriority";
+import HomeInsights from "@/components/HomeInsights";
 import AgendaGlass from "@/components/AgendaGlass";
 import { resolveClientFamily, odooRecordUrl } from "@/lib/perimes";
 import { saleStep, snapQty, optionalProductFields, ppcOf } from "@/lib/productFields";
@@ -2449,7 +2449,7 @@ function ClientStep({ session, onSelect, onImportBon, onOpenPlanning }: {
       {showWidgets && (
         <div style={{ width: "100%", maxWidth: 1040, marginTop: 6, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(400px, 1fr))", gap: 18, alignItems: "start" }}>
           <AgendaGlass session={session} onOpenPlanning={onOpenPlanning} />
-          <VisitPriority session={session} onOpenClient={onSelect} />
+          <HomeInsights session={session} onOpenClient={onSelect} />
         </div>
       )}
     </div>

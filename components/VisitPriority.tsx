@@ -41,9 +41,11 @@ const fmtDay = (d: Date) => d.toLocaleDateString("fr-FR", { day: "numeric", mont
 const odooDate = (s: string) => new Date(String(s).replace(" ", "T") + "Z");
 const toOdoo = (d: Date) => d.toISOString().slice(0, 19).replace("T", " ");
 
-export default function VisitPriority({ session, onOpenClient }: {
+export default function VisitPriority({ session, onOpenClient, bare, onCount }: {
   session: odoo.OdooSession;
   onOpenClient: (client: any) => void;
+  bare?: boolean;                        // dans un onglet (HomeInsights) : sans carte ni titre
+  onCount?: (n: number) => void;         // nombre de clients à planifier (pastille de l'onglet)
 }) {
   const [items, setItems] = useState<Prio[] | null>(null);
   const [error, setError] = useState("");
@@ -109,16 +111,17 @@ export default function VisitPriority({ session, onOpenClient }: {
   }, [session]);
 
   const toPlan = items?.filter(p => !p.next).length ?? 0;
+  useEffect(() => { onCount?.(toPlan); }, [toPlan]); // eslint-disable-line react-hooks/exhaustive-deps
   const shown = items ? (open ? items : items.slice(0, 5)) : [];
 
   return (
-    <div style={{ ...GLASS, padding: 18, display: "flex", flexDirection: "column" as const, minHeight: 0 }}>
-      <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginBottom: 12 }}>
+    <div style={{ ...(bare ? {} : { ...GLASS, padding: 18 }), display: "flex", flexDirection: "column" as const, minHeight: 0 }}>
+      {!bare && <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginBottom: 12 }}>
         <div style={{ fontSize: 17, fontWeight: 800, color: C.text }}>À visiter en priorité</div>
         {!!toPlan && (
           <span style={{ fontSize: 12, fontWeight: 800, color: "#fff", background: C.orange, borderRadius: 999, padding: "2px 9px" }}>{toPlan}</span>
         )}
-      </div>
+      </div>}
 
       {error && <div style={{ fontSize: 13, color: C.muted }}>{error === "Hors ligne" ? "Indisponible hors ligne." : error}</div>}
       {!error && items === null && <div style={{ fontSize: 13, color: C.muted }}>…</div>}
