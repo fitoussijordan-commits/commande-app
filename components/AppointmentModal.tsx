@@ -65,6 +65,10 @@ interface Props {
   adminMode?: boolean; // RDV sans client (administratif) avec étiquette
   onClose: () => void;
   onToast: (msg: string, type?: "success" | "error" | "info") => void;
+  // Depuis « Mes MEA » : MEA que le client n'a pas prises, à cocher ; les
+  // cochées sont écrites dans la note (« Proposer MEA : … »).
+  meaOptions?: string[];
+  meaChecked?: string[];
 }
 
 // UTC Odoo "YYYY-MM-DD HH:MM:SS" → valeur locale pour <input type="datetime-local">.
@@ -80,7 +84,7 @@ const pad2 = (n: number) => String(n).padStart(2, "0");
 const toLocalInput = (d: Date) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}T${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
 const fromOdoo = (s: string) => new Date(String(s).replace(" ", "T") + "Z");
 
-export default function AppointmentModal({ session, client: clientProp, event, adminMode, onClose, onToast }: Props) {
+export default function AppointmentModal({ session, client: clientProp, event, adminMode, onClose, onToast, meaOptions, meaChecked }: Props) {
   const isEdit = Boolean(event);
   // Client choisi dans la fenêtre (bouton + du planning : RDV sans client au départ).
   const [picked, setPicked] = useState<any>(null);
@@ -109,7 +113,20 @@ export default function AppointmentModal({ session, client: clientProp, event, a
   const [durationHours, setDurationHours] = useState(initDuration);
   // Adresse complète par défaut : elle sert au lien Waze / Plans.
   const [location, setLocation] = useState(event?.location || clientAddress(client));
-  const [note, setNote] = useState(initNote);
+  const MEA_LINE = /^Proposer MEA\s*:.*$/m;
+  const meaLine = (keys: string[]) => keys.length ? `Proposer MEA : ${keys.join(", ")}` : "";
+  const [meaSel, setMeaSel] = useState<string[]>(meaChecked || []);
+  const [note, setNote] = useState(() => [meaLine(meaChecked || []), initNote].filter(Boolean).join("\n"));
+  // Cocher / décocher une MEA réécrit la ligne « Proposer MEA : … » de la note.
+  const toggleMea = (k: string) => {
+    const next = meaSel.includes(k) ? meaSel.filter(x => x !== k) : [...meaSel, k];
+    setMeaSel(next);
+    setNote(n => {
+      const line = meaLine(next);
+      if (MEA_LINE.test(n)) return n.replace(MEA_LINE, line).replace(/^\n+/, "");
+      return [line, n].filter(Boolean).join("\n");
+    });
+  };
   // Déplacement : RDV « journée entière » d'Odoo du … au …, titre = destination
   // (+ zone entre parenthèses), lieu = destination.
   const [trip, setTrip] = useState(Boolean(event?.allday));
@@ -502,6 +519,24 @@ export default function AppointmentModal({ session, client: clientProp, event, a
         </Field>
 
         </>}
+
+        {meaOptions && meaOptions.length > 0 && (
+          <Field label="MEA à proposer">
+            <div style={{ display: "flex", flexWrap: "wrap" as const, gap: 6 }}>
+              {meaOptions.map(k => {
+                const on = meaSel.includes(k);
+                return (
+                  <button type="button" key={k} onClick={() => toggleMea(k)}
+                    style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 11px", borderRadius: 999, fontSize: 12.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit",
+                      background: on ? C.teal : C.white, color: on ? "#fff" : C.textSec, border: `1.5px solid ${on ? C.teal : C.border}` }}>
+                    <span style={{ width: 14, height: 14, borderRadius: 4, border: `1.5px solid ${on ? "#fff" : C.muted}`, display: "inline-flex", alignItems: "center", justifyContent: "center", fontSize: 10 }}>{on ? "✓" : ""}</span>
+                    {k}
+                  </button>
+                );
+              })}
+            </div>
+          </Field>
+        )}
 
         <Field label="Note (optionnel)">
           <textarea value={note} onChange={e => setNote(e.target.value)} rows={2} style={{ ...inputStyle, resize: "vertical" as const, fontFamily: "inherit" }} />

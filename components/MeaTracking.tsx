@@ -95,6 +95,14 @@ export default function MeaDashboard({ session, onClose, onOpenClient, onToast }
     setSaving(null);
   };
 
+  // MEA proposables à un client : celles qu'il n'a pas prises (avec l'offre prévue si elle est notée).
+  const meaLabel = (k: string, clientId: number) => {
+    const plan = data?.plans.get(planKey(k, clientId));
+    const v = plan?.offerId && data?.campaigns.find(c => c.key === k)?.offers.find(o => o.id === plan.offerId)?.variant;
+    return v ? `${k} (${v})` : k;
+  };
+  const meaOptionsFor = (clientId: number) =>
+    (data?.campaigns || []).filter(c => data?.taken.get(c.key)?.get(clientId)?.state !== "pris").map(c => meaLabel(c.key, clientId));
   const camp = data?.campaigns.find(c => c.key === key);
   const total = data?.clients.length || 0;
   const GRID = "minmax(0, 2fr) 120px 140px minmax(0, 1.6fr)";
@@ -234,6 +242,7 @@ export default function MeaDashboard({ session, onClose, onOpenClient, onToast }
 
       {rdvFor && (
         <AppointmentModal session={session} client={rdvFor}
+          meaOptions={meaOptionsFor(rdvFor.id)} meaChecked={[meaLabel(key, rdvFor.id)]}
           onClose={() => { setRdvFor(null); reloadVisits(); }}
           onToast={onToast} />
       )}
