@@ -60,10 +60,18 @@ export async function loadMeaData(session: odoo.OdooSession): Promise<MeaData> {
   const rel = meta.offersRelation, offersField = meta.offersField;
   if (!rel || !offersField) throw new Error("Champ « Offres commandées » introuvable sur les commandes");
 
-  // Offres actives (si le modèle a un champ actif), regroupées par campagne.
+  // Offres actives, regroupées par campagne.
   const ofields: Record<string, any> = await odoo.callMethod(session, rel, "fields_get", [], { attributes: ["type"] });
   const activeField = ["x_active", "active"].find(f => ofields[f]?.type === "boolean");
-  const offerRows = await odoo.searchRead(session, rel, activeField ? [[activeField, "=", true]] : [], ["display_name"], 500, "id desc");
+  let offerRows = await odoo.searchRead(session, rel, activeField ? [[activeField, "=", true]] : [], ["display_name"], 500, "id desc");
+  // MEA active = offre dont au moins un article (champ « Offre produit ») est
+  // actif et encore en stock. Sans ce champ article : toutes les offres.
+  try {
+    const prods = await odoo.searchRead(session, "product.product",
+      [["x_offre_produit_id", "!=", false], ["active", "=", true], ["virtual_available", ">", 0]], ["x_offre_produit_id"], 0);
+    const live = new Set(prods.map((p: any) => p.x_offre_produit_id?.[0]).filter(Boolean));
+    offerRows = offerRows.filter((r: any) => live.has(r.id));
+  } catch (e) { if (odoo.isNetworkError(e)) throw e; }
   const byKey = new Map<string, MeaCampaign>();
   for (const r of offerRows) {
     const name = String(r.display_name || "");

@@ -10,6 +10,7 @@ import BonCommandeScreen, { ImportedLine } from "@/components/BonCommandeScreen"
 import QtyPad from "@/components/QtyPad";
 import PerimesReportScreen from "@/components/PerimesReportScreen";
 import HomeInsights from "@/components/HomeInsights";
+import MeaDashboard from "@/components/MeaTracking";
 import AgendaGlass from "@/components/AgendaGlass";
 import { resolveClientFamily, odooRecordUrl } from "@/lib/perimes";
 import { saleStep, snapQty, optionalProductFields, ppcOf } from "@/lib/productFields";
@@ -1314,7 +1315,7 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
       )}
 
       {step === "client" && <ClientStep session={session} onSelect={selectClient} onImportBon={() => pickBonFile("client")}
-        onOpenPlanning={(d) => { setPlanningDate(d); setStep("home"); }} />}
+        onOpenPlanning={(d) => { setPlanningDate(d); setStep("home"); }} onToast={onToast} />}
 
       {step === "hub" && client && (
         <ClientHub
@@ -2244,8 +2245,9 @@ function Row({ icon, label }: { icon: string; label: string }) {
 // ═══════════════════════════════════════════════════════════════════════════
 // ÉTAPE 1 — Sélection client
 // ═══════════════════════════════════════════════════════════════════════════
-function ClientStep({ session, onSelect, onImportBon, onOpenPlanning }: {
+function ClientStep({ session, onSelect, onImportBon, onOpenPlanning, onToast }: {
   session: odoo.OdooSession; onSelect: (c: any) => void; onImportBon: () => void; onOpenPlanning: (d: Date) => void;
+  onToast: (msg: string, type?: "success" | "error" | "info") => void;
 }) {
   const [q, setQ] = useState("");
   const [results, setResults] = useState<any[]>([]);
@@ -2260,6 +2262,7 @@ function ClientStep({ session, onSelect, onImportBon, onOpenPlanning }: {
   const [radius, setRadius] = useState(LOC_RADIUS_KM);
   // « Mes clients » (vendeur = moi) par défaut ; bouton pour voir tous les clients.
   const [mine, setMine] = useState(getMineOnly);
+  const [showMea, setShowMea] = useState(false);
   const toggleMine = () => setMine(m => { setMineOnly(!m); return !m; });
 
   useEffect(() => {
@@ -2376,7 +2379,14 @@ function ClientStep({ session, onSelect, onImportBon, onOpenPlanning }: {
             style={{ flexShrink: 0, width: 50, display: "flex", alignItems: "center", justifyContent: "center", background: C.white, border: `1.5px solid ${C.border}`, borderRadius: 14, cursor: "pointer", boxShadow: C.shadowMd, color: C.textSec }}>
             <Icon name="file" size={20} />
           </button>
+          {/* Tableau de bord « Mes MEA » (écran à part) */}
+          <button onClick={() => setShowMea(true)}
+            title="Mes MEA : qui a pris, à qui les proposer"
+            style={{ flexShrink: 0, padding: "0 14px", display: "flex", alignItems: "center", gap: 6, background: C.white, border: `1.5px solid ${C.border}`, borderRadius: 14, cursor: "pointer", boxShadow: C.shadowMd, color: C.tealDark, fontFamily: "inherit", fontSize: 13, fontWeight: 800, whiteSpace: "nowrap" as const }}>
+            <Icon name="gift" size={18} />Mes MEA
+          </button>
         </div>
+        {showMea && <MeaDashboard session={session} onClose={() => setShowMea(false)} onOpenClient={c => { setShowMea(false); onSelect(c); }} onToast={onToast} />}
 
         {locMode && !locLoading && !locError && (
           <div style={{ marginBottom: 10, textAlign: "center" as const }}>

@@ -1,25 +1,25 @@
 "use client";
 // Carte d'accueil à onglets (pour garder l'accueil lisible) :
-//   Priorités (clients à visiter) · Top / Flop (évolution du CA) · MEA (suivi des campagnes).
+//   Priorités (clients à visiter) · Top / Flop (évolution du CA).
+// Le suivi des MEA a son propre écran (« Mes MEA », components/MeaTracking).
 import { useState } from "react";
 import * as odoo from "@/lib/odoo";
 import { GLASS } from "@/components/glass";
 import VisitPriority from "@/components/VisitPriority";
 import TopFlop from "@/components/TopFlop";
-import { MeaSummary } from "@/components/MeaTracking";
 
-type Tab = "prio" | "topflop" | "mea";
+type Tab = "prio" | "topflop";
 
 export default function HomeInsights({ session, onOpenClient }: {
   session: odoo.OdooSession;
   onOpenClient: (client: any) => void;
 }) {
   const [tab, setTab] = useState<Tab>(() => {
-    try { const t = localStorage.getItem("wms_home_tab"); return t === "topflop" || t === "mea" ? t : "prio"; } catch { return "prio"; }
+    try { const t = localStorage.getItem("wms_home_tab"); return t === "topflop" ? t : "prio"; } catch { return "prio"; }
   });
   const [prioCount, setPrioCount] = useState(0);
   const choose = (t: Tab) => { setTab(t); try { localStorage.setItem("wms_home_tab", t); } catch {} };
-  const tabs: [Tab, string][] = [["prio", "À visiter"], ["topflop", "Top / Flop"], ["mea", "Suivi MEA"]];
+  const tabs: [Tab, string][] = [["prio", "À visiter"], ["topflop", "Top / Flop"]];
 
   return (
     <div style={{ ...GLASS, padding: 18, display: "flex", flexDirection: "column" as const, minHeight: 0 }}>
@@ -40,7 +40,6 @@ export default function HomeInsights({ session, onOpenClient }: {
         <VisitPriority session={session} onOpenClient={onOpenClient} bare onCount={setPrioCount} />
       </div>
       {tab === "topflop" && <TopFlop session={session} onOpenClient={onOpenClient} />}
-      {tab === "mea" && <MeaSummary session={session} onOpenClient={onOpenClient} />}
     </div>
   );
 }

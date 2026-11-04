@@ -1,173 +1,232 @@
 "use client";
-// Suivi des MEA : résumé par campagne (onglet de l'accueil) et écran de suivi
-// (clients qui ont pris / pas pris, offre prévue + note par client).
-import { useEffect, useMemo, useState } from "react";
+// Tableau de bord « Mes MEA » (écran indépendant, ouvert depuis l'accueil) :
+// pour chaque MEA active, les clients du commercial qui ont pris / ont un devis /
+// sont à proposer, leur prochain RDV (ou « Planifier ») et la prévision du
+// commercial (offre envisagée + note) — pour préparer ses RDV.
+import { useCallback, useEffect, useMemo, useState } from "react";
 import * as odoo from "@/lib/odoo";
+import { linkedPartnerId } from "@/lib/calendar";
 import { loadMeaData, savePlan, planKey, type MeaData, type Plan } from "@/lib/meaTracking";
+import AppointmentModal from "@/components/AppointmentModal";
 
 const C = {
   bg: "#f8fafc", white: "#fff", text: "#0f172a", textSec: "#334155", muted: "#94a3b8", border: "#e2e8f0",
   teal: "#0d9488", tealDark: "#0f766e", tealSoft: "#f0fdfa", green: "#16a34a", greenSoft: "#f0fdf4",
-  orange: "#ea580c", orangeSoft: "#fff7ed",
+  orange: "#ea580c", orangeSoft: "#fff7ed", red: "#dc2626",
 };
 const fmtEUR = (n: number) => new Intl.NumberFormat("fr-FR", { style: "currency", currency: "EUR", maximumFractionDigits: 0 }).format(n);
+const toOdoo = (d: Date) => d.toISOString().slice(0, 19).replace("T", " ");
+type Status = "todo" | "devis" | "pris";
+const STAT: Record<Status, { label: string; color: string; soft: string }> = {
+  todo: { label: "À proposer", color: "#334155", soft: "#eef2f6" },
+  devis: { label: "Devis en cours", color: "#ea580c", soft: "#fff7ed" },
+  pris: { label: "Ont pris", color: "#16a34a", soft: "#f0fdf4" },
+};
 
-// ── Onglet de l'accueil : une ligne par campagne active ──
-export function MeaSummary({ session, onOpenClient }: { session: odoo.OdooSession; onOpenClient: (c: any) => void }) {
-  const [data, setData] = useState<MeaData | null>(null);
-  const [error, setError] = useState("");
-  const [openKey, setOpenKey] = useState<string | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    loadMeaData(session)
-      .then(d => { if (!cancelled) setData(d); })
-      .catch(e => { if (!cancelled) setError(odoo.isNetworkError(e) ? "Indisponible hors ligne." : (e?.message || "Lecture impossible")); });
-    return () => { cancelled = true; };
-  }, [session]);
-
-  if (error) return <div style={{ fontSize: 13, color: C.muted }}>{error}</div>;
-  if (!data) return <div style={{ fontSize: 13, color: C.muted }}>…</div>;
-  if (!data.campaigns.length) return <div style={{ fontSize: 13, color: C.muted }}>Aucune MEA active.</div>;
-  const total = data.clients.length;
-
-  return (
-    <div style={{ display: "flex", flexDirection: "column" as const, gap: 6 }}>
-      {data.campaigns.map(c => {
-        const took = Array.from(data.taken.get(c.key)?.values() || []).filter(t => t.state === "pris").length;
-        const pct = total ? Math.round((took / total) * 100) : 0;
-        return (
-          <button key={c.key} onClick={() => setOpenKey(c.key)}
-            style={{ textAlign: "left" as const, padding: "9px 12px", borderRadius: 14, border: "none", background: "rgba(255,255,255,0.7)", cursor: "pointer", fontFamily: "inherit" }}>
-            <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
-              <span style={{ flex: 1, minWidth: 0, fontSize: 13.5, fontWeight: 800, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>{c.key}</span>
-              <span style={{ fontSize: 12, fontWeight: 800, color: C.tealDark, flexShrink: 0 }}>{took} / {total}</span>
-            </div>
-            <div style={{ height: 5, borderRadius: 3, background: "rgba(15,23,42,0.07)", marginTop: 6, overflow: "hidden" }}>
-              <div style={{ width: `${pct}%`, height: "100%", background: C.teal }} />
-            </div>
-          </button>
-        );
-      })}
-      {openKey && (
-        <MeaScreen session={session} data={data} initial={openKey} onClose={() => setOpenKey(null)}
-          onOpenClient={c => { setOpenKey(null); onOpenClient(c); }}
-          onPlanSaved={(k, p) => setData(d => d && { ...d, plans: new Map(d.plans).set(k, p) })} />
-      )}
-    </div>
-  );
+// Prochain RDV (non annulé) de chaque client, sur les 6 mois à venir.
+async function loadNextVisits(session: odoo.OdooSession): Promise<Map<number, Date>> {
+  const now = new Date(), to = new Date(); to.setMonth(to.getMonth() + 6);
+  const domain = [["user_id", "=", session.uid], ["start", ">=", toOdoo(now)], ["start", "<=", toOdoo(to)]];
+  const rows = await odoo.searchRead(session, "calendar.event", domain, ["start", "res_model", "res_id", "x_studio_annul"], 0, "start asc")
+    .catch(() => [] as any[]);
+  const out = new Map<number, Date>();
+  for (const e of rows) {
+    const pid = linkedPartnerId(e);
+    if (!pid || e.x_studio_annul || out.has(pid)) continue;
+    out.set(pid, new Date(String(e.start).replace(" ", "T") + "Z"));
+  }
+  return out;
 }
 
-// ── Écran de suivi d'une campagne ──
-function MeaScreen({ session, data, initial, onClose, onOpenClient, onPlanSaved }: {
-  session: odoo.OdooSession; data: MeaData; initial: string; onClose: () => void;
-  onOpenClient: (c: any) => void; onPlanSaved: (key: string, p: Plan) => void;
+export default function MeaDashboard({ session, onClose, onOpenClient, onToast }: {
+  session: odoo.OdooSession;
+  onClose: () => void;
+  onOpenClient: (c: any) => void;
+  onToast: (msg: string, type?: "success" | "error" | "info") => void;
 }) {
-  const [key, setKey] = useState(initial);
-  const [filter, setFilter] = useState<"todo" | "pris" | "tous">("todo");
+  const [data, setData] = useState<MeaData | null>(null);
+  const [visits, setVisits] = useState<Map<number, Date>>(new Map());
+  const [error, setError] = useState("");
+  const [key, setKey] = useState("");
+  const [filter, setFilter] = useState<Status>("todo");
   const [q, setQ] = useState("");
   const [saving, setSaving] = useState<string | null>(null);
   const [err, setErr] = useState("");
-  const camp = data.campaigns.find(c => c.key === key)!;
-  const taken = data.taken.get(key) || new Map();
+  const [rdvFor, setRdvFor] = useState<any>(null);
+
+  const reloadVisits = useCallback(() => { loadNextVisits(session).then(setVisits); }, [session]);
+  useEffect(() => {
+    loadMeaData(session)
+      .then(d => { setData(d); setKey(d.campaigns[0]?.key || ""); })
+      .catch(e => setError(odoo.isNetworkError(e) ? "Indisponible hors ligne." : (e?.message || "Lecture impossible")));
+    reloadVisits();
+  }, [session, reloadVisits]);
+
+  const taken = data?.taken.get(key) || new Map();
+  const status = (id: number): Status => taken.get(id)?.state === "pris" ? "pris" : taken.has(id) ? "devis" : "todo";
+  const counts: Record<Status, number> = { todo: 0, devis: 0, pris: 0 };
+  data?.clients.forEach(c => counts[status(c.id)]++);
 
   const rows = useMemo(() => {
+    if (!data) return [];
     const words = q.trim().toLowerCase().split(/\s+/).filter(Boolean);
     return data.clients
-      .filter(c => filter === "tous" || (filter === "pris" ? taken.has(c.id) : taken.get(c.id)?.state !== "pris"))
+      .filter(c => status(c.id) === filter)
       .filter(c => words.every(w => `${c.name} ${c.city || ""} ${c.ref || ""}`.toLowerCase().includes(w)))
       .sort((a, b) => (Number(b.x_ca_n_1) || 0) - (Number(a.x_ca_n_1) || 0));
-  }, [data.clients, taken, filter, q]);
-  const tookCount = Array.from(taken.values()).filter(t => t.state === "pris").length;
+  }, [data, taken, filter, q]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const save = async (clientId: number, patch: Partial<Plan>) => {
-    if (!data.tracking) return;
+    if (!data?.tracking) return;
     const k = planKey(key, clientId);
     const cur = data.plans.get(k) || { offerId: null, note: "" };
     const next = { ...cur, ...patch };
-    if (next.offerId === cur.offerId && next.note === cur.note && cur.id) return;
+    if (next.offerId === cur.offerId && next.note === cur.note) return;
     setSaving(k); setErr("");
     try {
       const id = await savePlan(session, data.tracking, key, clientId, next);
-      onPlanSaved(k, { ...next, id });
+      setData(d => d && { ...d, plans: new Map(d.plans).set(k, { ...next, id }) });
     } catch (e: any) {
       setErr(odoo.isNetworkError(e) ? "Hors ligne : prévision non enregistrée" : `Enregistrement refusé : ${e?.message || e}`);
     }
     setSaving(null);
   };
 
-  const pill = (active: boolean): React.CSSProperties => ({
-    height: 30, padding: "0 12px", borderRadius: 999, border: `1.5px solid ${active ? C.teal : C.border}`, background: active ? C.teal : C.white,
-    color: active ? "#fff" : C.textSec, fontSize: 12.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" as const,
-  });
+  const camp = data?.campaigns.find(c => c.key === key);
+  const total = data?.clients.length || 0;
+  const GRID = "minmax(0, 2fr) 120px 140px minmax(0, 1.6fr)";
 
   return (
     <div style={{ position: "fixed", inset: 0, zIndex: 300, background: C.bg, display: "flex", flexDirection: "column" as const, fontFamily: "'DM Sans', sans-serif" }}>
-      <div style={{ padding: "16px 20px 12px", background: C.white, borderBottom: `1px solid ${C.border}` }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
-          <button onClick={onClose} aria-label="Fermer" style={{ width: 36, height: 36, borderRadius: 10, border: `1px solid ${C.border}`, background: C.white, cursor: "pointer", fontSize: 16, color: C.textSec }}>←</button>
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontSize: 18, fontWeight: 800, color: C.text }}>Suivi des MEA</div>
-            <div style={{ fontSize: 12, color: C.muted }}>{tookCount} client{tookCount > 1 ? "s" : ""} sur {data.clients.length} ont pris « {key} »</div>
+      {/* En-tête */}
+      <div style={{ background: C.white, borderBottom: `1px solid ${C.border}` }}>
+        <div style={{ maxWidth: 1100, margin: "0 auto", padding: "18px 24px 16px" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+            <button onClick={onClose} aria-label="Retour"
+              style={{ width: 36, height: 36, borderRadius: 10, border: `1px solid ${C.border}`, background: C.white, cursor: "pointer", color: C.textSec, display: "flex", alignItems: "center", justifyContent: "center" }}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4"><path d="M15 18l-6-6 6-6"/></svg>
+            </button>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 22, fontWeight: 800, color: C.text }}>Mes MEA</div>
+              <div style={{ fontSize: 12.5, color: C.muted }}>Qui a pris, à qui les proposer, et quand je les vois</div>
+            </div>
+            <input value={q} onChange={e => setQ(e.target.value)} placeholder="Chercher un client…"
+              style={{ width: 230, height: 38, padding: "0 12px", borderRadius: 10, border: `1.5px solid ${C.border}`, fontSize: 13, fontFamily: "inherit", outline: "none" }} />
           </div>
+
+          {/* Campagnes actives */}
+          {data && data.campaigns.length > 0 && (
+            <div style={{ display: "flex", gap: 10, overflowX: "auto" as const, marginTop: 16, paddingBottom: 2 }}>
+              {data.campaigns.map(c => {
+                const took = Array.from(data.taken.get(c.key)?.values() || []).filter(t => t.state === "pris").length;
+                const pct = total ? Math.round((took / total) * 100) : 0;
+                const sel = c.key === key;
+                return (
+                  <button key={c.key} onClick={() => setKey(c.key)}
+                    style={{ flex: "0 0 220px", textAlign: "left" as const, padding: "12px 14px", borderRadius: 14, cursor: "pointer", fontFamily: "inherit",
+                      border: `2px solid ${sel ? C.teal : C.border}`, background: sel ? C.tealSoft : C.white }}>
+                    <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
+                      <span style={{ flex: 1, minWidth: 0, fontSize: 13.5, fontWeight: 800, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>{c.key}</span>
+                      <span style={{ fontSize: 18, fontWeight: 800, color: C.tealDark }}>{pct}%</span>
+                    </div>
+                    <div style={{ fontSize: 11.5, color: C.muted, marginTop: 1 }}>{took} / {total} clients · {c.offers.map(o => o.variant).join(" · ")}</div>
+                    <div style={{ height: 4, borderRadius: 2, background: "rgba(15,23,42,0.07)", marginTop: 8, overflow: "hidden" }}>
+                      <div style={{ width: `${pct}%`, height: "100%", background: C.teal }} />
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+
+          {/* Compteurs = filtres */}
+          {data && camp && (
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 10, marginTop: 12 }}>
+              {(["todo", "devis", "pris"] as const).map(f => (
+                <button key={f} onClick={() => setFilter(f)}
+                  style={{ textAlign: "left" as const, padding: "9px 14px", borderRadius: 12, cursor: "pointer", fontFamily: "inherit", display: "flex", alignItems: "baseline", gap: 8,
+                    border: `2px solid ${filter === f ? STAT[f].color : "transparent"}`, background: STAT[f].soft }}>
+                  <span style={{ fontSize: 22, fontWeight: 800, color: STAT[f].color }}>{counts[f]}</span>
+                  <span style={{ fontSize: 12.5, fontWeight: 700, color: STAT[f].color }}>{STAT[f].label}</span>
+                </button>
+              ))}
+            </div>
+          )}
+
+          {data && !data.tracking && (
+            <div style={{ marginTop: 12, padding: "8px 12px", borderRadius: 10, background: C.orangeSoft, color: C.orange, fontSize: 12, fontWeight: 600 }}>
+              Prévisions en lecture seule : le modèle Studio « Suivi MEA » n'existe pas encore dans Odoo.
+            </div>
+          )}
+          {err && <div style={{ marginTop: 8, fontSize: 12, color: C.red, fontWeight: 600 }}>{err}</div>}
         </div>
-        {/* Campagnes actives */}
-        <div style={{ display: "flex", gap: 6, overflowX: "auto" as const, paddingBottom: 4 }}>
-          {data.campaigns.map(c => <button key={c.key} onClick={() => setKey(c.key)} style={pill(c.key === key)}>{c.key}</button>)}
-        </div>
-        <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" as const }}>
-          <div style={{ display: "flex", background: C.bg, borderRadius: 10, padding: 3 }}>
-            {([["todo", "Pas pris"], ["pris", "Pris"], ["tous", "Tous"]] as const).map(([v, l]) => (
-              <button key={v} onClick={() => setFilter(v)}
-                style={{ height: 28, padding: "0 12px", borderRadius: 8, border: "none", cursor: "pointer", fontFamily: "inherit", fontSize: 12.5, fontWeight: 700,
-                  background: filter === v ? C.white : "transparent", color: filter === v ? C.tealDark : C.muted, boxShadow: filter === v ? "0 1px 4px rgba(15,23,42,0.1)" : "none" }}>{l}</button>
-            ))}
-          </div>
-          <input value={q} onChange={e => setQ(e.target.value)} placeholder="Chercher un client…"
-            style={{ flex: 1, minWidth: 160, height: 34, padding: "0 12px", borderRadius: 10, border: `1.5px solid ${C.border}`, fontSize: 13, fontFamily: "inherit", outline: "none" }} />
-        </div>
-        {!data.tracking && (
-          <div style={{ marginTop: 10, padding: "8px 12px", borderRadius: 10, background: C.orangeSoft, color: C.orange, fontSize: 12, fontWeight: 600, lineHeight: 1.45 }}>
-            Prévisions non enregistrables : le modèle Studio « Suivi MEA » n'existe pas encore dans Odoo.
-          </div>
-        )}
-        {err && <div style={{ marginTop: 8, fontSize: 12, color: "#dc2626", fontWeight: 600 }}>{err}</div>}
       </div>
 
-      <div style={{ flex: 1, overflowY: "auto" as const, padding: "10px 20px 30px" }}>
-        {rows.length === 0 && <div style={{ textAlign: "center" as const, color: C.muted, fontSize: 13, padding: 30 }}>Aucun client.</div>}
-        {rows.map(c => {
-          const t = taken.get(c.id);
-          const k = planKey(key, c.id);
-          const plan = data.plans.get(k);
-          return (
-            <div key={c.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 12px", marginBottom: 6, borderRadius: 12, background: C.white, border: `1px solid ${C.border}`, flexWrap: "wrap" as const }}>
-              <button onClick={() => onOpenClient(c)} title="Ouvrir la fiche client"
-                style={{ flex: "1 1 200px", minWidth: 0, textAlign: "left" as const, background: "none", border: "none", padding: 0, cursor: "pointer", fontFamily: "inherit" }}>
-                <div style={{ fontSize: 13.5, fontWeight: 800, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>{c.name}</div>
-                <div style={{ fontSize: 11.5, color: C.muted }}>{[c.city, c.x_ca_n_1 ? `N-1 ${fmtEUR(Number(c.x_ca_n_1))}` : ""].filter(Boolean).join(" · ")}</div>
-              </button>
-              {/* Statut : pris (offres), devis en cours, ou rien */}
-              <span title={t ? t.orders.join(", ") : undefined}
-                style={{ flexShrink: 0, fontSize: 11.5, fontWeight: 800, borderRadius: 999, padding: "3px 10px",
-                  background: t?.state === "pris" ? C.greenSoft : t ? C.orangeSoft : C.bg, color: t?.state === "pris" ? C.green : t ? C.orange : C.muted }}>
-                {t?.state === "pris" ? `Pris · ${t.offers.join(", ")}` : t ? "Devis en cours" : "Pas pris"}
-              </span>
-              {/* Prévision du commercial */}
-              <select value={plan?.offerId || ""} disabled={!data.tracking || saving === k}
-                onChange={e => save(c.id, { offerId: e.target.value ? Number(e.target.value) : null })}
-                style={{ flexShrink: 0, height: 32, padding: "0 6px", borderRadius: 8, border: `1.5px solid ${plan?.offerId ? C.teal : C.border}`, background: C.white, fontSize: 12.5, fontFamily: "inherit", color: C.text }}>
-                <option value="">Offre prévue…</option>
-                {camp.offers.map(o => <option key={o.id} value={o.id}>{o.variant}</option>)}
-              </select>
-              <input key={`${k}-${plan?.note || ""}`} defaultValue={plan?.note || ""} placeholder="Note…" disabled={!data.tracking}
-                onBlur={e => save(c.id, { note: e.target.value.trim() })}
-                onKeyDown={e => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
-                style={{ flex: "1 1 180px", minWidth: 140, height: 32, padding: "0 10px", borderRadius: 8, border: `1.5px solid ${C.border}`, fontSize: 12.5, fontFamily: "inherit", outline: "none" }} />
+      {/* Liste des clients */}
+      <div style={{ flex: 1, overflowY: "auto" as const }}>
+        <div style={{ maxWidth: 1100, margin: "0 auto", padding: "8px 24px 30px" }}>
+          {error && <div style={{ textAlign: "center" as const, color: C.muted, fontSize: 13, padding: 30 }}>{error}</div>}
+          {!error && !data && <div style={{ textAlign: "center" as const, color: C.muted, fontSize: 13, padding: 30 }}>Chargement…</div>}
+          {data && !data.campaigns.length && <div style={{ textAlign: "center" as const, color: C.muted, fontSize: 13, padding: 30 }}>Aucune MEA active.</div>}
+          {data && camp && <>
+            <div style={{ display: "grid", gridTemplateColumns: GRID, gap: 12, padding: "10px 14px 8px", fontSize: 11, fontWeight: 800, color: C.muted, textTransform: "uppercase" as const, letterSpacing: "0.05em" }}>
+              <span>Client</span><span>Prochain RDV</span><span>{filter === "todo" ? "Offre prévue" : "Offre"}</span><span>Note</span>
             </div>
-          );
-        })}
+            <div style={{ background: C.white, borderRadius: 14, border: `1px solid ${C.border}`, overflow: "hidden" }}>
+              {rows.length === 0 && <div style={{ textAlign: "center" as const, color: C.muted, fontSize: 13, padding: 30 }}>Aucun client.</div>}
+              {rows.map((c, i) => {
+                const t = taken.get(c.id);
+                const k = planKey(key, c.id);
+                const plan = data.plans.get(k);
+                const next = visits.get(c.id);
+                return (
+                  <div key={c.id} style={{ display: "grid", gridTemplateColumns: GRID, gap: 12, alignItems: "center", padding: "10px 14px", borderTop: i ? `1px solid ${C.border}` : "none" }}>
+                    <button onClick={() => onOpenClient(c)} title="Ouvrir la fiche client"
+                      style={{ minWidth: 0, textAlign: "left" as const, background: "none", border: "none", padding: 0, cursor: "pointer", fontFamily: "inherit" }}>
+                      <div style={{ fontSize: 13.5, fontWeight: 700, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>{c.name}</div>
+                      <div style={{ fontSize: 11.5, color: C.muted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>
+                        {[c.city, c.x_ca_n_1 ? `N-1 ${fmtEUR(Number(c.x_ca_n_1))}` : ""].filter(Boolean).join(" · ")}
+                      </div>
+                    </button>
+                    {next ? (
+                      <span style={{ fontSize: 12.5, fontWeight: 700, color: C.tealDark }}>
+                        {next.toLocaleDateString("fr-FR", { weekday: "short", day: "numeric", month: "short" })}
+                      </span>
+                    ) : (
+                      <button onClick={() => setRdvFor(c)}
+                        style={{ justifySelf: "start", height: 30, padding: "0 12px", borderRadius: 8, border: `1.5px solid ${C.teal}`, background: C.white, color: C.tealDark, fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>
+                        + Planifier
+                      </button>
+                    )}
+                    {t ? (
+                      <span title={t.orders.join(", ")} style={{ fontSize: 12.5, fontWeight: 700, color: t.state === "pris" ? C.green : C.orange, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>
+                        {t.offers.join(", ")}
+                      </span>
+                    ) : (
+                      <select value={plan?.offerId || ""} disabled={!data.tracking || saving === k}
+                        onChange={e => save(c.id, { offerId: e.target.value ? Number(e.target.value) : null })}
+                        style={{ width: "100%", height: 32, padding: "0 6px", borderRadius: 8, border: `1px solid ${plan?.offerId ? C.teal : C.border}`, background: plan?.offerId ? C.tealSoft : C.white, fontSize: 12.5, fontFamily: "inherit", color: plan?.offerId ? C.tealDark : C.muted, fontWeight: plan?.offerId ? 700 : 500 }}>
+                        <option value="">—</option>
+                        {camp.offers.map(o => <option key={o.id} value={o.id}>{o.variant}</option>)}
+                      </select>
+                    )}
+                    <input key={`${k}-${plan?.note || ""}`} defaultValue={plan?.note || ""} placeholder="Ajouter une note…" disabled={!data.tracking}
+                      onBlur={e => save(c.id, { note: e.target.value.trim() })}
+                      onKeyDown={e => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
+                      style={{ width: "100%", boxSizing: "border-box" as const, height: 32, padding: "0 10px", borderRadius: 8, border: "1px solid transparent", background: C.bg, fontSize: 12.5, fontFamily: "inherit", outline: "none", color: C.text }} />
+                  </div>
+                );
+              })}
+            </div>
+          </>}
+        </div>
       </div>
+
+      {rdvFor && (
+        <AppointmentModal session={session} client={rdvFor}
+          onClose={() => { setRdvFor(null); reloadVisits(); }}
+          onToast={onToast} />
+      )}
     </div>
   );
 }
