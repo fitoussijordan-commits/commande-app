@@ -9,6 +9,7 @@ import { loadMeaData, type MeaData } from "@/lib/meaTracking";
 import TopFlop from "@/components/TopFlop";
 import VisitPriority from "@/components/VisitPriority";
 import MeaDashboard from "@/components/MeaTracking";
+import { getMineOnly } from "@/lib/clients";
 
 const C = {
   bg: "#f4f6f9", white: "#fff", text: "#0f172a", textSec: "#334155", muted: "#94a3b8", border: "#e2e8f0",
@@ -104,7 +105,7 @@ export default function Dashboard({ session, onClose, onOpenClient, onToast }: {
   useEffect(() => {
     loadSalesStats(session).then(setSt)
       .catch(e => setError(odoo.isNetworkError(e) ? "Tableau de bord indisponible hors ligne." : (e?.message || "Lecture impossible")));
-    loadMeaData(session).then(setMea).catch(() => {});
+    loadMeaData(session, getMineOnly()).then(setMea).catch(() => {});
   }, [session]);
 
   const best = st ? [...st.clients].filter(c => c.cur > 0).sort((a, b) => b.cur - a.cur) : [];
@@ -130,6 +131,11 @@ export default function Dashboard({ session, onClose, onOpenClient, onToast }: {
         {error && <div style={{ padding: 30, textAlign: "center" as const, color: C.muted }}>{error}</div>}
         {!error && !st && <div style={{ padding: 30, textAlign: "center" as const, color: C.muted }}>Chargement…</div>}
 
+        {st && st.clients.length === 0 && (
+          <div style={{ marginBottom: 14, padding: "10px 14px", borderRadius: 12, background: "#fff7ed", color: "#ea580c", fontSize: 13, fontWeight: 600 }}>
+            Aucun client n'a ton nom comme Vendeur dans Odoo : les chiffres sont vides. Ils se remplissent dès que des clients te sont attribués.
+          </div>
+        )}
         {st && <>
           {/* Chiffres clés */}
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 14, marginBottom: 14 }}>

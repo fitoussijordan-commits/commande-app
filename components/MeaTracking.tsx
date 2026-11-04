@@ -8,6 +8,7 @@ import * as odoo from "@/lib/odoo";
 import { linkedPartnerId } from "@/lib/calendar";
 import { loadMeaData, savePlan, planKey, type MeaData, type Plan } from "@/lib/meaTracking";
 import AppointmentModal from "@/components/AppointmentModal";
+import { getMineOnly, setMineOnly } from "@/lib/clients";
 
 const C = {
   bg: "#f8fafc", white: "#fff", text: "#0f172a", textSec: "#334155", muted: "#94a3b8", border: "#e2e8f0",
@@ -53,14 +54,16 @@ export default function MeaDashboard({ session, onClose, onOpenClient, onToast }
   const [saving, setSaving] = useState<string | null>(null);
   const [err, setErr] = useState("");
   const [rdvFor, setRdvFor] = useState<any>(null);
+  const [mine, setMine] = useState(getMineOnly);   // Mes clients / Tous (même choix que la recherche)
 
   const reloadVisits = useCallback(() => { loadNextVisits(session).then(setVisits); }, [session]);
   useEffect(() => {
-    loadMeaData(session)
-      .then(d => { setData(d); setKey(d.campaigns[0]?.key || ""); })
+    setData(null); setError("");
+    loadMeaData(session, mine)
+      .then(d => { setData(d); setKey(k => d.campaigns.some(c => c.key === k) ? k : d.campaigns[0]?.key || ""); })
       .catch(e => setError(odoo.isNetworkError(e) ? "Indisponible hors ligne." : (e?.message || "Lecture impossible")));
     reloadVisits();
-  }, [session, reloadVisits]);
+  }, [session, reloadVisits, mine]);
 
   const taken = data?.taken.get(key) || new Map();
   const status = (id: number): Status => taken.get(id)?.state === "pris" ? "pris" : taken.has(id) ? "devis" : "todo";
@@ -110,6 +113,11 @@ export default function MeaDashboard({ session, onClose, onOpenClient, onToast }
               <div style={{ fontSize: 22, fontWeight: 800, color: C.text }}>Mes MEA</div>
               <div style={{ fontSize: 12.5, color: C.muted }}>Qui a pris, à qui les proposer, et quand je les vois</div>
             </div>
+            <button onClick={() => setMine(m => { setMineOnly(!m); return !m; })}
+              title={mine ? "Mes clients uniquement — toucher pour tous les clients" : "Tous les clients — toucher pour les miens"}
+              style={{ height: 38, padding: "0 14px", borderRadius: 10, border: `1.5px solid ${mine ? C.teal : C.border}`, background: mine ? C.teal : C.white, color: mine ? "#fff" : C.textSec, fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" as const }}>
+              {mine ? "Mes clients" : "Tous les clients"}
+            </button>
             <input value={q} onChange={e => setQ(e.target.value)} placeholder="Chercher un client…"
               style={{ width: 230, height: 38, padding: "0 12px", borderRadius: 10, border: `1.5px solid ${C.border}`, fontSize: 13, fontFamily: "inherit", outline: "none" }} />
           </div>
@@ -173,7 +181,9 @@ export default function MeaDashboard({ session, onClose, onOpenClient, onToast }
               <span>Client</span><span>Prochain RDV</span><span>{filter === "todo" ? "Offre prévue" : "Offre"}</span><span>Note</span>
             </div>
             <div style={{ background: C.white, borderRadius: 14, border: `1px solid ${C.border}`, overflow: "hidden" }}>
-              {rows.length === 0 && <div style={{ textAlign: "center" as const, color: C.muted, fontSize: 13, padding: 30 }}>Aucun client.</div>}
+              {rows.length === 0 && <div style={{ textAlign: "center" as const, color: C.muted, fontSize: 13, padding: 30 }}>
+                {data.clients.length === 0 && mine ? "Aucun client n'a ton nom comme Vendeur dans Odoo — passe sur « Tous les clients »." : "Aucun client."}
+              </div>}
               {rows.map((c, i) => {
                 const t = taken.get(c.id);
                 const k = planKey(key, c.id);

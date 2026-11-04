@@ -556,6 +556,7 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
   const [reportOrigin, setReportOrigin] = useState<"client" | "perime">("client");
   // Semaine à ouvrir dans le planning quand on vient de l'agenda de l'accueil.
   const [planningDate, setPlanningDate] = useState<Date | null>(null);
+  const [showDash, setShowDash] = useState(false);   // tableau de bord du commercial
   // Fichier à analyser : choisi via un bouton « Importer », ou ouvert dans l'app
   // depuis Mail (partager → Commande).
   const [incomingFile, setIncomingFile] = useState<File | null>(null);
@@ -1137,6 +1138,15 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
             <Icon name="package" size={15} /> Périmés
           </button>
         )}
+        {/* Tableau de bord du commercial (écran à part) */}
+        {step === "client" && (
+          <button onClick={() => setShowDash(true)}
+            style={{ display: "flex", alignItems: "center", gap: 6, height: 36, padding: "0 14px", borderRadius: 10, background: C.bg, border: `1px solid ${C.border}`, cursor: "pointer", fontFamily: "inherit", fontSize: 13, fontWeight: 600, color: C.textSec }}>
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg>
+            Tableau de bord
+          </button>
+        )}
+        {showDash && <Dashboard session={session} onClose={() => setShowDash(false)} onOpenClient={c => { setShowDash(false); selectClient(c); }} onToast={onToast} />}
 
         {/* Déconnexion — uniquement sur l'écran racine, avec confirmation explicite
              (hors ligne, impossible de se reconnecter : Odoo doit vérifier le mot de passe). */}
@@ -2262,7 +2272,6 @@ function ClientStep({ session, onSelect, onImportBon, onOpenPlanning, onToast }:
   const [radius, setRadius] = useState(LOC_RADIUS_KM);
   // « Mes clients » (vendeur = moi) par défaut ; bouton pour voir tous les clients.
   const [mine, setMine] = useState(getMineOnly);
-  const [showDash, setShowDash] = useState(false);
   const toggleMine = () => setMine(m => { setMineOnly(!m); return !m; });
 
   useEffect(() => {
@@ -2379,15 +2388,7 @@ function ClientStep({ session, onSelect, onImportBon, onOpenPlanning, onToast }:
             style={{ flexShrink: 0, width: 50, display: "flex", alignItems: "center", justifyContent: "center", background: C.white, border: `1.5px solid ${C.border}`, borderRadius: 14, cursor: "pointer", boxShadow: C.shadowMd, color: C.textSec }}>
             <Icon name="file" size={20} />
           </button>
-          {/* Tableau de bord (écran à part) : chiffres, top / flop, meilleurs CA, MEA */}
-          <button onClick={() => setShowDash(true)}
-            title="Mon tableau de bord : CA, top / flop, meilleurs clients, MEA"
-            style={{ flexShrink: 0, padding: "0 14px", display: "flex", alignItems: "center", gap: 7, background: C.white, border: `1.5px solid ${C.border}`, borderRadius: 14, cursor: "pointer", boxShadow: C.shadowMd, color: C.tealDark, fontFamily: "inherit", fontSize: 13, fontWeight: 800, whiteSpace: "nowrap" as const }}>
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg>
-            Tableau de bord
-          </button>
         </div>
-        {showDash && <Dashboard session={session} onClose={() => setShowDash(false)} onOpenClient={c => { setShowDash(false); onSelect(c); }} onToast={onToast} />}
 
         {locMode && !locLoading && !locError && (
           <div style={{ marginBottom: 10, textAlign: "center" as const }}>

@@ -13,7 +13,7 @@
 //   Offre produit) · Note (texte) · Commercial (many2one res.users, facultatif).
 import * as odoo from "@/lib/odoo";
 import { orderMeta } from "@/lib/orderOffers";
-import { NOT_SUPPLIER } from "@/lib/clients";
+import { NOT_SUPPLIER, mineDomain } from "@/lib/clients";
 
 export interface MeaOffer { id: number; name: string; variant: string }
 export interface MeaCampaign { key: string; offers: MeaOffer[] }
@@ -55,7 +55,9 @@ async function findTrackingModel(session: odoo.OdooSession): Promise<TrackingMod
   } catch { return null; }
 }
 
-export async function loadMeaData(session: odoo.OdooSession): Promise<MeaData> {
+// mine : clients dont l'utilisateur est le Vendeur (sinon tous les clients,
+// limités aux 2 000 plus gros CA N-1).
+export async function loadMeaData(session: odoo.OdooSession, mine = true): Promise<MeaData> {
   const meta = await orderMeta(session);
   const rel = meta.offersRelation, offersField = meta.offersField;
   if (!rel || !offersField) throw new Error("Champ « Offres commandées » introuvable sur les commandes");
@@ -85,8 +87,8 @@ export async function loadMeaData(session: odoo.OdooSession): Promise<MeaData> {
 
   // Clients du commercial (sociétés), hors fournisseurs.
   const clients = await odoo.searchRead(session, "res.partner",
-    [["user_id", "=", session.uid], ["customer_rank", ">", 0], ["parent_id", "=", false], ["active", "=", true], NOT_SUPPLIER],
-    ["id", "name", "ref", "city", "x_ca_n_1", "phone", "street", "zip", "property_product_pricelist", "category_id", "is_company", "type", "customer_rank", "user_id"], 0, "name");
+    [...mineDomain(session.uid, mine), ["customer_rank", ">", 0], ["parent_id", "=", false], ["active", "=", true], NOT_SUPPLIER],
+    ["id", "name", "ref", "city", "x_ca_n_1", "phone", "street", "zip", "property_product_pricelist", "category_id", "is_company", "type", "customer_rank", "user_id"], mine ? 0 : 2000, "x_ca_n_1 desc");
   const clientIds = new Set(clients.map((c: any) => c.id));
 
   // Commandes portant une offre de ces campagnes (devis compris).
@@ -95,7 +97,7 @@ export async function loadMeaData(session: odoo.OdooSession): Promise<MeaData> {
   if (offerIds.length) {
     const orders = await odoo.searchRead(session, "sale.order",
       [[offersField, "in", offerIds], ["state", "in", ["draft", "sent", "sale", "done"]],
-       ["partner_id.commercial_partner_id.user_id", "=", session.uid]],
+       ...(mine ? [["partner_id.commercial_partner_id.user_id", "=", session.uid]] : [])],
       ["name", "partner_id", offersField, "state", "date_order"], 0, "date_order desc");
     const pids = Array.from(new Set(orders.map((o: any) => o.partner_id?.[0]).filter(Boolean)));
     const partners = pids.length ? await odoo.searchRead(session, "res.partner", [["id", "in", pids]], ["commercial_partner_id"], 0) : [];
