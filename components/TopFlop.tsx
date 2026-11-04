@@ -1,17 +1,16 @@
 "use client";
 // Top 20 / flop 20 des clients du commercial : CA HT depuis le 1er janvier
-// comparé à la même période de l'an dernier (commandes confirmées), classé
+// comparé à la même période de l'an dernier (lib/salesStats), classé
 // par écart en euros — un petit client à +300 % ne passe pas devant un gros
 // client qui gagne 5 000 €.
 import { useEffect, useState } from "react";
 import * as odoo from "@/lib/odoo";
-import * as sync from "@/lib/sync";
+import { loadSalesStats } from "@/lib/salesStats";
 
 const C = {
   text: "#0f172a", muted: "#94a3b8", teal: "#0d9488", green: "#16a34a", red: "#dc2626",
 };
 const fmtEUR = (n: number) => new Intl.NumberFormat("fr-FR", { style: "currency", currency: "EUR", maximumFractionDigits: 0 }).format(n);
-const toOdoo = (d: Date) => d.toISOString().slice(0, 19).replace("T", " ");
 const N = 20;
 
 interface Row { client: any; cur: number; prev: number; delta: number }
@@ -29,37 +28,8 @@ export default function TopFlop({ session, onOpenClient }: {
     let cancelled = false;
     (async () => {
       try {
-        const now = new Date();
-        const y = now.getFullYear();
-        const curFrom = new Date(y, 0, 1), prevFrom = new Date(y - 1, 0, 1);
-        const prevTo = new Date(now); prevTo.setFullYear(y - 1);     // même jour l'an dernier
-        const orders = await odoo.searchRead(session, "sale.order",
-          [["state", "in", ["sale", "done"]], ["date_order", ">=", toOdoo(prevFrom)],
-           ["partner_id.commercial_partner_id.user_id", "=", session.uid]],
-          ["partner_id", "amount_untaxed", "date_order"], 0);
-        // Commandes passées sur une adresse de livraison : rattachées à la société.
-        const pids = Array.from(new Set(orders.map((o: any) => o.partner_id?.[0]).filter(Boolean)));
-        const partners = pids.length
-          ? await odoo.searchRead(session, "res.partner", [["id", "in", pids]], ["id", "commercial_partner_id"], 0) : [];
-        const toCompany = new Map<number, number>(partners.map((p: any) => [p.id, p.commercial_partner_id?.[0] || p.id]));
-        const sums = new Map<number, { cur: number; prev: number }>();
-        for (const o of orders) {
-          const cid = toCompany.get(o.partner_id?.[0]) || o.partner_id?.[0];
-          if (!cid) continue;
-          const d = new Date(String(o.date_order).replace(" ", "T") + "Z");
-          const s = sums.get(cid) || { cur: 0, prev: 0 };
-          if (d >= curFrom) s.cur += o.amount_untaxed || 0;
-          else if (d <= prevTo) s.prev += o.amount_untaxed || 0;
-          sums.set(cid, s);
-        }
-        const ids = Array.from(sums.keys());
-        const clients = ids.length
-          ? await odoo.searchRead(session, "res.partner", [["id", "in", ids]], sync.CLIENT_FIELDS, 0) : [];
-        const out: Row[] = clients.map((c: any) => {
-          const s = sums.get(c.id)!;
-          return { client: c, cur: s.cur, prev: s.prev, delta: s.cur - s.prev };
-        }).filter((r: Row) => r.delta !== 0);
-        if (!cancelled) setRows(out);
+        const st = await loadSalesStats(session);
+        if (!cancelled) setRows(st.clients.filter(r => r.delta !== 0));
       } catch (e: any) {
         if (!cancelled) setError(odoo.isNetworkError(e) ? "Indisponible hors ligne." : (e?.message || "Lecture impossible"));
       }

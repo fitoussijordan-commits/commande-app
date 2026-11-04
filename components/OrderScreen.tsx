@@ -9,8 +9,8 @@ import AssistantScreen from "@/components/AssistantScreen";
 import BonCommandeScreen, { ImportedLine } from "@/components/BonCommandeScreen";
 import QtyPad from "@/components/QtyPad";
 import PerimesReportScreen from "@/components/PerimesReportScreen";
-import HomeInsights from "@/components/HomeInsights";
-import MeaDashboard from "@/components/MeaTracking";
+import VisitPriority from "@/components/VisitPriority";
+import Dashboard from "@/components/Dashboard";
 import AgendaGlass from "@/components/AgendaGlass";
 import { resolveClientFamily, odooRecordUrl } from "@/lib/perimes";
 import { saleStep, snapQty, optionalProductFields, ppcOf } from "@/lib/productFields";
@@ -2262,7 +2262,7 @@ function ClientStep({ session, onSelect, onImportBon, onOpenPlanning, onToast }:
   const [radius, setRadius] = useState(LOC_RADIUS_KM);
   // « Mes clients » (vendeur = moi) par défaut ; bouton pour voir tous les clients.
   const [mine, setMine] = useState(getMineOnly);
-  const [showMea, setShowMea] = useState(false);
+  const [showDash, setShowDash] = useState(false);
   const toggleMine = () => setMine(m => { setMineOnly(!m); return !m; });
 
   useEffect(() => {
@@ -2379,14 +2379,15 @@ function ClientStep({ session, onSelect, onImportBon, onOpenPlanning, onToast }:
             style={{ flexShrink: 0, width: 50, display: "flex", alignItems: "center", justifyContent: "center", background: C.white, border: `1.5px solid ${C.border}`, borderRadius: 14, cursor: "pointer", boxShadow: C.shadowMd, color: C.textSec }}>
             <Icon name="file" size={20} />
           </button>
-          {/* Tableau de bord « Mes MEA » (écran à part) */}
-          <button onClick={() => setShowMea(true)}
-            title="Mes MEA : qui a pris, à qui les proposer"
-            style={{ flexShrink: 0, padding: "0 14px", display: "flex", alignItems: "center", gap: 6, background: C.white, border: `1.5px solid ${C.border}`, borderRadius: 14, cursor: "pointer", boxShadow: C.shadowMd, color: C.tealDark, fontFamily: "inherit", fontSize: 13, fontWeight: 800, whiteSpace: "nowrap" as const }}>
-            <Icon name="gift" size={18} />Mes MEA
+          {/* Tableau de bord (écran à part) : chiffres, top / flop, meilleurs CA, MEA */}
+          <button onClick={() => setShowDash(true)}
+            title="Mon tableau de bord : CA, top / flop, meilleurs clients, MEA"
+            style={{ flexShrink: 0, padding: "0 14px", display: "flex", alignItems: "center", gap: 7, background: C.white, border: `1.5px solid ${C.border}`, borderRadius: 14, cursor: "pointer", boxShadow: C.shadowMd, color: C.tealDark, fontFamily: "inherit", fontSize: 13, fontWeight: 800, whiteSpace: "nowrap" as const }}>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg>
+            Tableau de bord
           </button>
         </div>
-        {showMea && <MeaDashboard session={session} onClose={() => setShowMea(false)} onOpenClient={c => { setShowMea(false); onSelect(c); }} onToast={onToast} />}
+        {showDash && <Dashboard session={session} onClose={() => setShowDash(false)} onOpenClient={c => { setShowDash(false); onSelect(c); }} onToast={onToast} />}
 
         {locMode && !locLoading && !locError && (
           <div style={{ marginBottom: 10, textAlign: "center" as const }}>
@@ -2459,7 +2460,7 @@ function ClientStep({ session, onSelect, onImportBon, onOpenPlanning, onToast }:
       {showWidgets && (
         <div style={{ width: "100%", maxWidth: 1040, marginTop: 6, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(400px, 1fr))", gap: 18, alignItems: "start" }}>
           <AgendaGlass session={session} onOpenPlanning={onOpenPlanning} />
-          <HomeInsights session={session} onOpenClient={onSelect} />
+          <VisitPriority session={session} onOpenClient={onSelect} />
         </div>
       )}
     </div>
