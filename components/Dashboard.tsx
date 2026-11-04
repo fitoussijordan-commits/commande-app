@@ -118,9 +118,10 @@ export default function Dashboard({ session, onClose, onOpenClient, onToast }: {
       <div style={{ maxWidth: 1200, margin: "0 auto", padding: "20px 24px 40px" }}>
         {/* En-tête */}
         <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 18 }}>
-          <button onClick={onClose} aria-label="Retour"
-            style={{ width: 38, height: 38, borderRadius: 11, border: `1px solid ${C.border}`, background: C.white, cursor: "pointer", color: C.textSec, display: "flex", alignItems: "center", justifyContent: "center" }}>
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4"><path d="M15 18l-6-6 6-6"/></svg>
+          <button onClick={onClose} title="Revenir à l'accueil"
+            style={{ height: 38, padding: "0 14px", borderRadius: 11, border: `1px solid ${C.border}`, background: C.white, cursor: "pointer", color: C.textSec, display: "flex", alignItems: "center", gap: 7, fontFamily: "inherit", fontSize: 13, fontWeight: 700 }}>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/></svg>
+            Accueil
           </button>
           <div style={{ flex: 1 }}>
             <div style={{ fontSize: 24, fontWeight: 800, color: C.text }}>Mon tableau de bord</div>
