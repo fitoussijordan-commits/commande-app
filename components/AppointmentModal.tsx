@@ -520,20 +520,24 @@ export default function AppointmentModal({ session, client: clientProp, event, a
 
         </>}
 
+        {/* MEA à proposer : les choisies en pastilles, les autres dans un menu (iPad : sélecteur natif) */}
         {meaOptions && meaOptions.length > 0 && (
           <Field label="MEA à proposer">
-            <div style={{ display: "flex", flexWrap: "wrap" as const, gap: 6 }}>
-              {meaOptions.map(k => {
-                const on = meaSel.includes(k);
-                return (
-                  <button type="button" key={k} onClick={() => toggleMea(k)}
-                    style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 11px", borderRadius: 999, fontSize: 12.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit",
-                      background: on ? C.teal : C.white, color: on ? "#fff" : C.textSec, border: `1.5px solid ${on ? C.teal : C.border}` }}>
-                    <span style={{ width: 14, height: 14, borderRadius: 4, border: `1.5px solid ${on ? "#fff" : C.muted}`, display: "inline-flex", alignItems: "center", justifyContent: "center", fontSize: 10 }}>{on ? "✓" : ""}</span>
-                    {k}
-                  </button>
-                );
-              })}
+            <div style={{ display: "flex", flexWrap: "wrap" as const, gap: 6, alignItems: "center" }}>
+              {meaSel.map(k => (
+                <span key={k} style={{ display: "inline-flex", alignItems: "center", gap: 4, height: 32, padding: "0 4px 0 12px", borderRadius: 999, background: C.teal, color: "#fff", fontSize: 12.5, fontWeight: 700 }}>
+                  {k}
+                  <button type="button" onClick={() => toggleMea(k)} aria-label={`Retirer ${k}`}
+                    style={{ width: 24, height: 24, borderRadius: 12, border: "none", background: "rgba(255,255,255,0.2)", color: "#fff", cursor: "pointer", fontSize: 12, padding: 0 }}>✕</button>
+                </span>
+              ))}
+              {meaOptions.some(k => !meaSel.includes(k)) && (
+                <select value="" onChange={e => { if (e.target.value) toggleMea(e.target.value); }}
+                  style={{ height: 32, padding: "0 10px", borderRadius: 999, border: `1.5px dashed ${C.teal}`, background: C.white, color: C.tealDark, fontSize: 12.5, fontWeight: 700, fontFamily: "inherit", cursor: "pointer", maxWidth: 220 }}>
+                  <option value="">+ Ajouter une MEA</option>
+                  {meaOptions.filter(k => !meaSel.includes(k)).map(k => <option key={k} value={k}>{k}</option>)}
+                </select>
+              )}
             </div>
           </Field>
         )}
