@@ -1408,7 +1408,7 @@ const LOC_RADII_KM = [1, 2, 5, 10, 20, 50];   // choix proposés
 // parent_id / type servent à écarter les adresses enfants (voir dedupeClients).
 // customer_rank : sert à départager plusieurs fiches partageant le même ref
 // (cf. pickClient) — c'est la fiche qui reçoit réellement les commandes.
-const CLIENT_FIELDS = ["id", "name", "ref", "street", "zip", "city", "user_id", "country_id", "property_product_pricelist", "email", "phone", "is_company", "x_nbre_visites_realisees", "parent_id", "type", "customer_rank", "x_evolution_ca_n_n_1", "x_ca_n_1", "x_statut_client_id", "category_id"];
+const CLIENT_FIELDS = ["id", "name", "ref", "street", "zip", "city", "user_id", "country_id", "property_product_pricelist", "email", "phone", "is_company", "x_nbre_visites_realisees", "parent_id", "type", "customer_rank", "x_evolution_ca_n_n_1", "x_ca_n_1", "x_ca_a_date_n", "x_statut_client_id", "category_id"];
 
 // Évolution du CA année N vs N-1 (onglet « Conditions commerciales » de la fiche
 // client Odoo, champ x_evolution_ca_n_n_1).
@@ -2565,8 +2565,9 @@ function ClientHub({ session, client, hasDraft, onOrder, onHistory, onAppointmen
         {/* Statistiques client */}
         <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12, marginBottom: 28 }}>
           <div style={{ background: "#0f766e", borderRadius: 16, padding: "14px 16px", color: "#fff", boxShadow: "0 8px 20px rgba(13,148,136,0.25)" }}>
-            <div style={{ fontSize: 19, fontWeight: 800 }}>{stats ? fmtPrice(stats.ca) : "…"}</div>
-            <div style={{ fontSize: 10.5, opacity: 0.85, fontWeight: 600, marginTop: 2, textTransform: "uppercase" as const, letterSpacing: "0.03em" }}>CA 12 mois</div>
+            {/* CA à date N (champ Odoo, depuis le 1er janvier) ; repli sur le CA 12 mois calculé. */}
+            <div style={{ fontSize: 19, fontWeight: 800 }}>{typeof client.x_ca_a_date_n === "number" ? fmtPrice(client.x_ca_a_date_n) : stats ? fmtPrice(stats.ca) : "…"}</div>
+            <div style={{ fontSize: 10.5, opacity: 0.85, fontWeight: 600, marginTop: 2, textTransform: "uppercase" as const, letterSpacing: "0.03em" }}>{typeof client.x_ca_a_date_n === "number" ? "CA à date N" : "CA 12 mois"}</div>
           </div>
           <div style={{ background: C.white, border: `1.5px solid ${C.border}`, borderRadius: 16, padding: "14px 16px", boxShadow: C.shadow }}>
             <div style={{ fontSize: 19, fontWeight: 800, color: evolution === null ? C.muted : (evolutionValue >= 0 ? C.green : C.red) }}>
