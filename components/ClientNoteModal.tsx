@@ -22,9 +22,10 @@ interface Props {
   client: any;
   onClose: () => void;
   onToast: (msg: string, type?: "success" | "error" | "info") => void;
+  autoRecord?: boolean;   // ouvert par le bouton REC : la dictée démarre tout de suite
 }
 
-export default function ClientNoteModal({ session, client, onClose, onToast }: Props) {
+export default function ClientNoteModal({ session, client, onClose, onToast, autoRecord }: Props) {
   const [text, setText] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -69,8 +70,10 @@ export default function ClientNoteModal({ session, client, onClose, onToast }: P
     rec.onerror = () => setRecording(false);
     rec.onend = () => setRecording(false);
     recognitionRef.current = rec;
+    // Bouton REC de la fiche client : enregistrement direct, sans tap supplémentaire.
+    if (autoRecord) { try { rec.start(); setRecording(true); } catch {} }
     return () => { try { rec.stop(); } catch {} };
-  }, []);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const toggleRecording = () => {
     if (!recognitionRef.current) return;
@@ -166,7 +169,7 @@ export default function ClientNoteModal({ session, client, onClose, onToast }: P
               </button>
             )}
           </div>
-          {recording && <div style={{ fontSize: 11, color: C.teal, fontWeight: 600, marginTop: 6 }}>🔴 Dictée en cours — parle normalement, réécoute/corrige avant d'enregistrer</div>}
+          {recording && <div style={{ fontSize: 12, color: C.red, fontWeight: 700, marginTop: 6 }}>● REC — parle normalement, relis puis « Enregistrer »</div>}
           {!speechSupported && <div style={{ fontSize: 11, color: C.muted, marginTop: 6 }}>Dictée vocale non disponible sur ce navigateur — saisie au clavier uniquement.</div>}
         </div>
 

@@ -460,6 +460,7 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
   const [showDraftsPanel, setShowDraftsPanel] = useState(false);
   const [showAppointment, setShowAppointment] = useState(false);
   const [showClientNote, setShowClientNote] = useState(false);
+  const [noteAutoRec, setNoteAutoRec] = useState(false);   // ouvert par le bouton REC
   // Remises additionnelles Odoo (Ventes → Réductions & fidélité)
   const [loyaltyPrograms, setLoyaltyPrograms] = useState<loyalty.LoyaltyProgram[]>([]);
   const [appliedPromos, setAppliedPromos] = useState<Record<number, loyalty.AppliedPromo>>({});
@@ -1397,7 +1398,8 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
           onOrder={enterOrderMode}
           onHistory={() => setStep("history")}
           onAppointment={() => setShowAppointment(true)}
-          onNote={() => setShowClientNote(true)}
+          onNote={() => { setNoteAutoRec(false); setShowClientNote(true); }}
+          onNoteRec={() => { setNoteAutoRec(true); setShowClientNote(true); }}
           onPerime={() => setStep("perime")}
           onAssistant={() => setStep("assistant")}
           onImportBon={() => pickBonFile("hub")}
@@ -1450,7 +1452,7 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
         <AppointmentModal session={session} client={client} onClose={() => setShowAppointment(false)} onToast={onToast} />
       )}
       {showClientNote && client && (
-        <ClientNoteModal session={session} client={client} onClose={() => setShowClientNote(false)} onToast={onToast} />
+        <ClientNoteModal session={session} client={client} onClose={() => setShowClientNote(false)} onToast={onToast} autoRecord={noteAutoRec} />
       )}
     </div>
   );
@@ -2628,9 +2630,9 @@ function ClientStep({ session, onSelect, onImportBon, onOpenPlanning, onToast, d
 // ═══════════════════════════════════════════════════════════════════════════
 // HUB CLIENT — écran d'accueil une fois le client sélectionné
 // ═══════════════════════════════════════════════════════════════════════════
-function ClientHub({ session, client, hasDraft, onOrder, onHistory, onAppointment, onNote, onPerime, onAssistant, onImportBon }: {
+function ClientHub({ session, client, hasDraft, onOrder, onHistory, onAppointment, onNote, onNoteRec, onPerime, onAssistant, onImportBon }: {
   session: odoo.OdooSession; client: any; hasDraft: boolean;
-  onOrder: () => void; onHistory: () => void; onAppointment: () => void; onNote: () => void;
+  onOrder: () => void; onHistory: () => void; onAppointment: () => void; onNote: () => void; onNoteRec: () => void;
   onPerime: () => void;
   onAssistant: () => void;
   onImportBon: () => void;
@@ -2780,8 +2782,16 @@ function ClientHub({ session, client, hasDraft, onOrder, onHistory, onAppointmen
         <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 12 }}>
           {cards.filter(c => !c.primary).map(c => (
             <button key={c.key} onClick={c.onClick}
-              style={{ textAlign: "left" as const, padding: "14px 14px", borderRadius: 16, border: `1.5px solid ${C.border}`, background: C.white, color: C.text,
+              style={{ position: "relative" as const, textAlign: "left" as const, padding: "14px 14px", borderRadius: 16, border: `1.5px solid ${C.border}`, background: C.white, color: C.text,
                 cursor: "pointer", fontFamily: "inherit", boxShadow: C.shadow, minWidth: 0 }}>
+              {/* Note client : bouton REC → dictée immédiate */}
+              {c.key === "note" && (
+                <span role="button" tabIndex={0} aria-label="Dicter une note tout de suite" title="Dicter une note tout de suite"
+                  onClick={e => { e.stopPropagation(); onNoteRec(); }}
+                  style={{ position: "absolute" as const, top: 10, right: 10, height: 38, padding: "0 13px", borderRadius: 999, background: C.red, color: "#fff", display: "flex", alignItems: "center", gap: 6, fontSize: 12.5, fontWeight: 800, letterSpacing: "0.04em", boxShadow: "0 6px 14px rgba(220,38,38,0.3)" }}>
+                  <span style={{ width: 9, height: 9, borderRadius: "50%", background: "#fff" }} /> REC
+                </span>
+              )}
               <div style={{ width: 38, height: 38, borderRadius: 11, marginBottom: 10, background: C.tealSoft, display: "flex", alignItems: "center", justifyContent: "center" }}>
                 <Icon name={c.icon} size={20} color={C.teal} />
               </div>
