@@ -143,7 +143,7 @@ export async function templateLineMeta(session: odoo.OdooSession): Promise<Templ
       { attributes: ["string", "type"] });
     if (fields.discount && fields.discount.type === "float") out.discount = "discount";
     for (const [name, f] of Object.entries(fields)) {
-      if (!out.freeType && /gratuit/i.test(String(f.string || "")) && (f.type === "selection" || f.type === "char")) out.freeType = name;
+      if (!out.freeType && /gratuit/i.test(String(f.string || "")) && ["selection", "char", "many2one"].includes(f.type)) out.freeType = name;
     }
   } catch (e) {
     if (odoo.isNetworkError(e)) return out;

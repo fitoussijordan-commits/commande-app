@@ -3327,6 +3327,18 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
     setMeaLoading(false);
   };
 
+  // Type de gratuité d'une ligne offerte de MEA : celui du modèle (valeur de
+  // sélection, ou libellé si c'est un many2one), sinon « Gratuités des offres ».
+  const meaGiftType = (raw: any): string => {
+    const byLabel = (l: string) => freeTypes.find(f => fold(f.label) === fold(l))?.value;
+    if (Array.isArray(raw)) { const v = byLabel(String(raw[1] || "")); if (v) return v; }
+    else if (raw && freeTypes.some(f => f.value === raw)) return String(raw);
+    else if (raw && byLabel(String(raw))) return byLabel(String(raw))!;
+    return freeTypes.find(f => f.value === "gratuites_des_offres")?.value
+      || freeTypes.find(f => /gratuit.*offre/i.test(fold(f.label)))?.value
+      || (freeTypes.length ? giftType : "gratuites_des_offres");
+  };
+
   const applyMeaTemplate = async (template: any) => {
     setApplyingMea(template.id);
     try {
@@ -3386,9 +3398,7 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
         // ligne offerte, avec le type de gratuité du modèle.
         if (discount >= 99.99) {
           if (qty > 0) {
-            const t = tlm.freeType ? String(line[tlm.freeType] || "") : "";
-            const type = t && (freeTypes.some(f => f.value === t) || !freeTypes.length) ? t : giftType;
-            newGifts.push({ product, qty, type });
+            newGifts.push({ product, qty, type: meaGiftType(tlm.freeType ? line[tlm.freeType] : null) });
             gifts += qty;
           }
           continue;
@@ -3405,6 +3415,7 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
       if (newGifts.length) {
         const cond = { label: template.name, required };
         setGiftItems(prev => [...prev, ...newGifts.map(g => ({ ...g, cond }))]);
+        setGiftType(newGifts[0].type);   // le sélecteur du bloc Gratuités affiche le type de la MEA
       }
       if (template.internalNote || template.shipDate) onTemplateApplied(template.name, { note: template.internalNote, shipDate: template.shipDate });
       // Implantation → type de commande « Implantation » ; MEA → coche l'offre du même nom.
