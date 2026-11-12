@@ -804,7 +804,7 @@ export default function BonCommandeScreen({ session, client, priceItems, onApply
       )}
 
       {showPreview && preview && (
-        <div style={{ position: "fixed", inset: 0, zIndex: 240, background: "rgba(15,23,42,0.85)", display: "flex", flexDirection: "column" as const, paddingTop: "env(safe-area-inset-top)", paddingBottom: "env(safe-area-inset-bottom)" }}>
+        <div className="fade-in" style={{ position: "fixed", inset: 0, zIndex: 240, background: "rgba(15,23,42,0.85)", display: "flex", flexDirection: "column" as const, paddingTop: "env(safe-area-inset-top)", paddingBottom: "env(safe-area-inset-bottom)" }}>
           <div style={{ display: "flex", justifyContent: "flex-end", padding: 12 }}>
             <button onClick={() => setShowPreview(false)} style={{ ...toolBtn(false), background: C.white }}>Fermer</button>
           </div>

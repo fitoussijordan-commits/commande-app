@@ -6,6 +6,7 @@
 // Les avoirs sans facture liée sont listés à part. La commande d'origine
 // (invoice_origin) fait le lien avec le module commande.
 import { useEffect, useMemo, useState } from "react";
+import { ListSkeleton } from "@/components/motion";
 import * as odoo from "@/lib/odoo";
 import { resolveClientFamily, odooRecordUrl } from "@/lib/perimes";
 
@@ -116,7 +117,7 @@ export default function InvoiceHistory({ session, client, year }: { session: odo
   }, [moves, links]);
 
   if (error) return <div style={{ textAlign: "center", color: C.muted, padding: 40, fontSize: 13 }}>{error}</div>;
-  if (!moves) return <div style={{ textAlign: "center", color: C.muted, padding: 40 }}>Chargement…</div>;
+  if (!moves) return <ListSkeleton count={5} height={70} />;
   if (!moves.length) return <div style={{ textAlign: "center", color: C.muted, padding: 40 }}>Aucune facture ni avoir en {year}</div>;
 
   const Tile = ({ label, value, color }: { label: string; value: number; color: string }) => (

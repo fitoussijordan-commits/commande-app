@@ -17,3 +17,213 @@ body {
   box-sizing: border-box;
   background: #f8fafc;
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   MOUVEMENT — animations de l'app (CSS pur, aucun fichier externe : tout
+   marche hors ligne). Courtes (150–300 ms) : elles confirment un geste, elles
+   ne font pas attendre. Les composants React associés sont dans
+   components/motion.tsx.
+   ═══════════════════════════════════════════════════════════════════════════ */
+:root {
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+/* ── Retour au toucher : tout bouton s'enfonce légèrement ── */
+button {
+  -webkit-tap-highlight-color: transparent;
+  transition: transform 0.14s var(--ease-out), background-color 0.18s ease,
+    border-color 0.18s ease, color 0.18s ease, box-shadow 0.18s ease, opacity 0.18s ease;
+}
+button:not(:disabled):active { transform: scale(0.97); }
+/* Zones cliquables qui ne sont pas des <button> (cartes, vignettes). */
+.press { transition: transform 0.14s var(--ease-out); }
+.press:active { transform: scale(0.97); }
+
+@keyframes mFadeIn { from { opacity: 0; } }
+@keyframes mFadeOut { to { opacity: 0; } }
+@keyframes mFadeUp { from { opacity: 0; transform: translateY(10px); } }
+@keyframes mPopIn { from { opacity: 0; transform: translateY(14px) scale(0.96); } }
+@keyframes mPopOut { to { opacity: 0; transform: translateY(10px) scale(0.97); } }
+@keyframes mSlideRight { from { transform: translateX(100%); } }
+@keyframes mSlideRightOut { to { transform: translateX(100%); } }
+@keyframes mScrFwd { from { opacity: 0; transform: translateX(26px); } }
+@keyframes mScrBack { from { opacity: 0; transform: translateX(-26px); } }
+
+/* ── Changement d'écran : glissement léger dans le sens de la navigation ──
+   Remplissage « backwards » seulement : une fois l'animation finie, plus aucun
+   transform sur le conteneur (sinon les modales en position fixe se
+   positionneraient par rapport à lui). */
+.scr {
+  flex: 1; min-height: 0; min-width: 0; display: flex; flex-direction: column;
+  animation: mScrFwd 0.28s var(--ease-out) backwards;
+}
+.scr.scr-back { animation-name: mScrBack; }
+
+/* ── Modales : fond en fondu, panneau qui monte ; panneaux latéraux qui glissent ── */
+.ov { animation: mFadeIn 0.2s ease backwards; }
+.ov > * { animation: mPopIn 0.26s var(--ease-out) backwards; }
+.ov.ov-right > * { animation: mSlideRight 0.28s var(--ease-out) backwards; }
+/* Écrans plein cadre posés par-dessus (tableau de bord, suivi MEA). */
+.ov-full { animation: mPopIn 0.28s var(--ease-out) backwards; }
+.ov.closing { animation: mFadeOut 0.17s ease forwards; pointer-events: none; }
+.ov.closing > * { animation: mPopOut 0.17s ease forwards; }
+.ov.ov-right.closing > * { animation: mSlideRightOut 0.17s ease forwards; }
+
+/* ── Listes : apparition en cascade des premières lignes ── */
+.stagger > * { animation: mFadeUp 0.34s var(--ease-out) backwards; }
+.stagger > :nth-child(1) { animation-delay: 0ms; }
+.stagger > :nth-child(2) { animation-delay: 22ms; }
+.stagger > :nth-child(3) { animation-delay: 44ms; }
+.stagger > :nth-child(4) { animation-delay: 66ms; }
+.stagger > :nth-child(5) { animation-delay: 88ms; }
+.stagger > :nth-child(6) { animation-delay: 110ms; }
+.stagger > :nth-child(7) { animation-delay: 132ms; }
+.stagger > :nth-child(8) { animation-delay: 154ms; }
+.stagger > :nth-child(9) { animation-delay: 176ms; }
+.stagger > :nth-child(10) { animation-delay: 198ms; }
+.stagger > :nth-child(11) { animation-delay: 220ms; }
+.stagger > :nth-child(12) { animation-delay: 242ms; }
+.stagger > :nth-child(n + 13) { animation-delay: 264ms; }
+/* Au-delà : hors écran, inutile d'animer des centaines de cartes. */
+.stagger > :nth-child(n + 31) { animation: none; }
+.fade-up { animation: mFadeUp 0.34s var(--ease-out) backwards; }
+.fade-in { animation: mFadeIn 0.3s ease backwards; }
+
+/* ── Quantités : le chiffre rebondit à chaque changement (span re-monté par key) ── */
+@keyframes mQtyPop { 0% { transform: scale(0.7); } 55% { transform: scale(1.28); } 100% { transform: scale(1); } }
+.qty-pop { display: inline-block; animation: mQtyPop 0.3s var(--ease-out); }
+@keyframes mBadgeIn { from { transform: scale(0); opacity: 0; } }
+.badge-in { animation: mBadgeIn 0.28s var(--ease-spring) backwards; }
+
+/* ── Panier : une ligne ajoutée glisse et s'éclaire, une ligne retirée se replie ── */
+@keyframes mLineIn {
+  from { opacity: 0; transform: translateX(16px); background-color: #ccfbf1; }
+  60% { background-color: #ccfbf1; }
+  to { background-color: transparent; }
+}
+@keyframes mLineOut {
+  from { max-height: 90px; opacity: 1; }
+  to { max-height: 0; opacity: 0; transform: translateX(28px); }
+}
+.cart-line { animation: mLineIn 0.5s var(--ease-out) backwards; border-radius: 6px; }
+.cart-line.removing { animation: mLineOut 0.2s ease forwards; overflow: hidden; pointer-events: none; }
+
+/* ── Ouverture d'un bloc repliable (détail du panier, remise…) ── */
+@keyframes mReveal { from { opacity: 0; transform: translateY(-6px); } }
+.reveal { animation: mReveal 0.24s var(--ease-out) backwards; }
+
+/* ── Franco de port ── */
+@keyframes mFrancoHit {
+  0% { box-shadow: 0 0 0 0 rgba(45, 212, 191, 0.7); }
+  100% { box-shadow: 0 0 0 9px rgba(45, 212, 191, 0); }
+}
+.franco-fill { height: 100%; border-radius: 999px; transition: width 0.45s var(--ease-out), background-color 0.3s ease; }
+.franco-fill.hit { animation: mFrancoHit 0.7s ease-out; }
+
+/* ── Squelettes de chargement ── */
+@keyframes mShimmer { from { background-position: 100% 0; } to { background-position: -100% 0; } }
+.sk {
+  background: linear-gradient(90deg, #e9eef4 25%, #f6f8fb 45%, #e9eef4 65%);
+  background-size: 200% 100%;
+  animation: mShimmer 1.25s linear infinite;
+  border-radius: 8px;
+}
+
+/* ── Images produits : fondu à l'arrivée ── */
+.img-fade { opacity: 0; transition: opacity 0.28s ease; }
+.img-fade.is-loaded { opacity: 1; }
+
+/* ── Graphiques : barres qui grandissent ── */
+@keyframes mGrowY { from { transform: scaleY(0); } }
+@keyframes mGrowX { from { transform: scaleX(0); } }
+.grow-y { transform-origin: 50% 100%; animation: mGrowY 0.6s var(--ease-out) backwards; }
+.grow-x { transform-origin: 0 50%; animation: mGrowX 0.7s var(--ease-out) backwards; }
+
+/* ── Toasts ── */
+@keyframes mToastIn { from { opacity: 0; transform: translateY(16px) scale(0.96); } }
+.toast-in { animation: mToastIn 0.3s var(--ease-spring) backwards; }
+
+/* ── Erreur : petite secousse ── */
+@keyframes mShake {
+  0%, 100% { transform: translateX(0); }
+  20% { transform: translateX(-7px); } 40% { transform: translateX(6px); }
+  60% { transform: translateX(-4px); } 80% { transform: translateX(3px); }
+}
+.shake { animation: mShake 0.36s ease; }
+
+/* ── Enregistrement en cours : halo qui pulse ── */
+@keyframes mRecPulse {
+  0% { box-shadow: 0 0 0 0 rgba(220, 38, 38, 0.55); }
+  100% { box-shadow: 0 0 0 12px rgba(220, 38, 38, 0); }
+}
+.rec-pulse { animation: mRecPulse 1.2s ease-out infinite; }
+
+@keyframes mSpin { to { transform: rotate(360deg); } }
+.spin { animation: mSpin 0.9s linear infinite; }
+
+/* ── Le tube qui saute (attente) — même esprit que le chargement d'un bon ── */
+@keyframes mTubeHop {
+  0% { transform: translateY(0) scale(1.12, 0.86); }
+  12% { transform: translateY(0) scale(0.94, 1.08); }
+  45% { transform: translateY(calc(var(--hop) * -1)) scale(1, 1) rotate(-7deg); }
+  55% { transform: translateY(calc(var(--hop) * -1.06)) scale(1, 1) rotate(5deg); }
+  88% { transform: translateY(0) scale(0.96, 1.05); }
+  100% { transform: translateY(0) scale(1.12, 0.86); }
+}
+@keyframes mTubeShadow {
+  0%, 100% { transform: scaleX(1.1); opacity: 0.26; }
+  50% { transform: scaleX(0.55); opacity: 0.1; }
+}
+.tube-hop { transform-origin: 50% 100%; animation: mTubeHop 1.05s cubic-bezier(0.45, 0.05, 0.55, 0.95) infinite; }
+.tube-hop-shadow { animation: mTubeShadow 1.05s ease-in-out infinite; }
+
+/* ── Commande validée : le tube arrive, perd son capuchon, dépose une noisette
+   de crème ; la pastille s'ouvre et la coche se dessine. Le tube est une seule
+   photo découpée en deux par clip-path (corps / capuchon). ── */
+@keyframes mTsTube {
+  0% { opacity: 0; transform: translate(-50%, -70px) rotate(-10deg); }
+  22% { opacity: 1; transform: translate(-50%, 4px) rotate(0deg) scale(1.05, 0.95); }
+  30% { transform: translate(-50%, 0) rotate(0deg) scale(1, 1); }
+  /* pression : le tube se pince deux fois */
+  44% { transform: translate(-50%, 0) scale(0.86, 1.03); }
+  52% { transform: translate(-50%, 0) scale(1, 1); }
+  60% { transform: translate(-50%, 0) scale(0.9, 1.02); }
+  70% { opacity: 1; transform: translate(-50%, 0) scale(1, 1); }
+  100% { opacity: 0; transform: translate(-50%, -60px) rotate(8deg); }
+}
+@keyframes mTsCap {
+  0%, 30% { transform: translate(0, 0) rotate(0deg); opacity: 1; }
+  100% { transform: translate(64px, 46px) rotate(150deg); opacity: 0; }
+}
+@keyframes mTsDrop {
+  0%, 40% { opacity: 0; transform: translate(-50%, 0) scale(0.3, 0.3); }
+  46% { opacity: 1; transform: translate(-50%, 2px) scale(1, 1.3); }
+  62% { opacity: 1; transform: translate(-50%, var(--fall)) scale(1, 1.15); }
+  66%, 100% { opacity: 0; transform: translate(-50%, var(--fall)) scale(1.8, 0.4); }
+}
+@keyframes mTsDisc { 0% { transform: scale(0); } 60% { transform: scale(1.12); } 100% { transform: scale(1); } }
+@keyframes mTsRing { from { transform: scale(0.6); opacity: 0.5; } to { transform: scale(1.9); opacity: 0; } }
+@keyframes mTsDraw { to { stroke-dashoffset: 0; } }
+.ts-tube { animation: mTsTube 1.75s var(--ease-out) forwards; }
+.ts-cap { animation: mTsCap 0.75s 0.5s ease-in forwards; transform-origin: 50% 93%; }
+.ts-drop { animation: mTsDrop 1.75s ease-in forwards; }
+.ts-disc { animation: mTsDisc 0.5s 1.1s var(--ease-out) backwards; }
+.ts-ring { opacity: 0; animation: mTsRing 0.8s 1.15s ease-out forwards; }
+.ts-check { stroke-dasharray: 48; stroke-dashoffset: 48; animation: mTsDraw 0.42s 1.38s ease-out forwards; }
+.ts-icon { animation: mBadgeIn 0.4s 1.38s var(--ease-spring) backwards; }
+.ts-text { animation: mFadeUp 0.45s 1.25s var(--ease-out) backwards; }
+
+/* Coche qui se dessine (confirmations simples, sans tube). */
+.draw-check { stroke-dasharray: 48; stroke-dashoffset: 48; animation: mTsDraw 0.4s 0.1s ease-out forwards; }
+
+/* ── Réglage iOS « Réduire les animations » : tout devient instantané ── */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-delay: 0ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+  .ts-tube, .ts-cap, .ts-drop, .ts-ring, .tube-hop, .tube-hop-shadow { display: none !important; }
+}

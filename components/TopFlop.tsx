@@ -61,7 +61,7 @@ export default function TopFlop({ session, onOpenClient }: {
       {!error && rows === null && <div style={{ fontSize: 13, color: C.muted }}>…</div>}
       {!error && rows && list.length === 0 && <div style={{ fontSize: 13, color: C.muted }}>Aucun client {tab === "top" ? "en progression" : "en recul"}.</div>}
 
-      <div style={{ display: "flex", flexDirection: "column" as const, gap: 6, overflowY: "auto" as const, maxHeight: open ? 420 : undefined }}>
+      <div key={tab} className="stagger" style={{ display: "flex", flexDirection: "column" as const, gap: 6, overflowY: "auto" as const, maxHeight: open ? 420 : undefined }}>
         {shown.map((r, i) => {
           const pct = r.prev > 0 ? Math.round((r.delta / r.prev) * 100) : null;
           const color = r.delta >= 0 ? C.green : C.red;

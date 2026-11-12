@@ -68,7 +68,7 @@ export default function LoginScreen({ onLogin }: Props) {
 
   return (
     <div style={{ minHeight: "100vh", background: C.bg, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'DM Sans', sans-serif", padding: 20 }}>
-      <form onSubmit={handleSubmit} style={{ width: "100%", maxWidth: 380, background: C.white, borderRadius: 20, padding: "36px 32px", boxShadow: C.shadowXl }}>
+      <form onSubmit={handleSubmit} className="fade-up" style={{ width: "100%", maxWidth: 380, background: C.white, borderRadius: 20, padding: "36px 32px", boxShadow: C.shadowXl }}>
         <div style={{ textAlign: "center", marginBottom: 28 }}>
           <div style={{ width: 64, height: 64, borderRadius: 18, background: C.teal, display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 14px" }}>
             <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -81,7 +81,7 @@ export default function LoginScreen({ onLogin }: Props) {
         </div>
 
         {error && (
-          <div style={{ background: C.redSoft, color: C.red, borderRadius: 10, padding: "10px 14px", fontSize: 13, marginBottom: 16 }}>
+          <div key={error} className="shake" style={{ background: C.redSoft, color: C.red, borderRadius: 10, padding: "10px 14px", fontSize: 13, marginBottom: 16 }}>
             {error}
           </div>
         )}

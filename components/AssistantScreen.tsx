@@ -121,13 +121,13 @@ export default function AssistantScreen({ session, client }: {
         )}
 
         {error && (
-          <div style={{ marginTop: 14, padding: "11px 13px", background: C.redSoft, border: `1px solid ${C.red}44`, borderRadius: 12, fontSize: 12.5, color: C.red, lineHeight: 1.5 }}>
+          <div key={error} className="shake" style={{ marginTop: 14, padding: "11px 13px", background: C.redSoft, border: `1px solid ${C.red}44`, borderRadius: 12, fontSize: 12.5, color: C.red, lineHeight: 1.5 }}>
             {error}
           </div>
         )}
 
         {answer && (
-          <div style={{ marginTop: 14, padding: "14px 16px", background: C.white, border: `1px solid ${C.border}`, borderRadius: 14, boxShadow: C.shadow, fontSize: 14, color: C.text, lineHeight: 1.6, whiteSpace: "pre-wrap" as const }}>
+          <div className="fade-up" style={{ marginTop: 14, padding: "14px 16px", background: C.white, border: `1px solid ${C.border}`, borderRadius: 14, boxShadow: C.shadow, fontSize: 14, color: C.text, lineHeight: 1.6, whiteSpace: "pre-wrap" as const }}>
             {answer}
           </div>
         )}
@@ -136,7 +136,7 @@ export default function AssistantScreen({ session, client }: {
             Sur iPad la WebView gère mal les téléchargements, d'où le mail comme
             canal principal et le bouton comme confort au bureau. */}
         {file && (
-          <div style={{ marginTop: 12, padding: "12px 14px", background: C.tealSoft, border: `1px solid ${C.teal}44`, borderRadius: 12 }}>
+          <div className="fade-up" style={{ marginTop: 12, padding: "12px 14px", background: C.tealSoft, border: `1px solid ${C.teal}44`, borderRadius: 12 }}>
             <div style={{ fontSize: 13, fontWeight: 800, color: C.tealDark }}>
               {file.filename} · {file.rows} ligne{file.rows > 1 ? "s" : ""}
             </div>

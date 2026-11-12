@@ -129,7 +129,7 @@ export default function VisitPriority({ session, onOpenClient, bare, onCount }: 
         <div style={{ fontSize: 13, color: C.muted, lineHeight: 1.5 }}>Tous tes clients sont à jour de leurs visites.</div>
       )}
 
-      <div style={{ display: "flex", flexDirection: "column" as const, gap: 6, overflowY: "auto" as const, maxHeight: open ? 420 : undefined }}>
+      <div className="stagger" style={{ display: "flex", flexDirection: "column" as const, gap: 6, overflowY: "auto" as const, maxHeight: open ? 420 : undefined }}>
         {shown.map(p => {
           const late = p.lateDays > 0;
           const color = p.next ? C.tealDark : (late || !p.lastVisit) ? C.red : C.orange;

@@ -4,6 +4,7 @@
 // sont à proposer, leur prochain RDV (ou « Planifier ») et la prévision du
 // commercial (offre envisagée + note) — pour préparer ses RDV.
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { TubeLoader } from "@/components/motion";
 import * as odoo from "@/lib/odoo";
 import { linkedPartnerId } from "@/lib/calendar";
 import { loadMeaData, savePlan, planKey, type MeaData, type Plan } from "@/lib/meaTracking";
@@ -108,7 +109,7 @@ export default function MeaDashboard({ session, onClose, onOpenClient, onToast }
   const GRID = "minmax(0, 2fr) 120px 140px minmax(0, 1.6fr)";
 
   return (
-    <div style={{ position: "fixed", inset: 0, zIndex: 300, background: C.bg, display: "flex", flexDirection: "column" as const, fontFamily: "'DM Sans', sans-serif" }}>
+    <div className="ov-full" style={{ position: "fixed", inset: 0, zIndex: 300, background: C.bg, display: "flex", flexDirection: "column" as const, fontFamily: "'DM Sans', sans-serif" }}>
       {/* En-tête */}
       <div style={{ background: C.white, borderBottom: `1px solid ${C.border}` }}>
         <div style={{ maxWidth: 1100, margin: "0 auto", padding: "18px 24px 16px" }}>
@@ -182,7 +183,7 @@ export default function MeaDashboard({ session, onClose, onOpenClient, onToast }
       <div style={{ flex: 1, overflowY: "auto" as const }}>
         <div style={{ maxWidth: 1100, margin: "0 auto", padding: "8px 24px 30px" }}>
           {error && <div style={{ textAlign: "center" as const, color: C.muted, fontSize: 13, padding: 30 }}>{error}</div>}
-          {!error && !data && <div style={{ textAlign: "center" as const, color: C.muted, fontSize: 13, padding: 30 }}>Chargement…</div>}
+          {!error && !data && <TubeLoader label="Chargement du suivi MEA…" />}
           {data && !data.campaigns.length && <div style={{ textAlign: "center" as const, color: C.muted, fontSize: 13, padding: 30 }}>Aucune MEA active.</div>}
           {data && camp && <>
             <div style={{ display: "grid", gridTemplateColumns: GRID, gap: 12, padding: "10px 14px 8px", fontSize: 11, fontWeight: 800, color: C.muted, textTransform: "uppercase" as const, letterSpacing: "0.05em" }}>

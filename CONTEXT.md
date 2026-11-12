@@ -277,3 +277,22 @@ Restes possibles / idées non faites :
 - Découper `OrderScreen.tsx` (~2 500 lignes) en fichiers par écran.
 - Ajouter l'étiquette « Validé » au REJEU des commandes enfilées hors ligne
   (aujourd'hui : payload figé sans tag si créé offline).
+
+---
+
+## Animations
+
+Tout le mouvement de l'app est en CSS pur (aucune bibliothèque, marche hors ligne) :
+
+- `app/globals.css`, section « MOUVEMENT » : keyframes et classes (`.ov` modales,
+  `.scr` changement d'écran, `.stagger` listes en cascade, `.qty-pop`, `.cart-line`,
+  `.sk` squelettes, `.tube-hop`, `.ts-*` tube de validation…). Les boutons
+  s'enfoncent au toucher par une règle globale — rien à ajouter par bouton.
+- `components/motion.tsx` : `CountUp` (chiffres qui défilent), `useExit` (fermeture
+  animée d'une modale), `TubeLoader` (tube qui saute, remplace « Chargement… »),
+  `TubeSuccess` (commande validée : la photo du tube est découpée en corps +
+  capuchon par `clip-path`), `CatalogSkeleton` / `ListSkeleton`.
+- Le réglage iOS « Réduire les animations » coupe tout (media query en fin de section).
+- Ne jamais laisser un `transform` permanent sur un conteneur d'écran : les modales
+  en `position: fixed` se positionneraient par rapport à lui (d'où le remplissage
+  `backwards` des animations).

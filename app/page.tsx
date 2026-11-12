@@ -62,7 +62,7 @@ function ToastStack({ toasts, onDismiss }: { toasts: Toast[]; onDismiss: (id: nu
       fontFamily: "'DM Sans', sans-serif", width: "min(92vw, 480px)",
     }}>
       {toasts.map(t => (
-        <button key={t.id} onClick={() => onDismiss(t.id)}
+        <button key={t.id} onClick={() => onDismiss(t.id)} className="toast-in"
           style={{
             pointerEvents: "auto", display: "flex", alignItems: "center", gap: 10,
             maxWidth: "100%", padding: "11px 16px", background: TOAST_COLORS[t.type].bg,

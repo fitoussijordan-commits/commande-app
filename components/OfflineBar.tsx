@@ -153,10 +153,11 @@ export default function OfflineBar({
           fontFamily: "'DM Sans', sans-serif", fontSize: 12.5, fontWeight: 700,
           color: pill.color, flexShrink: 0,
         }}>
-        <span style={{ width: 8, height: 8, borderRadius: "50%", background: pill.dot, flexShrink: 0 }} />
-        {pill.label}
+        {/* Re-montés quand l'état change : la pastille « saute », le libellé fond */}
+        <span key={pill.dot} className="badge-in" style={{ width: 8, height: 8, borderRadius: "50%", background: pill.dot, flexShrink: 0 }} />
+        <span key={pill.label} className="fade-in">{pill.label}</span>
         {pending > 0 && (
-          <span style={{
+          <span key={pending} className="qty-pop" style={{
             background: errCount > 0 ? "#fee2e2" : "#fef3c7",
             color: errCount > 0 ? "#991b1b" : "#92400e",
             border: `1px solid ${errCount > 0 ? "#fecaca" : "#fde68a"}`,
@@ -169,7 +170,7 @@ export default function OfflineBar({
 
       {/* ── Panneau consolidé : réseau + données locales + file d'envoi ── */}
       {showPanel && (
-        <div
+        <div className="ov"
           onClick={() => setShowPanel(false)}
           style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 300, display: "flex", alignItems: "flex-start", justifyContent: "flex-end", fontFamily: "'DM Sans', sans-serif" }}>
           <div
@@ -209,7 +210,7 @@ export default function OfflineBar({
               </div>
               {preloading && progress && progress.total > 0 && (
                 <div style={{ marginTop: 8, height: 6, background: "#e2e8f0", borderRadius: 999, overflow: "hidden" }}>
-                  <div style={{ width: `${pct}%`, height: "100%", background: "#0d9488", borderRadius: 999, transition: "width 0.3s" }} />
+                  <div style={{ width: `${pct}%`, height: "100%", background: "#0d9488", borderRadius: 999, transition: "width 0.4s cubic-bezier(0.22,1,0.36,1)" }} />
                 </div>
               )}
               {preloadError && (

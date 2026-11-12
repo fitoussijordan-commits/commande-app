@@ -2,6 +2,7 @@
 // Pavé numérique de saisie de quantité (tactile, touches de 52 px).
 // Partagé par la prise de commande et l'import de bon de commande.
 import { useEffect, useRef, useState } from "react";
+import { useExit } from "@/components/motion";
 
 const C = {
   bg: "#f8fafc", text: "#0f172a", muted: "#94a3b8", border: "#e2e8f0",
@@ -9,9 +10,10 @@ const C = {
   shadowXl: "0 20px 25px rgba(0,0,0,0.10), 0 8px 10px rgba(0,0,0,0.04)",
 };
 
-export default function QtyPad({ name, initial, onSet, onClose }: {
+export default function QtyPad({ name, initial, onSet, onClose: onCloseProp }: {
   name: string; initial: number; onSet: (n: number) => void; onClose: () => void;
 }) {
+  const [closing, onClose] = useExit(onCloseProp);   // fermeture animée
   const [val, setVal] = useState("");                      // saisie en cours ("" = quantité actuelle)
   const shown = val === "" ? String(initial) : val;
   const commit = (n?: number) => {
@@ -39,12 +41,12 @@ export default function QtyPad({ name, initial, onSet, onClose }: {
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
   return (
-    <div onClick={onClose}
+    <div onClick={onClose} className={closing ? "ov closing" : "ov"}
       style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)", zIndex: 250, display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}>
       <div onClick={e => e.stopPropagation()}
         style={{ width: 304, background: "#fff", borderRadius: 20, boxShadow: C.shadowXl, padding: 18, fontFamily: "'DM Sans', sans-serif" }}>
         <div style={{ fontSize: 12, color: C.muted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>{name}</div>
-        <div style={{ fontSize: 36, fontWeight: 800, color: val === "" ? C.muted : C.text, textAlign: "center" as const, padding: "6px 0 10px" }}>{shown}</div>
+        <div style={{ fontSize: 36, fontWeight: 800, color: val === "" ? C.muted : C.text, textAlign: "center" as const, padding: "6px 0 10px" }}><span key={shown} className="qty-pop">{shown}</span></div>
 
         {/* Presets colis : AJOUTE à la quantité actuelle (réassort rapide) */}
         <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>

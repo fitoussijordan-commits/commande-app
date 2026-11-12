@@ -175,7 +175,7 @@ export default function AgendaGlass({ session, onOpenPlanning, onOpenClient, onO
         {state !== "offline" && dayEvents.length === 0 && (
           <div style={{ fontSize: 13, color: C.faint }}>{state === "loading" ? "…" : "Rien de prévu."}</div>
         )}
-        <div style={{ display: "flex", flexDirection: "column" as const, gap: 8, maxHeight: 340, overflowY: "auto" as const }}>
+        <div className="stagger" style={{ display: "flex", flexDirection: "column" as const, gap: 8, maxHeight: 340, overflowY: "auto" as const }}>
           {dayEvents.map(e => {
             const p = e._p;
             const off = cancelled(e);

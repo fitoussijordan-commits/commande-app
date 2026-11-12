@@ -8,6 +8,7 @@
 import { useEffect, useState } from "react";
 import * as odoo from "@/lib/odoo";
 import { FRANCO_HT, SHIPPING_FEE_HT } from "@/lib/franco";
+import { useExit } from "@/components/motion";
 
 const C = {
   white: "#fff", bg: "#f8fafc", text: "#0f172a", textSec: "#334155", muted: "#94a3b8", border: "#e2e8f0",
@@ -28,7 +29,8 @@ interface Props {
   confirmLabel?: string;
 }
 
-export default function OrderCheck({ session, client, netTotal, giftValue, giftCount, ruptures, shippingFee, onClose, onConfirm, confirmLabel }: Props) {
+export default function OrderCheck({ session, client, netTotal, giftValue, giftCount, ruptures, shippingFee, onClose: onCloseProp, onConfirm, confirmLabel }: Props) {
+  const [closing, onClose] = useExit(onCloseProp);   // fermeture animée
   const [hist, setHist] = useState<{ avg: number; count: number; last?: { name: string; amount: number; date: string } } | null>(null);
   const [histError, setHistError] = useState(false);
 
@@ -61,7 +63,7 @@ export default function OrderCheck({ session, client, netTotal, giftValue, giftC
   };
 
   return (
-    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 250, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+    <div onClick={onClose} className={closing ? "ov closing" : "ov"} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 250, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
       <div onClick={e => e.stopPropagation()} style={{ width: "100%", maxWidth: 440, maxHeight: "85vh", overflowY: "auto", background: C.white, borderRadius: 18, padding: "20px 20px 16px", boxShadow: "0 20px 25px rgba(0,0,0,0.12)", fontFamily: "'DM Sans', sans-serif" }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
           <div style={{ fontSize: 16, fontWeight: 800, color: C.text }}>Check de la commande</div>

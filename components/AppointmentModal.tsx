@@ -1,5 +1,6 @@
 "use client";
 import { useState, useEffect, useMemo } from "react";
+import { useExit } from "@/components/motion";
 import * as odoo from "@/lib/odoo";
 import * as sync from "@/lib/sync";
 import { descToText, routeLines, stripRouteLinks, textToHtml } from "@/lib/text";
@@ -84,7 +85,8 @@ const pad2 = (n: number) => String(n).padStart(2, "0");
 const toLocalInput = (d: Date) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}T${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
 const fromOdoo = (s: string) => new Date(String(s).replace(" ", "T") + "Z");
 
-export default function AppointmentModal({ session, client: clientProp, event, adminMode, onClose, onToast, meaOptions, meaChecked }: Props) {
+export default function AppointmentModal({ session, client: clientProp, event, adminMode, onClose: onCloseProp, onToast, meaOptions, meaChecked }: Props) {
+  const [closing, onClose] = useExit(onCloseProp);   // fermeture animée
   const isEdit = Boolean(event);
   // Client choisi dans la fenêtre (bouton + du planning : RDV sans client au départ).
   const [picked, setPicked] = useState<any>(null);
@@ -397,7 +399,7 @@ export default function AppointmentModal({ session, client: clientProp, event, a
   };
 
   return (
-    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 200, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }} onClick={onClose}>
+    <div className={closing ? "ov closing" : "ov"} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 200, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }} onClick={onClose}>
       <form onSubmit={handleSubmit} onClick={e => e.stopPropagation()}
         style={{ width: "100%", maxWidth: 820, maxHeight: "calc(100vh - 40px)", overflowY: "auto" as const, background: C.white, borderRadius: 20, padding: "24px 24px", boxShadow: C.shadowXl, fontFamily: "'DM Sans', sans-serif", display: "flex", flexWrap: "wrap" as const, gap: 24, alignItems: "flex-start" }}>
         <div style={{ flex: "1 1 340px", minWidth: 0 }}>

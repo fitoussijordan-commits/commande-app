@@ -22,6 +22,7 @@ import { planShipping, toOdooDate, toOdooDatetime, isDirectLogistics, type Shipp
 import { onIncomingFile } from "@/lib/incomingFile";
 import { needsShippingFee, shippingProduct, SHIPPING_FEE_HT, FRANCO_HT } from "@/lib/franco";
 import OrderCheck from "@/components/OrderCheck";
+import { CountUp, TubeLoader, TubeSuccess, CatalogSkeleton, ListSkeleton } from "@/components/motion";
 import * as sync from "@/lib/sync";
 import * as geo from "@/lib/geo";
 import { apiUrl } from "@/lib/apiBase";
@@ -438,12 +439,21 @@ function ProductImage({ id, networkUrl, style }: { id: number; networkUrl: strin
     return () => { alive = false; };
   }, [id, networkUrl]);
   if (!src) return null;
-  return <img src={src} alt="" loading="lazy" style={style} onError={e => { (e.currentTarget as HTMLImageElement).style.display = "none"; }} />;
+  return <img src={src} alt="" loading="lazy" className="img-fade" style={style} onLoad={e => e.currentTarget.classList.add("is-loaded")} onError={e => { (e.currentTarget as HTMLImageElement).style.display = "none"; }} />;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
 export default function OrderScreen({ session, onBack, onToast, desktop }: Props) {
   const [step, setStep] = useState<"home" | "client" | "hub" | "catalog" | "history" | "perime" | "assistant" | "bon" | "perimesReport">("client");
+  // Sens de la transition d'écran : on glisse vers la gauche en avançant, vers
+  // la droite en revenant (profondeur de l'écran dans le parcours).
+  const stepDepth = (s: typeof step) => s === "client" ? 0 : s === "home" ? 1 : s === "hub" ? 2 : s === "perimesReport" ? 4 : 3;
+  const prevStepRef = useRef(step);
+  const stepDirRef = useRef<"fwd" | "back">("fwd");
+  if (prevStepRef.current !== step) {
+    stepDirRef.current = stepDepth(step) < stepDepth(prevStepRef.current) ? "back" : "fwd";
+    prevStepRef.current = step;
+  }
   const [client, setClient] = useState<any>(null);
   const [priceItems, setPriceItems] = useState<PriceItem[]>([]); // items pricelist du client
   const [cart, setCart] = useState<Record<number, CartItem>>({});
@@ -1036,15 +1046,16 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
 
   // Écran confirmation finale
   if (done) return (
-    <div style={{ position: "fixed", inset: 0, left: desktop ? 248 : 0, background: "#0f766e", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'DM Sans', sans-serif", paddingTop: "env(safe-area-inset-top)", paddingBottom: "env(safe-area-inset-bottom)" }}>
+    <div className="fade-in" style={{ position: "fixed", inset: 0, left: desktop ? 248 : 0, background: "#0f766e", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'DM Sans', sans-serif", paddingTop: "env(safe-area-inset-top)", paddingBottom: "env(safe-area-inset-bottom)" }}>
       <div style={{ background: "#fff", borderRadius: 24, padding: "48px 40px", maxWidth: 480, width: "90%", textAlign: "center", boxShadow: C.shadowXl }}>
-        <div style={{ width: 84, height: 84, borderRadius: "50%", background: done.offline ? C.orangeSoft : C.tealSoft, display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 18px" }}>
-          <Icon name={done.offline ? "wifiOff" : "check"} size={40} color={done.offline ? C.orange : C.teal} strokeWidth={2.5} />
-        </div>
-        <div style={{ fontSize: 26, fontWeight: 800, color: C.text, marginBottom: 8 }}>
+        {/* Le tube dépose sa noisette de crème, la coche se dessine */}
+        <TubeSuccess color={done.offline ? C.orange : C.teal}>
+          {done.offline ? <Icon name="wifiOff" size={38} color="#fff" strokeWidth={2.5} /> : undefined}
+        </TubeSuccess>
+        <div className="ts-text" style={{ fontSize: 26, fontWeight: 800, color: C.text, marginBottom: 8 }}>
           {done.offline ? "Commande en attente" : "Devis créé !"}
         </div>
-        <div style={{ fontSize: 15, color: C.muted, lineHeight: 1.6, marginBottom: 32 }}>
+        <div className="ts-text" style={{ fontSize: 15, color: C.muted, lineHeight: 1.6, marginBottom: 32 }}>
           {done.offline ? (
             <>Enregistrée hors ligne sur cet appareil.<br/>
             Elle sera envoyée à Odoo automatiquement dès le retour du réseau — voir « en attente » en haut de l'écran.</>
@@ -1058,7 +1069,7 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
             </div>
           )}
         </div>
-        <div style={{ display: "flex", gap: 12, justifyContent: "center" }}>
+        <div className="ts-text" style={{ display: "flex", gap: 12, justifyContent: "center" }}>
           <button onClick={() => { setDone(null); setCart({}); setClient(null); setNote(""); setResumePrompt(null); setAppliedPromos({}); setStep("client"); }}
             style={{ padding: "14px 28px", background: C.teal, color: "#fff", border: "none", borderRadius: 12, fontSize: 15, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
             Nouvelle commande
@@ -1160,7 +1171,7 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
                       </label>
                       {openPending === o.id && (
                         <div style={{ margin: "4px 0 2px 30px", padding: "6px 8px", borderLeft: `2px solid ${C.tealMid}`, display: "flex", flexDirection: "column" as const, gap: 3 }}>
-                          {lines === "loading" && <div style={{ fontSize: 11.5, color: C.muted }}>Chargement…</div>}
+                          {lines === "loading" && <ListSkeleton count={2} height={14} />}
                           {lines === "error" && <div style={{ fontSize: 11.5, color: C.red }}>Contenu indisponible (hors ligne ?)</div>}
                           {Array.isArray(lines) && lines.length === 0 && <div style={{ fontSize: 11.5, color: C.muted }}>Commande vide.</div>}
                           {Array.isArray(lines) && lines.map(l => l.display_type ? (
@@ -1312,7 +1323,7 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
 
       {/* ── Panneau des remises additionnelles Odoo déclenchées par le panier en cours ── */}
       {showPromoPanel && (
-        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 100, display: "flex", alignItems: "flex-start", justifyContent: "flex-end" }} onClick={() => setShowPromoPanel(false)}>
+        <div className="ov" style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 100, display: "flex", alignItems: "flex-start", justifyContent: "flex-end" }} onClick={() => setShowPromoPanel(false)}>
           <div style={{ width: 360, maxHeight: "80vh", marginTop: 60, marginRight: 16, background: "#fff", borderRadius: 16, boxShadow: C.shadowXl, overflowY: "auto" as const }} onClick={e => e.stopPropagation()}>
             <div style={{ padding: "14px 18px", borderBottom: `1px solid ${C.border}`, fontSize: 14, fontWeight: 800, color: C.text }}>
               Remises disponibles ({triggeredPromos.length})
@@ -1349,7 +1360,7 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
 
       {/* ── Panneau global des brouillons en attente (tous clients) — ouvert uniquement au clic ── */}
       {showDraftsPanel && (
-        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 100, display: "flex", alignItems: "flex-start", justifyContent: "flex-end" }} onClick={() => setShowDraftsPanel(false)}>
+        <div className="ov" style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 100, display: "flex", alignItems: "flex-start", justifyContent: "flex-end" }} onClick={() => setShowDraftsPanel(false)}>
           <div style={{ width: 360, maxHeight: "80vh", marginTop: 60, marginRight: 16, background: "#fff", borderRadius: 16, boxShadow: C.shadowXl, overflowY: "auto" as const }} onClick={e => e.stopPropagation()}>
             <div style={{ padding: "14px 18px", borderBottom: `1px solid ${C.border}`, fontSize: 14, fontWeight: 800, color: C.text }}>
               Commandes en attente ({pendingDrafts.length})
@@ -1372,14 +1383,15 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
 
       {/* ── Panneau règles (overlay) ── */}
       {showRules && (
-        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 100, display: "flex", alignItems: "flex-end", justifyContent: "flex-end" }} onClick={() => setShowRules(false)}>
+        <div className="ov ov-right" style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 100, display: "flex", alignItems: "flex-end", justifyContent: "flex-end" }} onClick={() => setShowRules(false)}>
           <div style={{ width: 400, height: "100%", background: "#fff", boxShadow: C.shadowXl, overflowY: "auto" as const }} onClick={e => e.stopPropagation()}>
             <RulesPanel rules={rules} onChange={r => { setRules(r); saveRules(r); }} onClose={() => setShowRules(false)} />
           </div>
         </div>
       )}
 
-      {/* ── Étapes ── */}
+      {/* ── Étapes ── (key = step : le conteneur est re-monté, l'animation rejoue) */}
+      <div key={step} className={stepDirRef.current === "back" ? "scr scr-back" : "scr"}>
       {step === "home" && (
         <HomeScreen session={session} onNewOrder={() => setStep("client")} onOpenClient={(c) => selectClient(c, "planning")} onToast={onToast}
           initialDate={planningDate} />
@@ -1447,6 +1459,7 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
             setGroupDiscounts(prev => from in prev ? (({ [from]: v, ...rest }) => ({ ...rest, [to]: v }))(prev) : prev);
           }} />
       )}
+      </div>
 
       {showAppointment && client && (
         <AppointmentModal session={session} client={client} onClose={() => setShowAppointment(false)} onToast={onToast} />
@@ -2080,7 +2093,7 @@ function HomeScreen({ session, onNewOrder, onOpenClient, onToast, initialDate }:
                 Voir la semaine →
               </button>
             </div>
-            <div style={{ flex: 1, overflowY: "auto" as const, display: "flex", flexDirection: "column" as const, gap: 6 }}>
+            <div className="stagger" style={{ flex: 1, overflowY: "auto" as const, display: "flex", flexDirection: "column" as const, gap: 6 }}>
               {selEvents.map((e, idx) => {
                 const col: any = eventColor(e, idx);
                 const cancelled = isCancelled(e);
@@ -2254,7 +2267,7 @@ function HomeScreen({ session, onNewOrder, onOpenClient, onToast, initialDate }:
           ? (e.stop_date && e.stop_date !== e.start_date ? `Du ${fmtDay(ymdDate(e.start_date))} au ${fmtDay(ymdDate(e.stop_date))}` : fmtDay(ymdDate(e.start_date)))
           : fmtDay(start);
         return (
-          <div onClick={() => setSelectedEvent(null)}
+          <div onClick={() => setSelectedEvent(null)} className="ov"
             style={{ position: "fixed", inset: 0, background: "rgba(15,23,42,0.45)", zIndex: 300, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
             <div onClick={ev => ev.stopPropagation()}
               style={{ width: "100%", maxWidth: 420, background: C.white, borderRadius: 22, boxShadow: C.shadowXl, fontFamily: "'DM Sans', sans-serif", overflow: "hidden" }}>
@@ -2540,9 +2553,10 @@ function ClientStep({ session, onSelect, onImportBon, onOpenPlanning, onToast, d
           </div>
         )}
 
-        {(loading || locLoading) && <div style={{ textAlign: "center", color: C.muted, padding: 12, fontSize: 14 }}>{locLoading ? "Localisation en cours…" : "Recherche en cours…"}</div>}
+        {(loading || locLoading) && displayed.length === 0 && <ListSkeleton count={3} height={72} style={{ marginBottom: 8 }} />}
+        {(loading || locLoading) && <div className="fade-in" style={{ textAlign: "center", color: C.muted, padding: "4px 12px 10px", fontSize: 13 }}>{locLoading ? "Localisation en cours…" : "Recherche en cours…"}</div>}
 
-        <div style={{ display: "flex", flexDirection: "column" as const, gap: 8, maxHeight: "50vh", overflowY: "auto" as const }}>
+        <div className="stagger" style={{ display: "flex", flexDirection: "column" as const, gap: 8, maxHeight: "50vh", overflowY: "auto" as const }}>
           {displayed.map(c => (
             <button key={c.id} onClick={() => onSelect(c)}
               style={{ padding: "14px 16px", background: C.white, border: `1.5px solid ${C.border}`, borderRadius: 14, cursor: "pointer", textAlign: "left" as const, fontFamily: "inherit", boxShadow: C.shadow, transition: "all 0.12s", display: "flex", alignItems: "center", gap: 14 }}>
@@ -2585,7 +2599,7 @@ function ClientStep({ session, onSelect, onImportBon, onOpenPlanning, onToast, d
       </div>
 
       {showWidgets && (
-        <div style={{ width: "100%", maxWidth: 1040, marginTop: 2, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(400px, 1fr))", gap: 18, alignItems: "start" }}>
+        <div className="stagger" style={{ width: "100%", maxWidth: 1040, marginTop: 2, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(400px, 1fr))", gap: 18, alignItems: "start" }}>
           <AgendaGlass session={session} onOpenPlanning={onOpenPlanning} onOpenClient={onOpenPartner} onOrder={onOrderPartner} />
           <div style={{ display: "flex", flexDirection: "column" as const, gap: 18, minWidth: 0 }}>
             {/* Reprendre : brouillons en cours + derniers clients ouverts, en un tap */}
@@ -2779,7 +2793,7 @@ function ClientHub({ session, client, hasDraft, onOrder, onHistory, onAppointmen
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.5" style={{ flexShrink: 0, opacity: 0.9 }}><path d="M9 18l6-6-6-6"/></svg>
           </button>
         ))}
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 12 }}>
+        <div className="stagger" style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 12 }}>
           {cards.filter(c => !c.primary).map(c => (
             <button key={c.key} onClick={c.onClick}
               style={{ position: "relative" as const, textAlign: "left" as const, padding: "14px 14px", borderRadius: 16, border: `1.5px solid ${C.border}`, background: C.white, color: C.text,
@@ -3060,10 +3074,10 @@ function ClientHistory({ session, client }: { session: odoo.OdooSession; client:
 
         {/* ── Onglet PALMARÈS ── */}
         {mode === "ranking" && (
-          analyLoading ? <div style={{ textAlign: "center" as const, color: C.muted, padding: 40 }}>Chargement…</div>
+          analyLoading ? <TubeLoader label="Calcul du palmarès…" />
           : ranking.length === 0 ? <div style={{ textAlign: "center" as const, color: C.muted, padding: 40 }}>Aucun produit commandé en {year}</div>
           : (
-            <div style={{ display: "flex", flexDirection: "column" as const, gap: 8 }}>
+            <div className="stagger" style={{ display: "flex", flexDirection: "column" as const, gap: 8 }}>
               {ranking.map((r, i) => (
                 <div key={i} style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 14px", background: C.white, border: `1px solid ${C.border}`, borderRadius: 12, boxShadow: C.shadow }}>
                   <div style={{ width: 26, height: 26, borderRadius: 8, background: i < 3 ? C.tealSoft : C.bg, color: i < 3 ? C.tealDark : C.muted, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 13, fontWeight: 800, flexShrink: 0 }}>{i + 1}</div>
@@ -3083,9 +3097,9 @@ function ClientHistory({ session, client }: { session: odoo.OdooSession; client:
 
         {/* ── Onglet MEA ── */}
         {mode === "mea" && (
-          analyLoading ? <div style={{ textAlign: "center" as const, color: C.muted, padding: 40 }}>Chargement…</div>
+          analyLoading ? <TubeLoader label="Chargement des offres…" />
           : (
-            <div style={{ display: "flex", flexDirection: "column" as const, gap: 10 }}>
+            <div className="stagger" style={{ display: "flex", flexDirection: "column" as const, gap: 10 }}>
               {meaOrders.length === 0 && <div style={{ textAlign: "center" as const, color: C.muted, padding: 24 }}>Aucune MEA commandée en {year}</div>}
               {meaOrders.map(o => (
                 <button key={o.id} onClick={() => openOrder(o)}
@@ -3189,11 +3203,11 @@ function ClientHistory({ session, client }: { session: odoo.OdooSession; client:
             <div>
               <div style={{ fontSize: 11, fontWeight: 800, color: C.muted, textTransform: "uppercase" as const, letterSpacing: "0.05em", marginBottom: 8 }}>Gratuités commandées en {year}</div>
               {analyLoading ? (
-                <div style={{ textAlign: "center" as const, color: C.muted, padding: 24 }}>Chargement…</div>
+                <ListSkeleton count={3} height={38} />
               ) : giftYearLines.length === 0 ? (
                 <div style={{ textAlign: "center" as const, color: C.muted, padding: 24, fontSize: 13 }}>Aucune gratuité sur des commandes confirmées en {year}</div>
               ) : (
-                <div style={{ display: "flex", flexDirection: "column" as const, gap: 6 }}>
+                <div className="stagger" style={{ display: "flex", flexDirection: "column" as const, gap: 6 }}>
                   {giftYearLines.map(g => (
                     <div key={g.label} style={{ display: "flex", alignItems: "center", gap: 10, background: C.greenSoft, border: `1px solid ${C.green}33`, borderRadius: 10, padding: "9px 12px" }}>
                       <Icon name="gift" size={13} color={C.green} />
@@ -3212,7 +3226,7 @@ function ClientHistory({ session, client }: { session: odoo.OdooSession; client:
 
         {/* ── Onglet COMMANDES (existant) ── */}
         {mode === "orders" && (loading ? (
-          <div style={{ textAlign: "center" as const, color: C.muted, padding: 40 }}>Chargement…</div>
+          <ListSkeleton count={5} height={74} />
         ) : error ? (
           <div style={{ background: C.redSoft, color: C.red, borderRadius: 12, padding: "12px 16px", fontSize: 13 }}>{error}</div>
         ) : orders.length === 0 ? (
@@ -3221,7 +3235,7 @@ function ClientHistory({ session, client }: { session: odoo.OdooSession; client:
             <div style={{ fontSize: 14, fontWeight: 600 }}>Aucune commande pour ce client</div>
           </div>
         ) : (
-          <div style={{ display: "flex", flexDirection: "column" as const, gap: 10 }}>
+          <div className="stagger" style={{ display: "flex", flexDirection: "column" as const, gap: 10 }}>
             {orders.map(o => {
               const info = stateInfo[o.state] || { label: o.state, color: C.muted, bg: C.bg };
               return (
@@ -3243,7 +3257,7 @@ function ClientHistory({ session, client }: { session: odoo.OdooSession; client:
 
       {/* ── Détail d'une commande (overlay) ── */}
       {selectedOrder && (
-        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 200, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }} onClick={() => setSelectedOrder(null)}>
+        <div className="ov" style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 200, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }} onClick={() => setSelectedOrder(null)}>
           <div onClick={e => e.stopPropagation()}
             style={{ width: "100%", maxWidth: 480, maxHeight: "85vh", display: "flex", flexDirection: "column" as const, background: C.white, borderRadius: 20, boxShadow: C.shadowXl, fontFamily: "'DM Sans', sans-serif", overflow: "hidden" }}>
             <div style={{ padding: "20px 22px 14px", borderBottom: `1px solid ${C.border}`, flexShrink: 0 }}>
@@ -3260,11 +3274,11 @@ function ClientHistory({ session, client }: { session: odoo.OdooSession; client:
 
             <div style={{ flex: 1, overflowY: "auto" as const, padding: "12px 22px" }}>
               {loadingLines ? (
-                <div style={{ textAlign: "center" as const, color: C.muted, padding: 30 }}>Chargement…</div>
+                <TubeLoader size={52} label="Chargement des lignes…" />
               ) : orderLines.length === 0 ? (
                 <div style={{ textAlign: "center" as const, color: C.muted, padding: 30, fontSize: 13 }}>Aucune ligne trouvée</div>
               ) : (
-                <div style={{ display: "flex", flexDirection: "column" as const, gap: 8 }}>
+                <div className="stagger" style={{ display: "flex", flexDirection: "column" as const, gap: 8 }}>
                   {orderLines.map(l => (
                     <div key={l.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 0", borderBottom: `1px solid ${C.border}` }}>
                       <div style={{ flex: 1, minWidth: 0 }}>
@@ -3389,6 +3403,15 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
   // du total) : il mangeait la moitié de la hauteur du panier. Choix mémorisé.
   const allOffers = Array.from(new Set([...autoOffers.map(o => o.id), ...offerIds])).map(id => ({ id }));
   const [recapOpen, setRecapOpen] = useState(() => { try { return localStorage.getItem("wms_recap_open") === "1"; } catch { return false; } });
+  // Retrait d'une ligne du panier : elle se replie, puis disparaît vraiment.
+  const [removing, setRemoving] = useState<Set<number>>(new Set());
+  const removeLine = (product: any) => {
+    setRemoving(prev => new Set(prev).add(product.id));
+    setTimeout(() => {
+      onQtyChange(product, 0);
+      setRemoving(prev => { const n = new Set(prev); n.delete(product.id); return n; });
+    }, 190);
+  };
   const toggleRecap = () => setRecapOpen(o => { try { localStorage.setItem("wms_recap_open", o ? "0" : "1"); } catch {} return !o; });
   // Type de gratuité appliqué à toutes les gratuités (Coffre DC par défaut).
   const [giftType, setGiftType] = useState(DEFAULT_FREE_TYPE);
@@ -3956,14 +3979,14 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
           {/* ── Vue MEA ── */}
           {isOfferView ? (
             meaLoading ? (
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: 200, color: C.muted }}>Chargement…</div>
+              <TubeLoader label="Chargement des offres…" />
             ) : shownTemplates.length === 0 ? (
               <div style={{ textAlign: "center", padding: 60, color: C.muted }}>
                 <div style={{ marginBottom: 10 }}><Icon name="file" size={32} color={C.border} /></div>
                 <div>{activeCatId === DEVIS_CAT_ID ? "Aucun devis d'implantation" : "Aucune MEA trouvée"}</div>
               </div>
             ) : (
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))", gap: 10 }}>
+              <div className="stagger" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))", gap: 10 }}>
                 {shownTemplates.map((t) => {
                   const isApplying = applyingMea === t.id;
                   const lineCount = t.sale_order_template_line_ids?.length || 0;
@@ -3987,14 +4010,14 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
               </div>
             )
           ) : activeCatId === FAV_CAT_ID && favLoading ? (
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: 200, color: C.muted }}>Chargement des favoris…</div>
+            <CatalogSkeleton dense={dense} count={8} />
           ) : activeCatId === FAV_CAT_ID && favLoaded && displayedProducts.length === 0 ? (
             <div style={{ textAlign: "center", padding: 60, color: C.muted }}>
               <div style={{ marginBottom: 10 }}><Icon name="star" size={32} color={C.border} /></div>
               <div>{favProducts.length === 0 ? "Ce client n'a passé aucune commande sur les 12 derniers mois" : "Aucun favori en stock — désactive « Stock dispo » pour tout voir"}</div>
             </div>
           ) : loading && allProducts.length === 0 ? (
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: 200, color: C.muted }}>Chargement…</div>
+            <CatalogSkeleton dense={dense} />
           ) : !activeCatId && !isSearching && allProducts.length === 0 ? (
             <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "60%", flexDirection: "column" as const, gap: 12, color: C.muted }}>
               <Icon name="package" size={48} color={C.border} />
@@ -4006,7 +4029,7 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
               <div>Aucun résultat</div>
             </div>
           ) : dense ? (
-            <div style={{ background: C.white, borderRadius: 14, border: `1px solid ${C.border}`, overflow: "hidden" }}>
+            <div className="stagger" style={{ background: C.white, borderRadius: 14, border: `1px solid ${C.border}`, overflow: "hidden" }}>
               {displayedProducts.map((p, i) => {
                 const qty = cart[p.id]?.qty || 0;
                 const stock = Math.max(0, Math.round(p.virtual_available || 0));
@@ -4014,7 +4037,7 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
                 const hasDiscount = priceItems.length > 0 && Math.abs(clientPrice - (p.lst_price || 0)) > 0.01;
                 const gifted = giftQtyById.get(p.id);
                 return (
-                  <div key={p.id} style={{ display: "flex", flexWrap: "wrap" as const, rowGap: 4, alignItems: "center", gap: 10, padding: "6px 10px 6px 8px", borderTop: i ? `1px solid ${C.border}` : "none", borderLeft: `4px solid ${qty > 0 ? C.teal : "transparent"}`, background: qty > 0 ? C.tealSoft : C.white }}>
+                  <div key={p.id} style={{ display: "flex", flexWrap: "wrap" as const, rowGap: 4, alignItems: "center", gap: 10, padding: "6px 10px 6px 8px", borderTop: i ? `1px solid ${C.border}` : "none", borderLeft: `4px solid ${qty > 0 ? C.teal : "transparent"}`, background: qty > 0 ? C.tealSoft : C.white, transition: "background-color 0.25s ease, border-color 0.25s ease" }}>
                     <div onClick={() => openZoom(p)} title="Agrandir l'image" style={{ width: 42, height: 42, flexShrink: 0, borderRadius: 9, background: C.bg, display: "flex", alignItems: "center", justifyContent: "center", cursor: "zoom-in", position: "relative" as const, overflow: "hidden" }}>
                       <div style={{ position: "absolute" }}><Icon name="package" size={18} color={C.border} /></div>
                       <ProductImage id={p.id} networkUrl={imgUrl(p.id)} style={{ height: 38, objectFit: "contain", position: "relative" as const, zIndex: 1 }} />
@@ -4042,7 +4065,7 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
                       <button onClick={() => onQtyChange(p, qty - 1, clientPrice)} aria-label="Moins" style={{ width: 36, height: 38, background: "transparent", border: "none", cursor: "pointer", fontSize: 19, fontWeight: 700, color: qty > 0 ? C.red : C.muted, lineHeight: 1 }}>−</button>
                       <button onClick={() => setPad({ product: p, price: clientPrice })} title="Saisir une quantité"
                         style={{ width: 40, height: 38, background: "transparent", border: "none", borderLeft: `1px solid ${C.border}`, borderRight: `1px solid ${C.border}`, cursor: "pointer", fontSize: 15, fontWeight: 800, color: qty > 0 ? C.tealDark : C.muted, fontFamily: "inherit" }}>
-                        {qty}
+                        <span key={qty} className="qty-pop">{qty}</span>
                       </button>
                       <button onClick={() => onQtyChange(p, qty + 1, clientPrice)} aria-label="Plus" style={{ width: 36, height: 38, background: "transparent", border: "none", cursor: "pointer", fontSize: 19, fontWeight: 700, color: C.teal, lineHeight: 1 }}>+</button>
                     </div>
@@ -4052,7 +4075,7 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
               })}
             </div>
           ) : (
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(172px, 1fr))", gap: 10 }}>
+            <div className="stagger" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(172px, 1fr))", gap: 10 }}>
               {displayedProducts.map(p => {
                 const qty = cart[p.id]?.qty || 0;
                 const isFree = freeProductIds.has(p.id);
@@ -4061,15 +4084,15 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
                 const clientPrice = applyPricelist(p.lst_price || 0, p.id, p.product_tmpl_id?.[0] || 0, priceItems, qty || 1);
                 const hasDiscount = priceItems.length > 0 && Math.abs(clientPrice - (p.lst_price || 0)) > 0.01;
                 return (
-                  <div key={p.id} style={{ background: C.white, borderRadius: 14, overflow: "hidden", border: `2px solid ${qty > 0 ? C.teal : isFree ? C.green : C.border}`, boxShadow: qty > 0 ? `0 0 0 3px ${C.tealSoft}` : C.shadow, transition: "all 0.15s" }}>
+                  <div key={p.id} style={{ background: C.white, borderRadius: 14, overflow: "hidden", border: `2px solid ${qty > 0 ? C.teal : isFree ? C.green : C.border}`, boxShadow: qty > 0 ? `0 0 0 3px ${C.tealMid}` : C.shadow, transition: "border-color 0.25s ease, box-shadow 0.25s ease" }}>
                     <div onClick={() => openZoom(p)} title="Agrandir l'image" style={{ height: 80, background: C.bg, display: "flex", alignItems: "center", justifyContent: "center", position: "relative" as const, cursor: "zoom-in" }}>
                       <div style={{ position: "absolute" }}><Icon name="package" size={30} color={C.border} /></div>
                       <ProductImage id={p.id} networkUrl={imgUrl(p.id)} style={{ height: 72, objectFit: "contain", position: "relative" as const, zIndex: 1 }} />
                       <div style={{ position: "absolute", bottom: 4, right: 4, background: "rgba(255,255,255,0.85)", borderRadius: 6, width: 20, height: 20, display: "flex", alignItems: "center", justifyContent: "center" }}>
                         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke={C.muted} strokeWidth="2.5"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3M11 8v6M8 11h6"/></svg>
                       </div>
-                      {isFree && <div style={{ position: "absolute", top: 5, right: 5, background: C.green, color: "#fff", fontSize: 9, fontWeight: 700, borderRadius: 5, padding: "2px 5px" }}>OFFERT</div>}
-                      {qty > 0 && <div style={{ position: "absolute", top: 5, left: 5, background: C.teal, color: "#fff", fontSize: 12, fontWeight: 800, borderRadius: 7, padding: "2px 8px" }}>{qty}</div>}
+                      {isFree && <div className="badge-in" style={{ position: "absolute", top: 5, right: 5, background: C.green, color: "#fff", fontSize: 9, fontWeight: 700, borderRadius: 5, padding: "2px 5px" }}>OFFERT</div>}
+                      {qty > 0 && <div key={qty} className="qty-pop" style={{ position: "absolute", top: 5, left: 5, background: C.teal, color: "#fff", fontSize: 12, fontWeight: 800, borderRadius: 7, padding: "2px 8px" }}>{qty}</div>}
                       {/* Offre de l'article (champ « Offre produit ») : visible dès la saisie */}
                       {Array.isArray(p.x_offre_produit_id) && (
                         <div title={`Offre : ${p.x_offre_produit_id[1]}`} style={{ position: "absolute", left: 5, right: 5, bottom: 5, background: C.orange, color: "#fff", fontSize: 9.5, fontWeight: 800, borderRadius: 5, padding: "2px 6px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const, textAlign: "center" as const }}>
@@ -4101,7 +4124,7 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
                         <button onClick={() => onQtyChange(p, qty - 1, clientPrice)} style={{ flex: 1, height: 44, background: "transparent", border: "none", cursor: "pointer", fontSize: 20, fontWeight: 700, color: qty > 0 ? C.red : C.muted, lineHeight: 1 }}>−</button>
                         <button onClick={() => setPad({ product: p, price: clientPrice })} title="Saisir une quantité"
                           style={{ flex: 1.2, height: 44, background: "transparent", border: "none", borderLeft: `1px solid ${qty > 0 ? C.tealMid : C.border}`, borderRight: `1px solid ${qty > 0 ? C.tealMid : C.border}`, cursor: "pointer", fontSize: 16, fontWeight: 800, color: qty > 0 ? C.tealDark : C.muted, fontFamily: "inherit" }}>
-                          {qty}
+                          <span key={qty} className="qty-pop">{qty}</span>
                         </button>
                         <button onClick={() => onQtyChange(p, qty + 1, clientPrice)} style={{ flex: 1, height: 44, background: "transparent", border: "none", cursor: "pointer", fontSize: 20, fontWeight: 700, color: C.teal, lineHeight: 1 }}>+</button>
                       </div>
@@ -4146,14 +4169,14 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
             </button>
           </div>
           <div style={{ fontSize: 11, opacity: 0.85, marginTop: 2 }}>
-            {cartCount} article{cartCount > 1 ? "s" : ""} · {fmtPrice(cartTotal)}
+            <span key={cartCount} className="qty-pop" style={{ fontWeight: 800, marginRight: 2 }}>{cartCount}</span> article{cartCount > 1 ? "s" : ""} · <CountUp value={cartTotal} format={fmtPrice} />
             {familyCounts.map(c => <span key={c.label} style={{ marginLeft: 6 }}>· {c.label} : {c.refs} réf. / {c.qty} pcs</span>)}
             {freeCount > 0 && <span style={{ marginLeft: 6, background: "rgba(255,255,255,0.2)", borderRadius: 5, padding: "1px 6px" }}>+{freeCount} offerts</span>}
           </div>
         </div>
 
         {cartSearch !== null && (
-          <div style={{ padding: "8px 12px 0", display: "flex", alignItems: "center", gap: 8 }}>
+          <div className="reveal" style={{ padding: "8px 12px 0", display: "flex", alignItems: "center", gap: 8 }}>
             <input autoFocus value={cartSearch} onChange={e => setCartSearch(e.target.value)} placeholder="Chercher dans le panier (nom, réf., EAN)…"
               onKeyDown={e => { if (e.key === "Escape") setCartSearch(null); }}
               style={{ flex: 1, minWidth: 0, height: 34, padding: "0 10px", borderRadius: 9, border: `1.5px solid ${C.tealMid}`, fontSize: 13, fontFamily: "inherit", color: C.text, outline: "none" }} />
@@ -4163,7 +4186,7 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
         {/* Liste articles */}
         <div style={{ flex: 1, overflowY: "auto" as const, padding: "10px 12px" }}>
           {cartItems.length === 0 ? (
-            <div style={{ textAlign: "center", padding: "32px 12px", color: C.muted }}>
+            <div className="fade-in" style={{ textAlign: "center", padding: "32px 12px", color: C.muted }}>
               <div style={{ marginBottom: 8 }}><Icon name="cart" size={28} color={C.border} /></div>
               <div style={{ fontSize: 12 }}>Ajoute des produits</div>
             </div>
@@ -4184,7 +4207,7 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
               const hasPricelistDiscount = catalog > 0 && catalog - item.unitPrice > 0.01;
               const pricelistPct = hasPricelistDiscount ? Math.round((1 - item.unitPrice / catalog) * 100) : 0;
               return (
-                <div key={item.product.id}>
+                <div key={item.product.id} className={removing.has(item.product.id) ? "cart-line removing" : "cart-line"}>
                 {sepLabel && (
                   <div style={{ display: "flex", alignItems: "center", gap: 8, margin: idx === 0 ? "0 0 8px" : "14px 0 8px" }}>
                     <span style={{ fontSize: 10.5, fontWeight: 800, color: item.group ? C.tealDark : C.muted, textTransform: "uppercase" as const, letterSpacing: "0.04em", whiteSpace: "nowrap" as const, overflow: "hidden", textOverflow: "ellipsis", maxWidth: "85%" }}>
@@ -4210,7 +4233,7 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
                     <input value={item.product.name} onChange={e => onNoteText(item.product.id, e.target.value)}
                       autoFocus={!item.product.name} placeholder="Commentaire…"
                       style={{ flex: 1, minWidth: 0, border: "none", background: "transparent", outline: "none", fontFamily: "inherit", fontSize: 12, fontStyle: item.note === "line_note" ? "italic" : "normal", fontWeight: item.note === "line_section" ? 800 : 500, color: C.textSec }} />
-                    <button onClick={() => onQtyChange(item.product, 0)} title="Supprimer le commentaire"
+                    <button onClick={() => removeLine(item.product)} title="Supprimer le commentaire"
                       style={{ flexShrink: 0, width: 24, height: 24, background: "transparent", border: "none", cursor: "pointer", color: C.muted, fontSize: 13 }}>✕</button>
                   </div>
                 ) : listView ? (
@@ -4224,13 +4247,13 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
                     {Array.isArray(item.product.x_offre_produit_id) && <OfferTag name={item.product.x_offre_produit_id[1]} />}
                     <div style={{ display: "flex", alignItems: "center", gap: 3, flexShrink: 0 }}>
                       <button onClick={() => onQtyChange(item.product, item.qty - 1)} style={{ width: 36, height: 36, borderRadius: 9, background: C.redSoft, border: "none", cursor: "pointer", color: C.red, fontSize: 17, fontWeight: 700 }}>−</button>
-                      <button onClick={() => setPad({ product: item.product })} style={{ minWidth: 44, height: 36, borderRadius: 9, background: "#fff", border: `1px solid ${C.border}`, cursor: "pointer", fontSize: 13, fontWeight: 800, color: C.text, fontFamily: "inherit" }}>{item.qty}</button>
+                      <button onClick={() => setPad({ product: item.product })} style={{ minWidth: 44, height: 36, borderRadius: 9, background: "#fff", border: `1px solid ${C.border}`, cursor: "pointer", fontSize: 13, fontWeight: 800, color: C.text, fontFamily: "inherit" }}><span key={item.qty} className="qty-pop">{item.qty}</span></button>
                       <button onClick={() => onQtyChange(item.product, item.qty + 1)} style={{ width: 36, height: 36, borderRadius: 9, background: C.tealSoft, border: "none", cursor: "pointer", color: C.teal, fontSize: 17, fontWeight: 700 }}>+</button>
                     </div>
                     <span style={{ width: 70, flexShrink: 0, textAlign: "right" as const, fontSize: 11.5, color: C.textSec }}>{fmtPrice(item.unitPrice)}</span>
                     <span style={{ width: 44, flexShrink: 0, textAlign: "right" as const, fontSize: 11, fontWeight: 700, color: C.orange }}>{pct + groupPct > 0 ? `−${Math.min(100, pct + groupPct)}%` : ""}</span>
                     <span style={{ width: 80, flexShrink: 0, textAlign: "right" as const, fontSize: 13, fontWeight: 800, color: C.text }}>{fmtPrice(net)}</span>
-                    <button onClick={() => onQtyChange(item.product, 0)} title="Retirer" style={{ flexShrink: 0, width: 36, height: 36, marginLeft: 6, background: "transparent", border: "none", cursor: "pointer", color: C.muted, fontSize: 14 }}>✕</button>
+                    <button onClick={() => removeLine(item.product)} title="Retirer" style={{ flexShrink: 0, width: 36, height: 36, marginLeft: 6, background: "transparent", border: "none", cursor: "pointer", color: C.muted, fontSize: 14 }}>✕</button>
                   </div>
                 ) : (
                 /* Vue compacte : panier étroit → nom sur toute la largeur, détails et
@@ -4249,7 +4272,7 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
                         style={{ width: 36, height: 36, borderRadius: 9, background: C.redSoft, border: "none", cursor: "pointer", color: C.red, fontSize: 18, fontWeight: 700, lineHeight: 1, padding: 0 }}>−</button>
                       <button onClick={() => setPad({ product: item.product })} title={saleStep(item.product) > 1 ? `Saisir une quantité (min ${saleStep(item.product)})` : "Saisir une quantité"}
                         style={{ minWidth: 42, height: 36, borderRadius: 9, background: "#fff", border: `1px solid ${saleStep(item.product) > 1 ? C.tealMid : C.border}`, cursor: "pointer", fontSize: 14, fontWeight: 800, color: C.text, fontFamily: "inherit", padding: "0 6px" }}>
-                        {item.qty}
+                        <span key={item.qty} className="qty-pop">{item.qty}</span>
                       </button>
                       <button onClick={() => onQtyChange(item.product, item.qty + 1)} aria-label="Plus"
                         style={{ width: 36, height: 36, borderRadius: 9, background: C.tealSoft, border: "none", cursor: "pointer", color: C.teal, fontSize: 18, fontWeight: 700, lineHeight: 1, padding: 0 }}>+</button>
@@ -4258,7 +4281,7 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
                   const total = <span style={{ width: 68, flexShrink: 0, textAlign: "right" as const, fontSize: 12.5, fontWeight: 800, color: pct + groupPct > 0 ? C.orange : C.text }}>{fmtPrice(net)}</span>;
                   // Croix éloignée du « + » (pas de suppression en voulant ajouter).
                   const remove = (
-                    <button onClick={() => onQtyChange(item.product, 0)} title="Retirer" aria-label={`Retirer ${item.product.name} du panier`}
+                    <button onClick={() => removeLine(item.product)} title="Retirer" aria-label={`Retirer ${item.product.name} du panier`}
                       style={{ flexShrink: 0, width: 32, height: 32, marginLeft: 4, background: "transparent", border: "none", cursor: "pointer", color: C.muted, fontSize: 13, padding: 0 }}>✕</button>
                   );
                   const tip = [item.product.default_code, `${item.qty} × ${fmtPrice(item.unitPrice)}`, item.priceLocked && "prix fixé"].filter(Boolean).join(" · ");
@@ -4294,7 +4317,7 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
 
           {/* Gratuités saisies manuellement (produit à 0€ + type de gratuité) */}
           {giftItems.length > 0 && (
-            <div style={{ margin: "8px 0", padding: "8px 10px", background: C.greenSoft, border: `1px solid ${C.green}44`, borderRadius: 10 }}>
+            <div className="reveal" style={{ margin: "8px 0", padding: "8px 10px", background: C.greenSoft, border: `1px solid ${C.green}44`, borderRadius: 10 }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
                 <span style={{ fontSize: 10, fontWeight: 700, color: C.green, textTransform: "uppercase" as const, letterSpacing: "0.05em", display: "flex", alignItems: "center", gap: 5 }}><Icon name="gift" size={11} /> Gratuités</span>
               </div>
@@ -4310,7 +4333,7 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
                   <div style={{ display: "flex", alignItems: "center", gap: 2, flexShrink: 0 }}>
                     <button onClick={() => setGiftItems(prev => prev.map((x, j) => j === i ? { ...x, qty: Math.max(1, x.qty - 1) } : x))}
                       style={{ width: 34, height: 34, borderRadius: 8, background: C.redSoft, border: "none", cursor: "pointer", color: C.red, fontSize: 16, fontWeight: 700, lineHeight: 1, padding: 0 }}>−</button>
-                    <span style={{ minWidth: 24, textAlign: "center" as const, fontSize: 12, fontWeight: 800, color: C.text }}>{g.qty}</span>
+                    <span key={g.qty} className="qty-pop" style={{ minWidth: 24, textAlign: "center" as const, fontSize: 12, fontWeight: 800, color: C.text }}>{g.qty}</span>
                     <button onClick={() => setGiftItems(prev => prev.map((x, j) => j === i ? { ...x, qty: x.qty + 1 } : x))}
                       style={{ width: 34, height: 34, borderRadius: 8, background: "#fff", border: `1px solid ${C.green}44`, cursor: "pointer", color: C.green, fontSize: 16, fontWeight: 700, lineHeight: 1, padding: 0 }}>+</button>
                   </div>
@@ -4378,7 +4401,7 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
               {eventDiscount > 0 ? `Remise ${eventDiscount}%` : "Remise événement"}
             </button>
             {showEventDisc && (
-              <div style={{ display: "flex", gap: 6, alignItems: "center", marginTop: 6 }}>
+              <div className="reveal" style={{ display: "flex", gap: 6, alignItems: "center", marginTop: 6 }}>
                 {[10, 15].map(v => (
                   <button key={v} onClick={() => setEventDiscount(d => d === v ? 0 : v)}
                     style={{ flex: "0 0 auto", padding: "6px 12px", borderRadius: 8, fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit",
@@ -4409,7 +4432,7 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
 
         {/* Bloc récap sombre — note + total + validation */}
         <div style={{ padding: "0 12px 12px" }}>
-          <div style={{ background: "#0f172a", borderRadius: 18, padding: recapOpen ? "14px 14px 16px" : "10px 12px 12px", boxShadow: "0 12px 28px rgba(15,23,42,0.35)" }}>
+          <div style={{ background: "#0f172a", borderRadius: 18, padding: recapOpen ? "14px 14px 16px" : "10px 12px 12px", boxShadow: "0 12px 28px rgba(15,23,42,0.35)", transition: "padding 0.2s ease" }}>
             {/* Résumé cliquable : ouvre / replie le détail */}
             <button onClick={toggleRecap} title={recapOpen ? "Replier" : "Expédition, type, offres, note"}
               style={{ width: "100%", display: "flex", alignItems: "center", gap: 6, padding: "4px 2px", marginBottom: recapOpen ? 10 : 8, background: "none", border: "none", cursor: "pointer", fontFamily: "inherit", color: "rgba(255,255,255,0.7)", fontSize: 11.5, fontWeight: 700, textAlign: "left" as const, minWidth: 0 }}>
@@ -4424,7 +4447,7 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
               </span>
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6" style={{ flexShrink: 0, transform: recapOpen ? "rotate(180deg)" : "none", transition: "transform 0.2s" }}><path d="M6 15l6-6 6 6"/></svg>
             </button>
-            {recapOpen && <>
+            {recapOpen && <div className="reveal">
             {shipping && (() => {
               const d = (x: Date) => x.toLocaleDateString("fr-FR", { weekday: "short", day: "numeric", month: "short" });
               return (
@@ -4488,13 +4511,13 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
             )}
             <textarea value={note} onChange={e => setNote(e.target.value)} placeholder="Note pour la commande..."
               rows={2} style={{ width: "100%", boxSizing: "border-box" as const, marginBottom: 12, padding: "9px 11px", border: "1px solid rgba(255,255,255,0.12)", borderRadius: 10, fontSize: 12, fontFamily: "inherit", resize: "none" as const, background: "rgba(255,255,255,0.06)", color: "#fff", outline: "none" }} />
-            </>}
+            </div>}
 
             <div style={{ borderTop: recapOpen ? "1px solid rgba(255,255,255,0.1)" : "none", paddingTop: recapOpen ? 10 : 0, display: "flex", flexDirection: "column" as const, gap: 5, marginBottom: recapOpen ? 12 : 8 }}>
-              {recapOpen && <>
+              {recapOpen && <div className="reveal" style={{ display: "flex", flexDirection: "column" as const, gap: 5 }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                 <span style={{ fontSize: 12, color: "rgba(255,255,255,0.55)" }}>Sous-total</span>
-                <span style={{ fontSize: 13, fontWeight: 600, color: "rgba(255,255,255,0.85)" }}>{fmtPrice(cartTotal)}</span>
+                <span style={{ fontSize: 13, fontWeight: 600, color: "rgba(255,255,255,0.85)" }}><CountUp value={cartTotal} format={fmtPrice} /></span>
               </div>
               {discountTotal > 0 && (
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
@@ -4508,7 +4531,7 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
                   <span style={{ fontSize: 13, fontWeight: 700, color: "#fbbf24" }}>+{fmtPrice(SHIPPING_FEE_HT)}</span>
                 </div>
               )}
-              </>}
+              </div>}
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", paddingTop: recapOpen ? 4 : 0 }}>
                 <span style={{ fontSize: 13, fontWeight: 700, color: "#fff", display: "flex", alignItems: "center", gap: 8 }}>
                   Total HT
@@ -4519,8 +4542,23 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
                     </button>
                   )}
                 </span>
-                <span style={{ fontSize: 20, fontWeight: 800, color: "#5eead4" }}>{fmtPrice(netTotal + (shippingFee ? SHIPPING_FEE_HT : 0))}</span>
+                <span style={{ fontSize: 20, fontWeight: 800, color: "#5eead4", fontVariantNumeric: "tabular-nums" as const }}><CountUp value={netTotal + (shippingFee ? SHIPPING_FEE_HT : 0)} format={fmtPrice} /></span>
               </div>
+              {/* Franco de port : la barre se remplit, et s'illumine au seuil */}
+              {netTotal > 0 && (() => {
+                const reached = !shippingFee;
+                return (
+                  <div title={`Franco de port : ${FRANCO_HT} € HT`} style={{ marginTop: 3 }}>
+                    <div style={{ height: 4, borderRadius: 999, background: "rgba(255,255,255,0.12)" }}>
+                      <div key={reached ? "hit" : "fill"} className={reached ? "franco-fill hit" : "franco-fill"}
+                        style={{ width: `${Math.min(100, (netTotal / FRANCO_HT) * 100)}%`, background: reached ? "#2dd4bf" : "#fbbf24" }} />
+                    </div>
+                    <div style={{ marginTop: 4, fontSize: 10.5, fontWeight: 700, color: reached ? "#5eead4" : "#fbbf24" }}>
+                      {reached ? "✓ Franco de port atteint" : `Franco : encore ${fmtPrice(FRANCO_HT - netTotal)}`}
+                    </div>
+                  </div>
+                );
+              })()}
             </div>
 
             {/* Le bouton annonce la mise en file AVANT la validation quand on est hors
@@ -4564,7 +4602,7 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
 
       {/* ── Modale zoom image ── */}
       {zoom && (
-        <div onClick={() => setZoom(null)}
+        <div onClick={() => setZoom(null)} className="ov"
           style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 200, display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}>
           <div onClick={e => e.stopPropagation()}
             style={{ background: C.white, borderRadius: 16, maxWidth: 480, width: "100%", maxHeight: "90vh", overflow: "auto" as const, boxShadow: C.shadowXl, position: "relative" as const }}>
@@ -4581,9 +4619,9 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
             {/* Image */}
             <div style={{ height: 340, background: C.bg, display: "flex", alignItems: "center", justifyContent: "center", borderRadius: "16px 16px 0 0" }}>
               {zoomLoading ? (
-                <span style={{ color: C.muted, fontSize: 13 }}>Chargement…</span>
+                <TubeLoader size={72} />
               ) : zoomImg ? (
-                <img src={`data:image/png;base64,${zoomImg}`} alt="" style={{ maxHeight: 320, maxWidth: "90%", objectFit: "contain" }} />
+                <img className="fade-in" src={`data:image/png;base64,${zoomImg}`} alt="" style={{ maxHeight: 320, maxWidth: "90%", objectFit: "contain" }} />
               ) : (
                 <ProductImage id={zoom.id} networkUrl={imgUrl(zoom.id)} style={{ maxHeight: 200, maxWidth: "90%", objectFit: "contain" }} />
               )}

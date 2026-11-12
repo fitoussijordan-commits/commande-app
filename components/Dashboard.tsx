@@ -3,6 +3,7 @@
 // chiffres clés de l'année vs N-1, CA par mois, top / flop 20, meilleurs CA,
 // suivi des MEA et clients à visiter.
 import { useEffect, useState } from "react";
+import { CountUp, Sk } from "@/components/motion";
 import * as odoo from "@/lib/odoo";
 import { loadSalesStats, type SalesStats } from "@/lib/salesStats";
 import { loadMeaData, type MeaData } from "@/lib/meaTracking";
@@ -42,11 +43,11 @@ function Evol({ cur, prev }: { cur: number; prev: number }) {
   );
 }
 
-function Kpi({ label, value, sub }: { label: string; value: string; sub: React.ReactNode }) {
+function Kpi({ label, value, sub }: { label: string; value: React.ReactNode; sub: React.ReactNode }) {
   return (
     <div style={{ background: C.white, borderRadius: 18, border: `1px solid ${C.border}`, padding: "14px 18px" }}>
       <div style={{ fontSize: 12, fontWeight: 700, color: C.muted }}>{label}</div>
-      <div style={{ fontSize: 26, fontWeight: 800, color: C.text, margin: "4px 0 2px", letterSpacing: "-0.01em" }}>{value}</div>
+      <div style={{ fontSize: 26, fontWeight: 800, color: C.text, margin: "4px 0 2px", letterSpacing: "-0.01em", fontVariantNumeric: "tabular-nums" as const }}>{value}</div>
       {sub}
     </div>
   );
@@ -70,8 +71,8 @@ function MonthChart({ st }: { st: SalesStats }) {
           return (
             <div key={m} onMouseEnter={() => setHover(i)} onMouseLeave={() => setHover(null)} onClick={() => setHover(h => h === i ? null : i)}
               style={{ height: "100%", display: "flex", alignItems: "flex-end", justifyContent: "center", gap: 2, cursor: "default", background: hover === i ? "rgba(15,23,42,0.04)" : "transparent", borderRadius: 6 }}>
-              <div style={{ width: "38%", height: `${(prev / max) * 100}%`, background: C.prev, borderRadius: "4px 4px 0 0", minHeight: prev ? 2 : 0 }} />
-              <div style={{ width: "38%", height: `${(cur / max) * 100}%`, background: i <= nowM ? C.teal : "transparent", borderRadius: "4px 4px 0 0", minHeight: cur ? 2 : 0 }} />
+              <div className="grow-y" style={{ animationDelay: `${i * 30}ms`, width: "38%", height: `${(prev / max) * 100}%`, background: C.prev, borderRadius: "4px 4px 0 0", minHeight: prev ? 2 : 0 }} />
+              <div className="grow-y" style={{ animationDelay: `${i * 30 + 90}ms`, width: "38%", height: `${(cur / max) * 100}%`, background: i <= nowM ? C.teal : "transparent", borderRadius: "4px 4px 0 0", minHeight: cur ? 2 : 0 }} />
             </div>
           );
         })}
@@ -114,7 +115,7 @@ export default function Dashboard({ session, onClose, onOpenClient, onToast }: {
   const today = new Date().toLocaleDateString("fr-FR", { day: "numeric", month: "long" });
 
   return (
-    <div style={{ position: "fixed", inset: 0, zIndex: 250, background: C.bg, overflowY: "auto" as const, fontFamily: "'DM Sans', sans-serif" }}>
+    <div className="ov-full" style={{ position: "fixed", inset: 0, zIndex: 250, background: C.bg, overflowY: "auto" as const, fontFamily: "'DM Sans', sans-serif" }}>
       <div style={{ maxWidth: 1200, margin: "0 auto", padding: "20px 24px 40px" }}>
         {/* En-tête */}
         <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 18 }}>
@@ -130,7 +131,16 @@ export default function Dashboard({ session, onClose, onOpenClient, onToast }: {
         </div>
 
         {error && <div style={{ padding: 30, textAlign: "center" as const, color: C.muted }}>{error}</div>}
-        {!error && !st && <div style={{ padding: 30, textAlign: "center" as const, color: C.muted }}>Chargement…</div>}
+        {!error && !st && <>
+          {/* Squelette : mêmes blocs que le tableau de bord chargé */}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 14, marginBottom: 14 }}>
+            {[0, 1, 2, 3].map(i => <Sk key={i} h={92} r={18} />)}
+          </div>
+          <Sk h={250} r={18} style={{ marginBottom: 14 }} />
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(380px, 1fr))", gap: 14 }}>
+            <Sk h={320} r={18} /><Sk h={320} r={18} />
+          </div>
+        </>}
 
         {st && st.clients.length === 0 && (
           <div style={{ marginBottom: 14, padding: "10px 14px", borderRadius: 12, background: "#fff7ed", color: "#ea580c", fontSize: 13, fontWeight: 600 }}>
@@ -139,11 +149,11 @@ export default function Dashboard({ session, onClose, onOpenClient, onToast }: {
         )}
         {st && <>
           {/* Chiffres clés */}
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 14, marginBottom: 14 }}>
-            <Kpi label="CA HT" value={fmtEUR(st.kpi.cur)} sub={<Evol cur={st.kpi.cur} prev={st.kpi.prev} />} />
-            <Kpi label="Commandes" value={String(st.kpi.ordersCur)} sub={<Evol cur={st.kpi.ordersCur} prev={st.kpi.ordersPrev} />} />
-            <Kpi label="Panier moyen" value={fmtEUR(avgCur)} sub={<Evol cur={avgCur} prev={avgPrev} />} />
-            <Kpi label="Clients commandeurs" value={String(st.kpi.clientsCur)} sub={<Evol cur={st.kpi.clientsCur} prev={st.kpi.clientsPrev} />} />
+          <div className="stagger" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 14, marginBottom: 14 }}>
+            <Kpi label="CA HT" value={<CountUp fromZero duration={900} value={st.kpi.cur} format={fmtEUR} />} sub={<Evol cur={st.kpi.cur} prev={st.kpi.prev} />} />
+            <Kpi label="Commandes" value={<CountUp fromZero duration={900} value={st.kpi.ordersCur} format={n => String(Math.round(n))} />} sub={<Evol cur={st.kpi.ordersCur} prev={st.kpi.ordersPrev} />} />
+            <Kpi label="Panier moyen" value={<CountUp fromZero duration={900} value={avgCur} format={fmtEUR} />} sub={<Evol cur={avgCur} prev={avgPrev} />} />
+            <Kpi label="Clients commandeurs" value={<CountUp fromZero duration={900} value={st.kpi.clientsCur} format={n => String(Math.round(n))} />} sub={<Evol cur={st.kpi.clientsCur} prev={st.kpi.clientsPrev} />} />
           </div>
 
           {/* CA par mois */}
@@ -154,7 +164,7 @@ export default function Dashboard({ session, onClose, onOpenClient, onToast }: {
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(380px, 1fr))", gap: 14, marginBottom: 14, alignItems: "start" }}>
             <Card title="Évolution par client"><TopFlop session={session} onOpenClient={onOpenClient} /></Card>
             <Card title="Meilleurs CA">
-              <div style={{ display: "flex", flexDirection: "column" as const, gap: 2 }}>
+              <div className="stagger" style={{ display: "flex", flexDirection: "column" as const, gap: 2 }}>
                 {(bestAll ? best.slice(0, 20) : best.slice(0, 8)).map((r, i) => (
                   <button key={r.client.id} onClick={() => onOpenClient(r.client)}
                     style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 6px", border: "none", borderBottom: `1px solid ${C.border}`, background: "none", cursor: "pointer", fontFamily: "inherit", textAlign: "left" as const }}>
@@ -198,7 +208,7 @@ export default function Dashboard({ session, onClose, onOpenClient, onToast }: {
                       <span style={{ fontSize: 15, fontWeight: 800, color: C.tealDark, minWidth: 44, textAlign: "right" as const }}>{pct}%</span>
                     </div>
                     <div style={{ height: 5, borderRadius: 3, background: "#eef2f6", marginTop: 7, overflow: "hidden" }}>
-                      <div style={{ width: `${pct}%`, height: "100%", background: C.teal, borderRadius: 3 }} />
+                      <div className="grow-x" style={{ width: `${pct}%`, height: "100%", background: C.teal, borderRadius: 3 }} />
                     </div>
                   </button>
                 );

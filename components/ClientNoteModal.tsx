@@ -1,5 +1,6 @@
 "use client";
 import { useState, useEffect, useRef } from "react";
+import { useExit } from "@/components/motion";
 import * as odoo from "@/lib/odoo";
 import * as sync from "@/lib/sync";
 import { descToText } from "@/lib/text";
@@ -25,7 +26,8 @@ interface Props {
   autoRecord?: boolean;   // ouvert par le bouton REC : la dictée démarre tout de suite
 }
 
-export default function ClientNoteModal({ session, client, onClose, onToast, autoRecord }: Props) {
+export default function ClientNoteModal({ session, client, onClose: onCloseProp, onToast, autoRecord }: Props) {
+  const [closing, onClose] = useExit(onCloseProp);   // fermeture animée
   const [text, setText] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -142,7 +144,7 @@ export default function ClientNoteModal({ session, client, onClose, onToast, aut
   };
 
   return (
-    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 200, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }} onClick={onClose}>
+    <div className={closing ? "ov closing" : "ov"} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 200, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }} onClick={onClose}>
       <div onClick={e => e.stopPropagation()}
         style={{ width: "100%", maxWidth: 460, maxHeight: "85vh", display: "flex", flexDirection: "column" as const, background: C.white, borderRadius: 20, boxShadow: C.shadowXl, fontFamily: "'DM Sans', sans-serif", overflow: "hidden" }}>
 
@@ -188,13 +190,13 @@ export default function ClientNoteModal({ session, client, onClose, onToast, aut
               style={{ width: "100%", boxSizing: "border-box" as const, padding: "12px 14px", paddingRight: speechSupported ? 48 : 14, border: `1.5px solid ${recording ? C.teal : C.border}`, borderRadius: 12, fontSize: 14, fontFamily: "inherit", color: C.text, outline: "none", resize: "vertical" as const }}
             />
             {speechSupported && (
-              <button type="button" onClick={toggleRecording} title={recording ? "Arrêter la dictée" : "Dicter à la voix"}
+              <button type="button" onClick={toggleRecording} title={recording ? "Arrêter la dictée" : "Dicter à la voix"} className={recording ? "rec-pulse" : undefined}
                 style={{ position: "absolute" as const, top: 10, right: 10, width: 32, height: 32, borderRadius: "50%", background: recording ? C.red : C.teal, border: "none", color: "#fff", fontSize: 15, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", boxShadow: recording ? "0 0 0 4px rgba(220,38,38,0.15)" : "none", transition: "box-shadow 0.2s" }}>
                 {recording ? "⏹" : "🎙️"}
               </button>
             )}
           </div>
-          {recording && <div style={{ fontSize: 12, color: C.red, fontWeight: 700, marginTop: 6 }}>● REC — parle normalement, relis puis « Enregistrer »</div>}
+          {recording && <div className="reveal" style={{ fontSize: 12, color: C.red, fontWeight: 700, marginTop: 6 }}>● REC — parle normalement, relis puis « Enregistrer »</div>}
           {!speechSupported && <div style={{ fontSize: 11, color: C.muted, marginTop: 6 }}>Dictée non disponible sur ce navigateur (utilise Safari, Chrome ou l'app iPad) — saisie au clavier.</div>}
         </div>
 
