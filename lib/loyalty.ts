@@ -157,3 +157,27 @@ export function computeLineDiscounts(applied: Record<number, AppliedPromo>, cart
   }
   return out;
 }
+
+// Remises réellement retenues : pour chaque produit, seule la plus forte compte
+// (computeLineDiscounts). Les paliers inférieurs dominés ne sont pas affichés.
+export function effectivePromoIds(applied: Record<number, AppliedPromo>, cart: CartLike): Set<number> {
+  const items = Object.values(cart);
+  const cheapestId = items.length
+    ? items.reduce((min, i) => (i.unitPrice < min.unitPrice ? i : min), items[0]).product.id
+    : null;
+  const best: Record<number, { pct: number; id: number }> = {};
+  const out = new Set<number>();
+  for (const promo of Object.values(applied)) {
+    if (promo.type !== "discount") { out.add(promo.program.id); continue; }
+    const { reward } = promo;
+    const targets = reward.discount_applicability === "cheapest" && cheapestId != null ? [cheapestId]
+      : reward.discount_applicability === "specific" ? reward.discount_product_ids
+      : items.map(i => i.product.id);
+    for (const pid of targets) {
+      if (!items.some(i => i.product.id === pid)) continue;
+      if (!best[pid] || reward.discount > best[pid].pct) best[pid] = { pct: reward.discount, id: promo.program.id };
+    }
+  }
+  Object.values(best).forEach(b => out.add(b.id));
+  return out;
+}

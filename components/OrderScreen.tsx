@@ -709,17 +709,33 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
 
   // keepZero : ligne de MEA / devis d'implantation à 0 dans le modèle — gardée au
   // panier à 0 pour que le délégué choisisse la quantité (non envoyée à Odoo).
-  const setQty = (product: any, wanted: number, unitPrice?: number, group?: string, keepZero?: boolean) => {
+  // Place (rubrique + rang) des lignes retirées du panier : un article retiré puis
+  // remis reprend sa place dans son devis d'implantation / sa MEA (« Best seller »…).
+  const removedSlots = useRef<Record<number, { seq?: number; group?: string }>>({});
+  // regroup : la ligne passe dans ce groupe (une MEA ajoutée par-dessus un devis
+  // d'implantation reprend les articles communs → remises de l'offre applicables).
+  const setQty = (product: any, wanted: number, unitPrice?: number, group?: string, keepZero?: boolean, regroup?: boolean) => {
     setCart(prev => {
       const cur = prev[product.id];
       // Quantité minimum (« par 2 ») : toujours un multiple du pas de vente.
       const qty = snapQty(product, wanted, cur?.qty || 0);
-      if (qty < 0 || (qty === 0 && !keepZero)) { const n = { ...prev }; delete n[product.id]; return n; }
+      if (qty < 0 || (qty === 0 && !keepZero)) {
+        if (cur && !cur.note && cur.group) removedSlots.current[product.id] = { seq: cur.seq, group: cur.group };
+        const n = { ...prev }; delete n[product.id]; return n;
+      }
+      const nextSeq = () => Math.max(0, ...Object.values(prev).map(i => i.seq || 0)) + 1;
+      if (cur && regroup && group && cur.group !== group) {
+        return { ...prev, [product.id]: { ...cur, qty, unitPrice: cur.priceLocked ? cur.unitPrice : unitPrice ?? cur.unitPrice, group, seq: nextSeq() } };
+      }
       if (cur?.priceLocked) return { ...prev, [product.id]: { ...cur, qty } };
       const price = unitPrice ?? cur?.unitPrice ?? product.lst_price ?? 0;
-      // Une ligne déjà au panier garde sa place et sa MEA d'origine.
-      const seq = cur?.seq ?? Math.max(0, ...Object.values(prev).map(i => i.seq || 0)) + 1;
-      return { ...prev, [product.id]: { product, qty, unitPrice: price, seq, group: cur ? cur.group : group } };
+      // Une ligne déjà au panier garde sa place et sa MEA d'origine ; une ligne
+      // retirée puis remise retrouve la sienne si son groupe est toujours là.
+      const slot = !cur && !group ? removedSlots.current[product.id] : undefined;
+      const back = slot && Object.values(prev).some(i => i.group === slot.group) ? slot : undefined;
+      if (!cur) delete removedSlots.current[product.id];
+      const seq = cur?.seq ?? back?.seq ?? nextSeq();
+      return { ...prev, [product.id]: { product, qty, unitPrice: price, seq, group: cur ? cur.group : group ?? back?.group } };
     });
   };
 
@@ -3175,7 +3191,7 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
   shipping?: ShippingPlan | null;
   onChangeExpedition?: (d: Date | null) => void;
   session: odoo.OdooSession; cart: Record<number, CartItem>;
-  onQtyChange: (p: any, q: number, price?: number, group?: string, keepZero?: boolean) => void; freeItems: FreeItem[];
+  onQtyChange: (p: any, q: number, price?: number, group?: string, keepZero?: boolean, regroup?: boolean) => void; freeItems: FreeItem[];
   onValidate: () => void; submitting: boolean;
   note: string; setNote: (n: string) => void; client: any;
   priceItems: PriceItem[];
@@ -3459,14 +3475,15 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
         const have = cart[it.product.id]?.qty || 0;
         if (it.kind === "paid") required[it.product.id] = (required[it.product.id] ?? have) + it.qty;
         if (it.qty === 0 && cart[it.product.id]) continue;
-        onQtyChange(it.product, have + it.qty, it.price, template.name, true);
+        // Article déjà dans un devis d'implantation : il passe dans la MEA.
+        const fromImplant = !isImplantTemplate(template) && /implantation/i.test(cart[it.product.id]?.group || "");
+        onQtyChange(it.product, have + it.qty, it.price, template.name, true, fromImplant);
         added++;
       }
       const gifts = v.gifts.reduce((s, g) => s + g.qty, 0);
       if (v.gifts.length) {
         const cond = { label: template.name, required };
         setGiftItems(prev => [...prev, ...v.gifts.map(g => ({ ...g, cond }))]);
-        setGiftType(v.gifts[0].type);   // le sélecteur du bloc Gratuités affiche le type de la MEA
       }
       if (template.internalNote || template.shipDate) onTemplateApplied(template.name, { note: template.internalNote, shipDate: template.shipDate });
       // Implantation → type de commande « Implantation » ; MEA → coche l'offre du même nom.
@@ -3642,6 +3659,7 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
   const cartTotal = cartItems.reduce((s, i) => s + i.qty * i.unitPrice, 0);
   const freeCount = freeItems.reduce((s, i) => s + i.qty, 0);
   const lineDiscounts = loyalty.computeLineDiscounts(appliedPromos, promoCart(cart));
+  const effectivePromos = loyalty.effectivePromoIds(appliedPromos, promoCart(cart));
   const discountTotal = cartItems.reduce((s, i) => {
     // Remise promo Odoo + remise événement Co, cumulées (plafond 100%).
     const pct = Math.min(100, (lineDiscounts[i.product.id] || 0) + (eventDiscount || 0) + (i.group ? groupDiscounts[i.group] || 0 : 0));
@@ -4066,13 +4084,6 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
             <div style={{ margin: "8px 0", padding: "8px 10px", background: C.greenSoft, border: `1px solid ${C.green}44`, borderRadius: 10 }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
                 <span style={{ fontSize: 10, fontWeight: 700, color: C.green, textTransform: "uppercase" as const, letterSpacing: "0.05em", display: "flex", alignItems: "center", gap: 5 }}><Icon name="gift" size={11} /> Gratuités</span>
-                {/* Type pour TOUTES les gratuités (et les suivantes) — Coffre DC par défaut */}
-                <select value={giftType} title="Type de gratuité appliqué à toutes les lignes offertes"
-                  onChange={e => { const t = e.target.value; setGiftType(t); setGiftItems(prev => prev.map(g => ({ ...g, type: t }))); }}
-                  style={{ maxWidth: "60%", padding: "3px 6px", fontSize: 10.5, fontWeight: 700, borderRadius: 6, border: `1px solid ${C.green}`, background: "#fff", color: C.green, fontFamily: "inherit" }}>
-                  <option value="">— Type —</option>
-                  {freeTypes.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
-                </select>
               </div>
               {giftItems.map((g, i) => (
                 /* Une ligne par gratuité ; le type se choisit en tête du bloc (choix
@@ -4092,13 +4103,13 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
                   </div>
                   <button onClick={() => setGiftItems(prev => prev.filter((_, j) => j !== i))} title="Retirer"
                     style={{ flexShrink: 0, width: 20, height: 24, background: "none", border: "none", cursor: "pointer", color: C.muted, fontSize: 12, padding: 0 }}>✕</button>
-                  {!g.type && (
-                    <select value={g.type} onChange={e => setGiftItems(prev => prev.map((x, j) => j === i ? { ...x, type: e.target.value } : x))}
-                      style={{ width: "100%", padding: "3px 6px", fontSize: 11, borderRadius: 6, border: `1px solid ${C.red}`, background: "#fff", color: C.text, fontFamily: "inherit" }}>
-                      <option value="">— Type de gratuité —</option>
-                      {freeTypes.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
-                    </select>
-                  )}
+                  {/* Type de gratuité PAR LIGNE (Coffre DC par défaut, Gratuités des offres pour une MEA) */}
+                  <select value={g.type} title="Type de gratuité de cette ligne"
+                    onChange={e => setGiftItems(prev => prev.map((x, j) => j === i ? { ...x, type: e.target.value } : x))}
+                    style={{ order: -1, flexShrink: 0, width: g.type ? 96 : "100%", padding: "2px 4px", fontSize: 10, fontWeight: 700, borderRadius: 6, border: `1px solid ${g.type ? C.green + "66" : C.red}`, background: "#fff", color: g.type ? C.green : C.text, fontFamily: "inherit" }}>
+                    <option value="">— Type —</option>
+                    {freeTypes.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
+                  </select>
                 </div>
               ))}
               {giftItems.some(g => !giftActive(g, cart)) && (
@@ -4127,11 +4138,11 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
             </div>
           )}
 
-          {/* Remises additionnelles appliquées */}
+          {/* Remises additionnelles appliquées : seul le palier retenu est affiché */}
           {Object.keys(appliedPromos).length > 0 && (
             <div style={{ margin: "8px 0", padding: "8px 10px", background: C.orangeSoft, border: `1px solid ${C.orange}33`, borderRadius: 10 }}>
               <div style={{ fontSize: 10, fontWeight: 700, color: C.orange, textTransform: "uppercase" as const, letterSpacing: "0.05em", marginBottom: 5, display: "flex", alignItems: "center", gap: 5 }}><Icon name="tag" size={11} /> Remises appliquées</div>
-              {Object.values(appliedPromos).map(p => (
+              {Object.values(appliedPromos).filter(p => effectivePromos.has(p.program.id)).map(p => (
                 <div key={p.program.id} style={{ fontSize: 11, color: C.orange, marginBottom: 2 }}>
                   <strong>{p.program.name}</strong>
                   <div style={{ fontSize: 10, opacity: 0.8 }}>
