@@ -3354,49 +3354,49 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
       || (freeTypes.length ? giftType : "gratuites_des_offres");
   };
 
-  const applyMeaTemplate = async (template: any) => {
-    setApplyingMea(template.id);
+  // Lecture d'un ou plusieurs modèles MEA (un seul appel Odoo pour toutes les
+  // variantes d'une campagne). Chaque ligne est classée :
+  //   paid     : article payant (compte pour les gratuités et le choix de variante)
+  //   kit      : article « kit » de la MEA (ligne marquée gratuité, ex. réf. 7…)
+  //   tester   : testeur (réf. en 3) → toujours à 0 € dans une offre marketing
+  //   optional : ligne à quantité 0 du modèle
+  type MeaLine = { product: any; qty: number; price: number; kind: "paid" | "kit" | "tester" | "optional" };
+  type MeaParsed = {
+    id: number; name: string; notes: { name: string; type: "line_note" | "line_section" }[];
+    items: MeaLine[]; gifts: { product: any; qty: number; type: string }[]; paid: Record<number, number>; total: number;
+  };
+  const parseTemplates = async (templates: any[]): Promise<MeaParsed[]> => {
+    const tlm = await templateLineMeta(session);
+    const lineIds: number[] = templates.flatMap(t => t.sale_order_template_line_ids || []);
+    let lines: any[];
     try {
-      // Utilise les IDs de lignes déjà chargés pour éviter le filtre sur order_template_id
-      const lineIds: number[] = template.sale_order_template_line_ids || [];
-      if (!lineIds.length) { onToast("Aucun produit dans cette offre", "error"); setApplyingMea(null); return; }
-
-      const tlm = await templateLineMeta(session);
-      let lines: any[];
-      try {
-        // Toutes les lignes, dans l'ordre du modèle : produits ET lignes de
-        // section / note (commentaires), reprises telles quelles dans le devis.
-        lines = await odoo.searchRead(session, "sale.order.template.line",
-          [["id", "in", lineIds]],
-          ["id", "product_id", "product_uom_qty", "display_type", "name", "sequence", ...Object.values(tlm).filter(Boolean) as string[]],
-          500, "sequence, id");
-      } catch {
-        // Hors ligne → lignes préchargées
-        lines = await sync.getCachedMeaLines(lineIds);
-      }
-      if (!lines.some((l: any) => l.product_id)) { onToast("Aucun produit dans cette offre", "error"); setApplyingMea(null); return; }
-
-      const productIds = lines.filter((l: any) => l.product_id).map((l: any) => l.product_id[0]);
-      let products: any[];
+      lines = await odoo.searchRead(session, "sale.order.template.line",
+        [["id", "in", lineIds]],
+        ["id", "product_id", "product_uom_qty", "display_type", "name", "sequence", ...Object.values(tlm).filter(Boolean) as string[]],
+        0, "sequence, id");
+    } catch {
+      lines = (await sync.getCachedMeaLines(lineIds)).sort((x: any, y: any) => (x.sequence || 0) - (y.sequence || 0) || x.id - y.id);
+    }
+    const productIds = Array.from(new Set(lines.filter((l: any) => l.product_id).map((l: any) => l.product_id[0] as number)));
+    let products: any[] = [];
+    if (productIds.length) {
       try {
         products = await odoo.searchRead(session, "product.product",
           [["id", "in", productIds]],
           ["id", "name", "default_code", "barcode", "lst_price", "product_tmpl_id", "virtual_available", ...await optionalProductFields(session)],
           productIds.length);
       } catch {
-        // Hors ligne → produits depuis le catalogue préchargé
-        const cached = await sync.getCachedProducts();
         const set = new Set(productIds);
-        products = cached.filter((p: any) => set.has(p.id));
+        products = (await sync.getCachedProducts()).filter((p: any) => set.has(p.id));
       }
-      const productMap = new Map<number, any>(products.map((p: any) => [p.id as number, p]));
-
-      let added = 0, gifts = 0;
-      const newGifts: GiftItem[] = [];
-      const required: Record<number, number> = {};
-      for (const line of lines) {
+    }
+    const productMap = new Map<number, any>(products.map((p: any) => [p.id as number, p]));
+    return templates.map(t => {
+      const ids = new Set<number>(t.sale_order_template_line_ids || []);
+      const out: MeaParsed = { id: t.id, name: t.name, notes: [], items: [], gifts: [], paid: {}, total: 0 };
+      for (const line of lines.filter((l: any) => ids.has(l.id))) {
         if (line.display_type === "line_section" || line.display_type === "line_note") {
-          if (line.name) onAddNote(String(line.name), line.display_type, template.name);
+          if (line.name) out.notes.push({ name: String(line.name), type: line.display_type });
           continue;
         }
         if (!line.product_id) continue;
@@ -3405,47 +3405,133 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
         // Certaines offres utilisent un VRAI produit comme séparateur de rubrique
         // (ex. « ----- Éléments de PLV optionnels : ----- », code so1, prix 0) :
         // repris comme ligne de commentaire (sans stock, pas d'alerte de rupture).
-        if (isSeparatorProduct(product)) { onAddNote(String(line.name || product.name), "line_note", template.name); continue; }
+        if (isSeparatorProduct(product)) { out.notes.push({ name: String(line.name || product.name), type: "line_note" }); continue; }
         // Quantité du modèle telle quelle : 0 reste 0 (ligne optionnelle).
         const qty = Math.max(0, Math.round(line.product_uom_qty || 0));
         const discount = tlm.discount ? Number(line[tlm.discount]) || 0 : 0;
-        // Ligne remisée à 100 % = gratuité du modèle (coffrets offerts…) : en
-        // ligne offerte, avec le type de gratuité du modèle.
+        // Ligne remisée à 100 % = gratuité du modèle (coffrets offerts…).
         if (discount >= 99.99) {
-          if (qty > 0) {
-            newGifts.push({ product, qty, type: meaGiftType(tlm.freeType ? line[tlm.freeType] : null) });
-            gifts += qty;
-          }
+          if (qty > 0) out.gifts.push({ product, qty, type: meaGiftType(tlm.freeType ? line[tlm.freeType] : null) });
           continue;
         }
-        // Quantités payantes du modèle : condition des gratuités (vérifiée en continu).
-        // (hors article « kit » de la MEA, ligne marquée gratuité à 0 €)
-        if (qty > 0 && !isSeparatorProduct(product) && !(tlm.freeType && line[tlm.freeType])) required[product.id] = (required[product.id] ?? (cart[product.id]?.qty || 0)) + qty;
-        if (qty === 0 && cart[product.id]) continue;
+        const tester = String(product.default_code || "").startsWith("3");
+        const kit = !!(tlm.freeType && line[tlm.freeType]);
         const listPrice = applyPricelist(product.lst_price || 0, product.id, product.product_tmpl_id?.[0] || 0, priceItems, Math.max(1, qty));
-        // Remise partielle du modèle appliquée au prix de la ligne.
-        const clientPrice = discount > 0 ? Math.round(listPrice * (1 - discount / 100) * 100) / 100 : listPrice;
-        onQtyChange(product, (cart[product.id]?.qty || 0) + qty, clientPrice, template.name, true);
+        // Remise partielle du modèle appliquée au prix de la ligne ; testeurs à 0 €.
+        const price = tester ? 0 : discount > 0 ? Math.round(listPrice * (1 - discount / 100) * 100) / 100 : listPrice;
+        const kind: MeaLine["kind"] = qty === 0 ? "optional" : tester ? "tester" : kit ? "kit" : "paid";
+        out.items.push({ product, qty, price, kind });
+        if (kind === "paid") { out.paid[product.id] = (out.paid[product.id] || 0) + qty; out.total += qty; }
+      }
+      return out;
+    });
+  };
+  // Variantes d'une campagne : « MEA Huiles et lait - Essentiel / - Standard… ».
+  // Clé = nom sans le mot de variante final (avec ou sans tiret), sinon partie avant « - ».
+  const campaignKey = (name: string) => {
+    const f = fold(name).trim();
+    const m = f.match(/^(.*?)[\s\-–—:]*\b(essentiel(?:le)?s?|standard|premium|prestige|decouverte|initiale?|complete?|mini|maxi|starter|basique?|classique|xl|s|m|l)\s*$/);
+    if (m && m[1].trim()) return m[1].trim();
+    const i = f.lastIndexOf(" - ");
+    return (i > 0 ? f.slice(0, i) : f).trim();
+  };
+  const squash = (t: string) => fold(t).replace(/[^a-z0-9]/g, "");
+  const offerFor = (name: string) => offers.find(o => squash(o.name) === squash(name))
+    || offers.find(o => squash(name).includes(squash(o.name)) || squash(o.name).includes(squash(name)));
+  // MEA ajoutées ayant plusieurs variantes : variante en cours, suivie en continu.
+  const [meaVariants, setMeaVariants] = useState<Record<string, { current: number; variants: MeaParsed[] }>>({});
+
+  const applyMeaTemplate = async (template: any) => {
+    setApplyingMea(template.id);
+    try {
+      if (!(template.sale_order_template_line_ids || []).length) { onToast("Aucun produit dans cette offre", "error"); setApplyingMea(null); return; }
+      const key = campaignKey(String(template.name || ""));
+      const siblings = isImplantTemplate(template) ? [template]
+        : [template, ...meaTemplates.filter(t => t.id !== template.id && campaignKey(String(t.name || "")) === key && !isImplantTemplate(t))];
+      const parsed = await parseTemplates(siblings);
+      const v = parsed[0];
+      if (!v.items.length && !v.gifts.length) { onToast("Aucun produit dans cette offre", "error"); setApplyingMea(null); return; }
+
+      v.notes.forEach(n => onAddNote(n.name, n.type, template.name));
+      let added = 0;
+      const required: Record<number, number> = {};
+      for (const it of v.items) {
+        const have = cart[it.product.id]?.qty || 0;
+        if (it.kind === "paid") required[it.product.id] = (required[it.product.id] ?? have) + it.qty;
+        if (it.qty === 0 && cart[it.product.id]) continue;
+        onQtyChange(it.product, have + it.qty, it.price, template.name, true);
         added++;
       }
-      if (newGifts.length) {
+      const gifts = v.gifts.reduce((s, g) => s + g.qty, 0);
+      if (v.gifts.length) {
         const cond = { label: template.name, required };
-        setGiftItems(prev => [...prev, ...newGifts.map(g => ({ ...g, cond }))]);
-        setGiftType(newGifts[0].type);   // le sélecteur du bloc Gratuités affiche le type de la MEA
+        setGiftItems(prev => [...prev, ...v.gifts.map(g => ({ ...g, cond }))]);
+        setGiftType(v.gifts[0].type);   // le sélecteur du bloc Gratuités affiche le type de la MEA
       }
       if (template.internalNote || template.shipDate) onTemplateApplied(template.name, { note: template.internalNote, shipDate: template.shipDate });
       // Implantation → type de commande « Implantation » ; MEA → coche l'offre du même nom.
       if (isImplantTemplate(template)) {
         if (orderType === "" && meta?.implantValues.length) setOrderType(meta.implantValues[0]);
       } else {
-        const offer = offers.find(o => fold(o.name) === fold(template.name))
-          || offers.find(o => fold(template.name).includes(fold(o.name)) || fold(o.name).includes(fold(template.name)));
+        const offer = offerFor(template.name);
         if (offer) setOfferIds(prev => prev.includes(offer.id) ? prev : [...prev, offer.id]);
+        if (parsed.length > 1) setMeaVariants(prev => ({ ...prev, [key]: { current: v.id, variants: parsed } }));
       }
       onToast(`✅ ${template.name} — ${added} produit${added > 1 ? "s" : ""} ajouté${added > 1 ? "s" : ""}${gifts ? ` + ${gifts} offert${gifts > 1 ? "s" : ""}` : ""}`, "success");
     } catch (e: any) { onToast("Erreur: " + e.message, "error"); }
     setApplyingMea(null);
   };
+
+  // Changement de variante selon les quantités saisies : la plus grande variante
+  // dont le total d'articles payants est atteint (répartition libre). Le kit MEA,
+  // les testeurs, les gratuités et l'offre cochée suivent la nouvelle variante.
+  useEffect(() => {
+    for (const [key, g] of Object.entries(meaVariants)) {
+      const cur = g.variants.find(x => x.id === g.current);
+      if (!cur) continue;
+      const allPaid = new Set(g.variants.flatMap(x => Object.keys(x.paid).map(Number)));
+      // MEA retirée du panier : on arrête de la suivre.
+      if (!Array.from(allPaid).some(id => (cart[id]?.qty || 0) > 0)) {
+        setMeaVariants(prev => { const n = { ...prev }; delete n[key]; return n; });
+        continue;
+      }
+      const inCart = (x: MeaParsed) => Object.keys(x.paid).reduce((s, id) => s + (cart[Number(id)]?.qty || 0), 0);
+      const ok = g.variants.filter(x => x.total > 0 && inCart(x) >= x.total)
+        .sort((a, b) => b.total - a.total || (a.id === cur.id ? -1 : b.id === cur.id ? 1 : 0));
+      const best = ok[0] || [...g.variants].filter(x => x.total > 0).sort((a, b) => a.total - b.total)[0];
+      if (!best || best.id === cur.id) continue;
+
+      // Kit / testeurs / lignes optionnelles : remplacés s'ils n'ont pas été modifiés à la main.
+      const curExtra = new Map(cur.items.filter(i => i.kind !== "paid").map(i => [i.product.id as number, i]));
+      const bestExtra = new Map(best.items.filter(i => i.kind !== "paid").map(i => [i.product.id as number, i]));
+      curExtra.forEach((i, id) => {
+        if (!bestExtra.has(id) && cart[id] && cart[id].qty === i.qty) onQtyChange(i.product, 0);
+      });
+      bestExtra.forEach((i, id) => {
+        const have = cart[id]?.qty;
+        const was = curExtra.get(id)?.qty;
+        if (have === undefined || have === was) onQtyChange(i.product, i.qty, i.price, best.name, true);
+      });
+      // Prix des articles payants (remise partielle propre à la variante).
+      best.items.filter(i => i.kind === "paid").forEach(i => {
+        const c = cart[i.product.id];
+        const old = cur.items.find(x => x.product.id === i.product.id && x.kind === "paid");
+        if (c && old && c.unitPrice === old.price && i.price !== old.price) onQtyChange(i.product, c.qty, i.price, best.name, true);
+      });
+      // Gratuités de la variante.
+      setGiftItems(prev => [...prev.filter(x => x.cond?.label !== cur.name),
+        ...best.gifts.map(x => ({ ...x, cond: { label: best.name, required: best.paid } }))]);
+      // Offre cochée.
+      const oldOffer = offerFor(cur.name), newOffer = offerFor(best.name);
+      setOfferIds(prev => {
+        const n = prev.filter(id => id !== oldOffer?.id);
+        return newOffer && !n.includes(newOffer.id) ? [...n, newOffer.id] : n;
+      });
+      setMeaVariants(prev => ({ ...prev, [key]: { ...g, current: best.id } }));
+      onToast(`MEA passée en « ${best.name} » (${inCart(best)} articles)`, "info");
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cart, meaVariants]);
 
   useEffect(() => { setSmartCats(loadSmartCats()); }, []);
 
