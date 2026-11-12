@@ -126,7 +126,12 @@ function matchesSearch(p: any, words: string[]): boolean {
   return words.every(w => hay.includes(w));
 }
 // Ligne offerte : produit à 0€ + type de gratuité (type_gratuit sur sale.order.line).
-interface GiftItem { product: any; qty: number; type: string; }
+// cond : gratuité d'un modèle (MEA) — valable seulement si les quantités
+// payantes du modèle sont atteintes (ex. « 48 coffrets + 8 offerts »).
+interface GiftItem { product: any; qty: number; type: string; cond?: { label: string; required: Record<number, number> } }
+function giftActive(g: GiftItem, cart: Record<number, { qty: number }>): boolean {
+  return !g.cond || Object.entries(g.cond.required).every(([pid, q]) => (cart[Number(pid)]?.qty || 0) >= q);
+}
 interface FreeRule {
   id: string; name: string; triggerQty: number; freeQty: number;
   allProducts: boolean; productRefs: string[];
@@ -866,7 +871,7 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
             type_gratuit: "gratuites_des_offres",
           }]),
           // Gratuités saisies manuellement (quantité offerte + type de gratuité choisi).
-          ...giftItems.map(g => [0, 0, {
+          ...giftItems.filter(g => giftActive(g, cart)).map(g => [0, 0, {
             product_id: g.product.id,
             product_uom_qty: g.qty,
             price_unit: 0,
@@ -3360,6 +3365,8 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
       const productMap = new Map<number, any>(products.map((p: any) => [p.id as number, p]));
 
       let added = 0, gifts = 0;
+      const newGifts: GiftItem[] = [];
+      const required: Record<number, number> = {};
       for (const line of lines) {
         if (line.display_type === "line_section" || line.display_type === "line_note") {
           if (line.name) onAddNote(String(line.name), line.display_type, template.name);
@@ -3381,21 +3388,23 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
           if (qty > 0) {
             const t = tlm.freeType ? String(line[tlm.freeType] || "") : "";
             const type = t && (freeTypes.some(f => f.value === t) || !freeTypes.length) ? t : giftType;
-            setGiftItems(prev => {
-              const i = prev.findIndex(g => g.product.id === product.id && g.type === type);
-              if (i >= 0) return prev.map((g, j) => j === i ? { ...g, qty: g.qty + qty } : g);
-              return [...prev, { product, qty, type }];
-            });
+            newGifts.push({ product, qty, type });
             gifts += qty;
           }
           continue;
         }
+        // Quantités payantes du modèle : condition des gratuités (vérifiée en continu).
+        if (qty > 0 && !isSeparatorProduct(product)) required[product.id] = (required[product.id] ?? (cart[product.id]?.qty || 0)) + qty;
         if (qty === 0 && cart[product.id]) continue;
         const listPrice = applyPricelist(product.lst_price || 0, product.id, product.product_tmpl_id?.[0] || 0, priceItems, Math.max(1, qty));
         // Remise partielle du modèle appliquée au prix de la ligne.
         const clientPrice = discount > 0 ? Math.round(listPrice * (1 - discount / 100) * 100) / 100 : listPrice;
         onQtyChange(product, (cart[product.id]?.qty || 0) + qty, clientPrice, template.name, true);
         added++;
+      }
+      if (newGifts.length) {
+        const cond = { label: template.name, required };
+        setGiftItems(prev => [...prev, ...newGifts.map(g => ({ ...g, cond }))]);
       }
       if (template.internalNote || template.shipDate) onTemplateApplied(template.name, { note: template.internalNote, shipDate: template.shipDate });
       // Implantation → type de commande « Implantation » ; MEA → coche l'offre du même nom.
@@ -3955,8 +3964,9 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
               {giftItems.map((g, i) => (
                 /* Une ligne par gratuité ; le type se choisit en tête du bloc (choix
                    par ligne seulement s'il manque). */
-                <div key={i} style={{ display: "flex", alignItems: "center", gap: 6, padding: "3px 0", borderBottom: i < giftItems.length - 1 ? `1px solid ${C.green}22` : "none", flexWrap: g.type ? "nowrap" as const : "wrap" as const }}>
-                  <span title={g.product.default_code || ""} style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const, fontSize: 11.5, fontWeight: 600, color: C.text }}>
+                <div key={i} title={!giftActive(g, cart) ? `Offre suspendue : quantités de « ${g.cond?.label} » non atteintes` : undefined}
+                  style={{ display: "flex", alignItems: "center", gap: 6, padding: "3px 0", borderBottom: i < giftItems.length - 1 ? `1px solid ${C.green}22` : "none", flexWrap: g.type ? "nowrap" as const : "wrap" as const, opacity: giftActive(g, cart) ? 1 : 0.45 }}>
+                  <span title={g.product.default_code || ""} style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const, fontSize: 11.5, fontWeight: 600, color: C.text, textDecoration: giftActive(g, cart) ? "none" : "line-through" }}>
                     {g.product.name}
                     {g.product.default_code && <span style={{ marginLeft: 6, fontSize: 9.5, fontWeight: 500, fontFamily: "monospace", color: C.muted }}>{g.product.default_code}</span>}
                   </span>
@@ -3978,9 +3988,14 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
                   )}
                 </div>
               ))}
+              {giftItems.some(g => !giftActive(g, cart)) && (
+                <div style={{ marginTop: 6, fontSize: 11, fontWeight: 700, color: C.orange }}>
+                  Offre gratuite suspendue : quantités de l'offre non atteintes (elle revient si tu remets les quantités).
+                </div>
+              )}
               {/* Récap gratuités */}
               <div style={{ marginTop: 6, paddingTop: 6, borderTop: `1px solid ${C.green}33`, fontSize: 11, fontWeight: 700, color: C.green, display: "flex", justifyContent: "space-between" }}>
-                <span>{giftItems.reduce((s, g) => s + g.qty, 0)} article{giftItems.reduce((s, g) => s + g.qty, 0) > 1 ? "s" : ""} offert{giftItems.reduce((s, g) => s + g.qty, 0) > 1 ? "s" : ""}</span>
+                <span>{(() => { const n = giftItems.filter(g => giftActive(g, cart)).reduce((s, g) => s + g.qty, 0); return `${n} article${n > 1 ? "s" : ""} offert${n > 1 ? "s" : ""}`; })()}</span>
                 <span>0,00 €</span>
               </div>
             </div>
@@ -4202,8 +4217,8 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
 
       {showCheck && (
         <OrderCheck session={session} client={client} netTotal={netTotal}
-          giftValue={giftItems.reduce((s, g) => s + g.qty * (g.product.lst_price || 0), 0)}
-          giftCount={giftItems.reduce((s, g) => s + g.qty, 0)}
+          giftValue={giftItems.filter(g => giftActive(g, cart)).reduce((s, g) => s + g.qty * (g.product.lst_price || 0), 0)}
+          giftCount={giftItems.filter(g => giftActive(g, cart)).reduce((s, g) => s + g.qty, 0)}
           ruptures={cartRuptures(cart)} shippingFee={shippingFee}
           onClose={() => setShowCheck(false)}
           onConfirm={showCheck === "validate" ? () => { setShowCheck(false); onValidate(); } : undefined}
