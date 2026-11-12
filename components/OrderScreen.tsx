@@ -1059,7 +1059,7 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
         onChange={e => { const f = e.target.files?.[0]; e.target.value = ""; if (f) onBonFilePicked(f); }} />
 
       {/* ── Top bar ── */}
-      <div style={{ height: 56, background: "#fff", borderBottom: `1px solid ${C.border}`, display: "flex", alignItems: "center", padding: "0 20px", gap: 16, flexShrink: 0, boxShadow: C.shadow }}>
+      <div style={{ height: 56, background: "#fff", borderBottom: `1px solid ${C.border}`, display: "flex", alignItems: "center", padding: "0 16px", gap: 10, flexShrink: 0, boxShadow: C.shadow }}>
         {/* Flèche retour — jamais sur l'écran racine (avant, elle déconnectait : un tap
              accidentel en tournée = impossible de se reconnecter hors ligne). */}
         {step !== "client" && (
@@ -1077,7 +1077,7 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
         )}
 
         {/* Fil d'ariane simple : où on en est pour ce client */}
-        <div style={{ fontSize: 13, fontWeight: 700, color: C.muted }}>
+        <div style={{ fontSize: 13, fontWeight: 700, color: C.muted, minWidth: 0, flexShrink: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>
           {step === "home" && "Accueil"}
           {step === "client" && "Choisir un client"}
           {step === "hub" && "Fiche client"}
@@ -1099,10 +1099,10 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
           <div style={{ position: "relative" as const }}>
             <button onClick={() => setShowPending(v => !v)}
               title="Commandes de ce client saisies mais pas encore transmises"
-              style={{ display: "flex", alignItems: "center", gap: 6, height: 36, padding: "0 12px", borderRadius: 10, cursor: "pointer", fontFamily: "inherit", fontSize: 12.5, fontWeight: 700,
+              style={{ display: "flex", alignItems: "center", gap: 6, height: 36, padding: "0 12px", borderRadius: 10, flexShrink: 0, whiteSpace: "nowrap" as const, cursor: "pointer", fontFamily: "inherit", fontSize: 12.5, fontWeight: 700,
                 background: joinIds.length ? C.tealSoft : C.orangeSoft, color: joinIds.length ? C.tealDark : C.orange, border: `1px solid ${joinIds.length ? C.tealMid : "#fed7aa"}` }}>
               <Icon name="file" size={14} />
-              {pendingOrders.length} en attente{joinIds.length ? ` · ${joinIds.length} jointe${joinIds.length > 1 ? "s" : ""}` : ""}
+              {pendingOrders.length} cde à joindre{joinIds.length ? ` · ${joinIds.length} jointe${joinIds.length > 1 ? "s" : ""}` : ""}
             </button>
             {showPending && (
               <div style={{ position: "absolute" as const, top: 42, right: 0, width: 340, zIndex: 320, background: C.white, borderRadius: 14, boxShadow: C.shadowXl, border: `1px solid ${C.border}`, padding: 12 }}>
@@ -1209,8 +1209,8 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
               {client.name.charAt(0).toUpperCase()}
             </div>
             <div>
-              <div style={{ fontSize: 12, fontWeight: 700, color: C.tealDark }}>{client.name}</div>
-              {client.property_product_pricelist && <div style={{ fontSize: 10, color: C.teal }}>{client.property_product_pricelist[1]}</div>}
+              <div style={{ fontSize: 12, fontWeight: 700, color: C.tealDark, maxWidth: 170, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>{client.name}</div>
+              {client.property_product_pricelist && <div style={{ fontSize: 10, color: C.teal, maxWidth: 170, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>{client.property_product_pricelist[1]}</div>}
             </div>
             {step !== "client" && <button onClick={(e) => { e.stopPropagation(); setClient(null); setCart({}); setAppliedPromos({}); setStep("client"); }} style={{ background: "none", border: "none", cursor: "pointer", color: C.muted, fontSize: 14, lineHeight: 1 }}>✕</button>}
           </div>
@@ -1219,8 +1219,8 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
         {/* RDV — uniquement sur l'écran de commande (catalogue & panier), pas sur la sélection client */}
         {client && step === "catalog" && (
           <button onClick={() => setShowAppointment(true)} title="Prendre un RDV avec ce client"
-            style={{ width: 36, height: 36, borderRadius: 10, background: C.bg, border: `1px solid ${C.border}`, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: C.textSec, flexShrink: 0 }}>
-            <Icon name="calendar" size={16} />
+            style={{ height: 36, padding: "0 12px", gap: 6, borderRadius: 10, background: C.bg, border: `1px solid ${C.border}`, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: C.textSec, flexShrink: 0, fontFamily: "inherit", fontSize: 12.5, fontWeight: 700 }}>
+            <Icon name="calendar" size={15} /> RDV
           </button>
         )}
 
@@ -1229,17 +1229,17 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
           <button onClick={() => setShowPromoPanel(v => !v)} title="Remises disponibles pour ce panier"
             style={{ display: "flex", alignItems: "center", gap: 5, height: 36, padding: "0 10px", borderRadius: 10, background: showPromoPanel ? C.orangeSoft : C.orange, border: `1px solid ${C.orange}`, cursor: "pointer", fontFamily: "inherit", color: showPromoPanel ? C.orange : "#fff" }}>
             <Icon name="tag" size={14} />
-            <span style={{ fontSize: 12, fontWeight: 800 }}>{availablePromoCount}</span>
+            <span style={{ fontSize: 12, fontWeight: 800, whiteSpace: "nowrap" as const }}>{availablePromoCount} remise{availablePromoCount > 1 ? "s" : ""}</span>
           </button>
         )}
 
 
         {/* Accès discret aux brouillons en attente — jamais affiché sans action volontaire */}
         {pendingDrafts.length > 0 && (
-          <button onClick={() => setShowDraftsPanel(v => !v)} title="Commandes en attente de finalisation"
-            style={{ display: "flex", alignItems: "center", gap: 5, height: 36, padding: "0 10px", borderRadius: 10, background: showDraftsPanel ? "#fef9c3" : C.bg, border: `1px solid ${showDraftsPanel ? "#fde047" : C.border}`, cursor: "pointer", fontFamily: "inherit", color: "#92400e" }}>
-            <Icon name="file" size={14} />
-            <span style={{ fontSize: 12, fontWeight: 700 }}>{pendingDrafts.length}</span>
+          <button onClick={() => setShowDraftsPanel(v => !v)} title="Brouillons : commandes commencées, pas encore validées"
+            style={{ display: "flex", alignItems: "center", gap: 5, height: 36, padding: "0 10px", borderRadius: 10, flexShrink: 0, background: showDraftsPanel ? "#fef9c3" : C.bg, border: `1px solid ${showDraftsPanel ? "#fde047" : C.border}`, cursor: "pointer", fontFamily: "inherit", color: "#92400e" }}>
+            <Icon name="note" size={14} />
+            <span style={{ fontSize: 12, fontWeight: 700, whiteSpace: "nowrap" as const }}>{pendingDrafts.length} brouillon{pendingDrafts.length > 1 ? "s" : ""}</span>
           </button>
         )}
 
@@ -2615,10 +2615,10 @@ function ClientHub({ session, client, hasDraft, onOrder, onHistory, onAppointmen
   ];
 
   return (
-    <div style={{ flex: 1, display: "flex", flexDirection: "column" as const, alignItems: "center", padding: "48px 24px", overflowY: "auto" as const }}>
+    <div style={{ flex: 1, display: "flex", flexDirection: "column" as const, alignItems: "center", padding: "28px 24px", overflowY: "auto" as const }}>
       <div style={{ width: "100%", maxWidth: 640 }}>
         {/* Carte identité client */}
-        <div style={{ display: "flex", alignItems: "center", gap: 18, marginBottom: 36 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 18, marginBottom: 22 }}>
           <div style={{ width: 72, height: 72, borderRadius: 20, background: C.teal, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 28, fontWeight: 800, color: "#fff", flexShrink: 0, boxShadow: "0 8px 20px rgba(13,148,136,0.3)" }}>
             {client.name.charAt(0).toUpperCase()}
           </div>
@@ -2645,7 +2645,7 @@ function ClientHub({ session, client, hasDraft, onOrder, onHistory, onAppointmen
         </div>
 
         {/* Statistiques client */}
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12, marginBottom: 28 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12, marginBottom: 18 }}>
           <div style={{ background: "#0f766e", borderRadius: 16, padding: "14px 16px", color: "#fff", boxShadow: "0 8px 20px rgba(13,148,136,0.25)" }}>
             {/* CA à date N (champ Odoo, depuis le 1er janvier) ; repli sur le CA 12 mois calculé. */}
             <div style={{ fontSize: 19, fontWeight: 800 }}>{caDateN != null ? fmtPrice(caDateN) : stats ? fmtPrice(stats.ca) : "…"}</div>
@@ -2666,31 +2666,34 @@ function ClientHub({ session, client, hasDraft, onOrder, onHistory, onAppointmen
           </div>
         </div>
 
-        {/* Grille d'actions */}
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 16 }}>
-          {cards.map(c => (
-            <button key={c.key} onClick={c.onClick}
-              style={{
-                position: "relative" as const, textAlign: "left" as const, padding: "20px 20px", borderRadius: 20,
-                border: c.primary ? "none" : `1.5px solid ${C.border}`,
-                background: c.primary ? C.teal : C.white,
-                color: c.primary ? "#fff" : C.text,
-                cursor: "pointer", fontFamily: "inherit",
-                boxShadow: c.primary ? "0 10px 24px rgba(13,148,136,0.25)" : C.shadow,
-                transition: "transform 0.15s",
-              }}>
-              {c.badge && (
-                <div style={{ position: "absolute" as const, top: 14, right: 14, width: 10, height: 10, borderRadius: "50%", background: "#fde047", boxShadow: "0 0 0 3px rgba(255,255,255,0.35)" }} />
-              )}
-              <div style={{
-                width: 46, height: 46, borderRadius: 14, marginBottom: 14,
-                background: c.primary ? "rgba(255,255,255,0.18)" : C.tealSoft,
-                display: "flex", alignItems: "center", justifyContent: "center",
-              }}>
-                <Icon name={c.icon} size={24} color={c.primary ? "#fff" : C.teal} />
+        {/* Action principale en bandeau, les autres en tuiles compactes (tout tient à l'écran) */}
+        {cards.filter(c => c.primary).map(c => (
+          <button key={c.key} onClick={c.onClick}
+            style={{ position: "relative" as const, width: "100%", display: "flex", alignItems: "center", gap: 16, textAlign: "left" as const, padding: "16px 20px", marginBottom: 12, borderRadius: 18,
+              border: "none", background: C.teal, color: "#fff", cursor: "pointer", fontFamily: "inherit", boxShadow: "0 10px 24px rgba(13,148,136,0.25)" }}>
+            <div style={{ width: 48, height: 48, borderRadius: 14, background: "rgba(255,255,255,0.18)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+              <Icon name={c.icon} size={25} color="#fff" />
+            </div>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 17, fontWeight: 800 }}>{c.title}</div>
+              <div style={{ fontSize: 12.5, opacity: 0.88, marginTop: 2, display: "flex", alignItems: "center", gap: 6 }}>
+                {c.badge && <span style={{ width: 9, height: 9, borderRadius: "50%", background: "#fde047", flexShrink: 0 }} />}
+                {c.subtitle}
               </div>
-              <div style={{ fontSize: 15, fontWeight: 800 }}>{c.title}</div>
-              <div style={{ fontSize: 12, opacity: c.primary ? 0.85 : 1, color: c.primary ? undefined : C.muted, marginTop: 3 }}>{c.subtitle}</div>
+            </div>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.5" style={{ flexShrink: 0, opacity: 0.9 }}><path d="M9 18l6-6-6-6"/></svg>
+          </button>
+        ))}
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 12 }}>
+          {cards.filter(c => !c.primary).map(c => (
+            <button key={c.key} onClick={c.onClick}
+              style={{ textAlign: "left" as const, padding: "14px 14px", borderRadius: 16, border: `1.5px solid ${C.border}`, background: C.white, color: C.text,
+                cursor: "pointer", fontFamily: "inherit", boxShadow: C.shadow, minWidth: 0 }}>
+              <div style={{ width: 38, height: 38, borderRadius: 11, marginBottom: 10, background: C.tealSoft, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                <Icon name={c.icon} size={20} color={C.teal} />
+              </div>
+              <div style={{ fontSize: 14, fontWeight: 800, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>{c.title}</div>
+              <div style={{ fontSize: 11.5, color: C.muted, marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>{c.subtitle}</div>
             </button>
           ))}
         </div>
@@ -3391,6 +3394,8 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
   type MeaParsed = {
     id: number; name: string; notes: { name: string; type: "line_note" | "line_section" }[];
     items: MeaLine[]; gifts: { product: any; qty: number; type: string }[]; paid: Record<number, number>; total: number;
+    // Lignes dans l'ordre du modèle (rubriques et articles mêlés).
+    rows: ({ note: { name: string; type: "line_note" | "line_section" } } | { item: MeaLine })[];
   };
   const parseTemplates = async (templates: any[]): Promise<MeaParsed[]> => {
     const tlm = await templateLineMeta(session);
@@ -3420,10 +3425,11 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
     const productMap = new Map<number, any>(products.map((p: any) => [p.id as number, p]));
     return templates.map(t => {
       const ids = new Set<number>(t.sale_order_template_line_ids || []);
-      const out: MeaParsed = { id: t.id, name: t.name, notes: [], items: [], gifts: [], paid: {}, total: 0 };
+      const out: MeaParsed = { id: t.id, name: t.name, notes: [], items: [], gifts: [], paid: {}, total: 0, rows: [] };
+      const pushNote = (n: { name: string; type: "line_note" | "line_section" }) => { out.notes.push(n); out.rows.push({ note: n }); };
       for (const line of lines.filter((l: any) => ids.has(l.id))) {
         if (line.display_type === "line_section" || line.display_type === "line_note") {
-          if (line.name) out.notes.push({ name: String(line.name), type: line.display_type });
+          if (line.name) pushNote({ name: String(line.name), type: line.display_type });
           continue;
         }
         if (!line.product_id) continue;
@@ -3432,7 +3438,7 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
         // Certaines offres utilisent un VRAI produit comme séparateur de rubrique
         // (ex. « ----- Éléments de PLV optionnels : ----- », code so1, prix 0) :
         // repris comme ligne de commentaire (sans stock, pas d'alerte de rupture).
-        if (isSeparatorProduct(product)) { out.notes.push({ name: String(line.name || product.name), type: "line_note" }); continue; }
+        if (isSeparatorProduct(product)) { pushNote({ name: String(line.name || product.name), type: "line_note" }); continue; }
         // Quantité du modèle telle quelle : 0 reste 0 (ligne optionnelle).
         const qty = Math.max(0, Math.round(line.product_uom_qty || 0));
         const discount = tlm.discount ? Number(line[tlm.discount]) || 0 : 0;
@@ -3447,7 +3453,8 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
         // Remise partielle du modèle appliquée au prix de la ligne ; testeurs à 0 €.
         const price = tester ? 0 : discount > 0 ? Math.round(listPrice * (1 - discount / 100) * 100) / 100 : listPrice;
         const kind: MeaLine["kind"] = qty === 0 ? "optional" : tester ? "tester" : kit ? "kit" : "paid";
-        out.items.push({ product, qty, price, kind });
+        const item: MeaLine = { product, qty, price, kind };
+        out.items.push(item); out.rows.push({ item });
         if (kind === "paid") { out.paid[product.id] = (out.paid[product.id] || 0) + qty; out.total += qty; }
       }
       return out;
@@ -3479,10 +3486,12 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
       const v = parsed[0];
       if (!v.items.length && !v.gifts.length) { onToast("Aucun produit dans cette offre", "error"); setApplyingMea(null); return; }
 
-      v.notes.forEach(n => onAddNote(n.name, n.type, template.name));
       let added = 0;
       const required: Record<number, number> = {};
-      for (const it of v.items) {
+      for (const row of v.rows) {
+        // Rubriques et articles dans l'ordre du modèle.
+        if ("note" in row) { onAddNote(row.note.name, row.note.type, template.name); continue; }
+        const it = row.item;
         const have = cart[it.product.id]?.qty || 0;
         if (it.kind === "paid") required[it.product.id] = (required[it.product.id] ?? have) + it.qty;
         if (it.qty === 0 && cart[it.product.id]) continue;
@@ -3662,6 +3671,8 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
     window.addEventListener("pointermove", move); window.addEventListener("pointerup", up);
   };
 
+  // Panier élargi à la poignée : assez de place pour tout mettre sur une ligne.
+  const wideCart = cartW >= 470;
   const cartItems = orderedCart(cart);
   // Loupe du panier : filtre les lignes (nom, réf., EAN) sans toucher au panier.
   const [cartSearch, setCartSearch] = useState<string | null>(null);
@@ -4050,41 +4061,69 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
                     <span style={{ flex: 1, minWidth: 0, fontSize: 12.5, fontWeight: 600, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>{item.product.name}</span>
                     {Array.isArray(item.product.x_offre_produit_id) && <OfferTag name={item.product.x_offre_produit_id[1]} />}
                     <div style={{ display: "flex", alignItems: "center", gap: 3, flexShrink: 0 }}>
-                      <button onClick={() => onQtyChange(item.product, item.qty - 1)} style={{ width: 30, height: 30, borderRadius: 7, background: C.redSoft, border: "none", cursor: "pointer", color: C.red, fontSize: 15, fontWeight: 700 }}>−</button>
-                      <button onClick={() => setPad({ product: item.product })} style={{ minWidth: 38, height: 30, borderRadius: 7, background: "#fff", border: `1px solid ${C.border}`, cursor: "pointer", fontSize: 13, fontWeight: 800, color: C.text, fontFamily: "inherit" }}>{item.qty}</button>
-                      <button onClick={() => onQtyChange(item.product, item.qty + 1)} style={{ width: 30, height: 30, borderRadius: 7, background: C.tealSoft, border: "none", cursor: "pointer", color: C.teal, fontSize: 15, fontWeight: 700 }}>+</button>
+                      <button onClick={() => onQtyChange(item.product, item.qty - 1)} style={{ width: 36, height: 36, borderRadius: 9, background: C.redSoft, border: "none", cursor: "pointer", color: C.red, fontSize: 17, fontWeight: 700 }}>−</button>
+                      <button onClick={() => setPad({ product: item.product })} style={{ minWidth: 44, height: 36, borderRadius: 9, background: "#fff", border: `1px solid ${C.border}`, cursor: "pointer", fontSize: 13, fontWeight: 800, color: C.text, fontFamily: "inherit" }}>{item.qty}</button>
+                      <button onClick={() => onQtyChange(item.product, item.qty + 1)} style={{ width: 36, height: 36, borderRadius: 9, background: C.tealSoft, border: "none", cursor: "pointer", color: C.teal, fontSize: 17, fontWeight: 700 }}>+</button>
                     </div>
                     <span style={{ width: 70, flexShrink: 0, textAlign: "right" as const, fontSize: 11.5, color: C.textSec }}>{fmtPrice(item.unitPrice)}</span>
                     <span style={{ width: 44, flexShrink: 0, textAlign: "right" as const, fontSize: 11, fontWeight: 700, color: C.orange }}>{pct + groupPct > 0 ? `−${Math.min(100, pct + groupPct)}%` : ""}</span>
                     <span style={{ width: 80, flexShrink: 0, textAlign: "right" as const, fontSize: 13, fontWeight: 800, color: C.text }}>{fmtPrice(net)}</span>
-                    <button onClick={() => onQtyChange(item.product, 0)} title="Retirer" style={{ flexShrink: 0, width: 24, height: 24, background: "transparent", border: "none", cursor: "pointer", color: C.muted, fontSize: 13 }}>✕</button>
+                    <button onClick={() => onQtyChange(item.product, 0)} title="Retirer" style={{ flexShrink: 0, width: 36, height: 36, marginLeft: 6, background: "transparent", border: "none", cursor: "pointer", color: C.muted, fontSize: 14 }}>✕</button>
                   </div>
                 ) : (
-                /* Vue compacte : tout sur une ligne (détail complet dans la vue liste) */
-                <div title={[item.product.default_code, `${item.qty} × ${fmtPrice(item.unitPrice)}`, item.priceLocked && "prix fixé"].filter(Boolean).join(" · ")}
-                  style={{ display: "flex", alignItems: "center", gap: 6, padding: "4px 2px 4px 4px", borderBottom: `1px solid ${C.border}` }}>
-                  <span title={stockOk ? "En stock" : `Stock insuffisant : ${Math.floor(item.product.virtual_available || 0)} dispo`}
-                    style={{ width: 8, height: 8, borderRadius: "50%", flexShrink: 0, background: stockOk ? C.green : C.red }} />
-                  <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const, fontSize: 12, fontWeight: 600, color: C.text }}>
-                    {item.product.name}
-                    {(item.product.default_code || item.product.barcode) && <span style={{ marginLeft: 6, fontSize: 10, fontWeight: 500, fontFamily: "monospace", color: C.muted }}>{[item.product.default_code, item.product.barcode].filter(Boolean).join(" · ")}</span>}
-                  </span>
-                  {Array.isArray(item.product.x_offre_produit_id) && <OfferTag name={item.product.x_offre_produit_id[1]} />}
-                  {(pricelistPct > 0 || pct + groupPct > 0) && (
-                    <span style={{ flexShrink: 0, fontSize: 10, fontWeight: 700, color: C.orange }}>−{Math.min(100, pricelistPct + pct + groupPct)}%</span>
-                  )}
-                  <div style={{ display: "flex", alignItems: "center", gap: 2, flexShrink: 0 }}>
-                    <button onClick={() => onQtyChange(item.product, item.qty - 1)} style={{ width: 26, height: 26, borderRadius: 6, background: C.redSoft, border: "none", cursor: "pointer", color: C.red, fontSize: 14, fontWeight: 700, lineHeight: 1, padding: 0 }}>−</button>
-                    <button onClick={() => setPad({ product: item.product })} title={saleStep(item.product) > 1 ? `Saisir une quantité (min ${saleStep(item.product)})` : "Saisir une quantité"}
-                      style={{ minWidth: 32, height: 26, borderRadius: 6, background: "#fff", border: `1px solid ${saleStep(item.product) > 1 ? C.tealMid : C.border}`, cursor: "pointer", fontSize: 12.5, fontWeight: 800, color: C.text, fontFamily: "inherit", padding: "0 4px" }}>
-                      {item.qty}
-                    </button>
-                    <button onClick={() => onQtyChange(item.product, item.qty + 1)} style={{ width: 26, height: 26, borderRadius: 6, background: C.tealSoft, border: "none", cursor: "pointer", color: C.teal, fontSize: 14, fontWeight: 700, lineHeight: 1, padding: 0 }}>+</button>
-                  </div>
-                  <span style={{ width: 62, flexShrink: 0, textAlign: "right" as const, fontSize: 12, fontWeight: 800, color: pct + groupPct > 0 ? C.orange : C.text }}>{fmtPrice(net)}</span>
-                  <button onClick={() => onQtyChange(item.product, 0)} title="Retirer" aria-label={`Retirer ${item.product.name} du panier`}
-                    style={{ flexShrink: 0, width: 20, height: 24, background: "transparent", border: "none", cursor: "pointer", color: C.muted, fontSize: 12, padding: 0 }}>✕</button>
-                </div>
+                /* Vue compacte : panier étroit → nom sur toute la largeur, détails et
+                   quantité dessous ; panier élargi → tout sur une ligne. Boutons au doigt (36 px). */
+                (() => {
+                  const dot = <span title={stockOk ? "En stock" : `Stock insuffisant : ${Math.floor(item.product.virtual_available || 0)} dispo`}
+                    style={{ width: 8, height: 8, borderRadius: "50%", flexShrink: 0, background: stockOk ? C.green : C.red }} />;
+                  const refs = [item.product.default_code, item.product.barcode].filter(Boolean).join(" · ");
+                  const disc = (pricelistPct > 0 || pct + groupPct > 0) && (
+                    <span style={{ flexShrink: 0, fontSize: 10.5, fontWeight: 700, color: C.orange }}>−{Math.min(100, pricelistPct + pct + groupPct)}%</span>
+                  );
+                  const offer = Array.isArray(item.product.x_offre_produit_id) && <OfferTag name={item.product.x_offre_produit_id[1]} />;
+                  const qtyCtl = (
+                    <div style={{ display: "flex", alignItems: "center", gap: 4, flexShrink: 0 }}>
+                      <button onClick={() => onQtyChange(item.product, item.qty - 1)} aria-label="Moins"
+                        style={{ width: 36, height: 36, borderRadius: 9, background: C.redSoft, border: "none", cursor: "pointer", color: C.red, fontSize: 18, fontWeight: 700, lineHeight: 1, padding: 0 }}>−</button>
+                      <button onClick={() => setPad({ product: item.product })} title={saleStep(item.product) > 1 ? `Saisir une quantité (min ${saleStep(item.product)})` : "Saisir une quantité"}
+                        style={{ minWidth: 42, height: 36, borderRadius: 9, background: "#fff", border: `1px solid ${saleStep(item.product) > 1 ? C.tealMid : C.border}`, cursor: "pointer", fontSize: 14, fontWeight: 800, color: C.text, fontFamily: "inherit", padding: "0 6px" }}>
+                        {item.qty}
+                      </button>
+                      <button onClick={() => onQtyChange(item.product, item.qty + 1)} aria-label="Plus"
+                        style={{ width: 36, height: 36, borderRadius: 9, background: C.tealSoft, border: "none", cursor: "pointer", color: C.teal, fontSize: 18, fontWeight: 700, lineHeight: 1, padding: 0 }}>+</button>
+                    </div>
+                  );
+                  const total = <span style={{ width: 68, flexShrink: 0, textAlign: "right" as const, fontSize: 12.5, fontWeight: 800, color: pct + groupPct > 0 ? C.orange : C.text }}>{fmtPrice(net)}</span>;
+                  // Croix éloignée du « + » (pas de suppression en voulant ajouter).
+                  const remove = (
+                    <button onClick={() => onQtyChange(item.product, 0)} title="Retirer" aria-label={`Retirer ${item.product.name} du panier`}
+                      style={{ flexShrink: 0, width: 32, height: 32, marginLeft: 4, background: "transparent", border: "none", cursor: "pointer", color: C.muted, fontSize: 13, padding: 0 }}>✕</button>
+                  );
+                  const tip = [item.product.default_code, `${item.qty} × ${fmtPrice(item.unitPrice)}`, item.priceLocked && "prix fixé"].filter(Boolean).join(" · ");
+                  return wideCart ? (
+                    <div title={tip} style={{ display: "flex", alignItems: "center", gap: 6, padding: "3px 0 3px 4px", borderBottom: `1px solid ${C.border}` }}>
+                      {dot}
+                      <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const, fontSize: 12.5, fontWeight: 600, color: C.text }}>
+                        {item.product.name}
+                        {refs && <span style={{ marginLeft: 6, fontSize: 10, fontWeight: 500, fontFamily: "monospace", color: C.muted }}>{refs}</span>}
+                      </span>
+                      {offer}{disc}{qtyCtl}{total}{remove}
+                    </div>
+                  ) : (
+                    <div title={tip} style={{ padding: "5px 0 5px 4px", borderBottom: `1px solid ${C.border}` }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                        {dot}
+                        <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const, fontSize: 13, fontWeight: 600, color: C.text }}>{item.product.name}</span>
+                        {offer}
+                        {remove}
+                      </div>
+                      <div style={{ display: "flex", alignItems: "center", gap: 6, paddingLeft: 14 }}>
+                        <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const, fontSize: 10, fontFamily: "monospace", color: C.muted }}>{refs}</span>
+                        {disc}{qtyCtl}{total}
+                      </div>
+                    </div>
+                  );
+                })()
                 )}
                 </div>
               );
@@ -4108,13 +4147,13 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
                   </span>
                   <div style={{ display: "flex", alignItems: "center", gap: 2, flexShrink: 0 }}>
                     <button onClick={() => setGiftItems(prev => prev.map((x, j) => j === i ? { ...x, qty: Math.max(1, x.qty - 1) } : x))}
-                      style={{ width: 24, height: 24, borderRadius: 6, background: C.redSoft, border: "none", cursor: "pointer", color: C.red, fontSize: 14, fontWeight: 700, lineHeight: 1, padding: 0 }}>−</button>
+                      style={{ width: 34, height: 34, borderRadius: 8, background: C.redSoft, border: "none", cursor: "pointer", color: C.red, fontSize: 16, fontWeight: 700, lineHeight: 1, padding: 0 }}>−</button>
                     <span style={{ minWidth: 24, textAlign: "center" as const, fontSize: 12, fontWeight: 800, color: C.text }}>{g.qty}</span>
                     <button onClick={() => setGiftItems(prev => prev.map((x, j) => j === i ? { ...x, qty: x.qty + 1 } : x))}
-                      style={{ width: 24, height: 24, borderRadius: 6, background: "#fff", border: `1px solid ${C.green}44`, cursor: "pointer", color: C.green, fontSize: 14, fontWeight: 700, lineHeight: 1, padding: 0 }}>+</button>
+                      style={{ width: 34, height: 34, borderRadius: 8, background: "#fff", border: `1px solid ${C.green}44`, cursor: "pointer", color: C.green, fontSize: 16, fontWeight: 700, lineHeight: 1, padding: 0 }}>+</button>
                   </div>
                   <button onClick={() => setGiftItems(prev => prev.filter((_, j) => j !== i))} title="Retirer"
-                    style={{ flexShrink: 0, width: 20, height: 24, background: "none", border: "none", cursor: "pointer", color: C.muted, fontSize: 12, padding: 0 }}>✕</button>
+                    style={{ flexShrink: 0, width: 32, height: 32, marginLeft: 4, background: "none", border: "none", cursor: "pointer", color: C.muted, fontSize: 12, padding: 0 }}>✕</button>
                   {/* Type de gratuité PAR LIGNE (Coffre DC par défaut, Gratuités des offres pour une MEA) */}
                   <select value={g.type} title="Type de gratuité de cette ligne"
                     onChange={e => setGiftItems(prev => prev.map((x, j) => j === i ? { ...x, type: e.target.value } : x))}
