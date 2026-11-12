@@ -55,10 +55,11 @@ function ToastStack({ toasts, onDismiss }: { toasts: Toast[]; onDismiss: (id: nu
   if (toasts.length === 0) return null;
   return (
     <div style={{
-      position: "fixed", top: "calc(env(safe-area-inset-top) + 12px)", left: "50%",
-      transform: "translateX(-50%)", zIndex: 500, display: "flex",
-      flexDirection: "column", gap: 8, alignItems: "center", pointerEvents: "none",
-      fontFamily: "'DM Sans', sans-serif", width: "min(92vw, 560px)",
+      // En bas à gauche (côté catalogue) : ne masque plus la barre du haut ni le panier.
+      position: "fixed", bottom: "calc(env(safe-area-inset-bottom) + 16px)", left: 16,
+      zIndex: 500, display: "flex",
+      flexDirection: "column", gap: 8, alignItems: "flex-start", pointerEvents: "none",
+      fontFamily: "'DM Sans', sans-serif", width: "min(92vw, 480px)",
     }}>
       {toasts.map(t => (
         <button key={t.id} onClick={() => onDismiss(t.id)}

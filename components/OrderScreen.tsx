@@ -34,7 +34,7 @@ import { pickClientAmong } from "@/lib/clients";
 // ── Palette ───────────────────────────────────────────────────────────────────
 const C = {
   bg: "#f8fafc", white: "#fff", text: "#0f172a", textSec: "#334155",
-  muted: "#94a3b8", border: "#e2e8f0",
+  muted: "#7d8ca3", border: "#e2e8f0",
   teal: "#0d9488", tealDark: "#0f766e", tealSoft: "#f0fdfa", tealMid: "#ccfbf1",
   // Refonte : accent unique teal. "purple" est conservé comme alias (le panneau
   // règles masqué et d'anciens usages y font référence) mais pointe sur du teal.
@@ -1665,6 +1665,8 @@ function HomeScreen({ session, onNewOrder, onOpenClient, onToast, initialDate }:
   }, [view, monthDays, days]);
 
   // Clic sur un jour de la vue Mois → sa semaine en vue Semaine.
+  // Jour sélectionné dans la vue mois (ses RDV s'affichent sous la grille).
+  const [monthSel, setMonthSel] = useState<Date | null>(null);
   const openWeekOf = (d: Date) => {
     const diff = startOfWeek(d).getTime() - startOfWeek(new Date()).getTime();
     setWeekOffset(Math.round(diff / (7 * 86400000)));
@@ -1999,50 +2001,82 @@ function HomeScreen({ session, onNewOrder, onOpenClient, onToast, initialDate }:
         </div>
       </div>
 
-      {/* Vue mois — grille compacte : 3 RDV max par jour, clic sur un jour = sa semaine */}
-      {view === "month" && (
+      {/* Vue mois — grille compacte (pastilles par RDV) ; un tap sur un jour affiche
+          ses RDV en clair dessous, avec accès à sa semaine. */}
+      {view === "month" && (() => {
+        const sel = monthSel && monthDays.some(d => sameDay(d, monthSel)) ? monthSel
+          : monthDays.find(d => sameDay(d, today)) || monthStart;
+        const selEvents = events.filter(e => eventOnDay(e, sel))
+          .sort((x, y) => (x.allday ? -1 : 0) - (y.allday ? -1 : 0) || odooToLocalDate(x.start).getTime() - odooToLocalDate(y.start).getTime());
+        return (
         <div ref={gridRef} onTouchStart={onTouchStart} onTouchMove={onTouchMove} onTouchEnd={onTouchEnd}
-          style={{ flex: 1, display: "flex", flexDirection: "column" as const, transform: "translateX(0px)", willChange: "transform", touchAction: "pan-y" as const }}>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 8, marginBottom: 6 }}>
+          style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" as const, transform: "translateX(0px)", willChange: "transform", touchAction: "pan-y" as const }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 6, marginBottom: 4 }}>
             {WEEKDAY_LABELS.map(l => (
-              <div key={l} style={{ fontSize: 10.5, fontWeight: 700, color: C.muted, textTransform: "uppercase" as const, letterSpacing: "0.04em", textAlign: "center" as const }}>{l.slice(0, 3)}</div>
+              <div key={l} style={{ fontSize: 10.5, fontWeight: 700, color: C.textSec, textTransform: "uppercase" as const, letterSpacing: "0.04em", textAlign: "center" as const }}>{l.slice(0, 3)}</div>
             ))}
           </div>
-          <div style={{ flex: 1, display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gridAutoRows: "minmax(96px, 1fr)", gap: 8 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gridAutoRows: 54, gap: 6 }}>
             {monthDays.map(d => {
               const inMonth = d.getMonth() === monthStart.getMonth();
               const isToday = sameDay(d, today);
+              const isSel = sameDay(d, sel);
               const dayEvents = events.filter(e => eventOnDay(e, d));
               return (
-                <div key={d.toISOString()} onClick={() => openWeekOf(d)}
-                  style={{ background: C.white, borderRadius: 12, padding: "6px 7px", cursor: "pointer", opacity: inMonth ? 1 : 0.4, overflow: "hidden",
-                    boxShadow: isToday ? `0 0 0 2px ${C.teal}` : "0 1px 4px rgba(15,23,42,0.05)", display: "flex", flexDirection: "column" as const, gap: 3 }}>
-                  <div style={{ alignSelf: "flex-start", minWidth: 22, height: 22, borderRadius: 11, display: "flex", alignItems: "center", justifyContent: "center", padding: "0 5px",
-                    fontSize: 12, fontWeight: 800, background: isToday ? C.teal : "transparent", color: isToday ? "#fff" : C.text }}>
+                <button key={d.toISOString()} onClick={() => setMonthSel(d)}
+                  style={{ background: isSel ? C.tealSoft : C.white, border: "none", borderRadius: 12, padding: "5px 6px", cursor: "pointer", fontFamily: "inherit", opacity: inMonth ? 1 : 0.4, overflow: "hidden",
+                    boxShadow: isSel ? `0 0 0 2px ${C.teal}` : isToday ? `0 0 0 1.5px ${C.tealMid}` : "0 1px 4px rgba(15,23,42,0.05)", display: "flex", flexDirection: "column" as const, alignItems: "center", justifyContent: "center", gap: 5 }}>
+                  <div style={{ minWidth: 24, height: 24, borderRadius: 12, display: "flex", alignItems: "center", justifyContent: "center", padding: "0 5px",
+                    fontSize: 13, fontWeight: 800, background: isToday ? C.teal : "transparent", color: isToday ? "#fff" : C.text }}>
                     {d.getDate()}
                   </div>
-                  {dayEvents.slice(0, 3).map((e, idx) => {
-                    const col = eventColor(e, idx);
-                    return (
-                      <button key={e.id} onClick={ev => { ev.stopPropagation(); setSelectedEvent(e); }}
-                        style={{ display: "flex", alignItems: "center", gap: 4, width: "100%", border: "none", borderRadius: 6, padding: "3px 5px", cursor: "pointer", fontFamily: "inherit", textAlign: "left" as const,
-                          background: isCancelled(e) ? "#f8fafc" : col.bg, opacity: isCancelled(e) ? 0.6 : 1 }}>
-                        <span style={{ fontSize: 9.5, fontWeight: 800, color: isCancelled(e) ? C.muted : col.text, flexShrink: 0 }}>
-                          {e.allday ? "Déplacement" : odooToLocalDate(e.start).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}
-                        </span>
-                        <span style={{ fontSize: 10, fontWeight: 600, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const, textDecoration: isCancelled(e) ? "line-through" : "none" }}>{eventTitle(e)}</span>
-                      </button>
-                    );
-                  })}
-                  {dayEvents.length > 3 && (
-                    <div style={{ fontSize: 10, fontWeight: 700, color: C.teal, paddingLeft: 4 }}>+{dayEvents.length - 3} autre{dayEvents.length - 3 > 1 ? "s" : ""}</div>
-                  )}
-                </div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 3, height: 8 }}>
+                    {dayEvents.slice(0, 4).map((e, idx) => {
+                      const col: any = eventColor(e, idx);
+                      return <span key={e.id} style={{ width: e.allday ? 14 : 7, height: 7, borderRadius: 4, background: isCancelled(e) ? C.border : (col.bar || col.text) }} />;
+                    })}
+                    {dayEvents.length > 4 && <span style={{ fontSize: 9.5, fontWeight: 800, color: C.textSec }}>+{dayEvents.length - 4}</span>}
+                  </div>
+                </button>
               );
             })}
           </div>
+
+          {/* RDV du jour sélectionné */}
+          <div style={{ flex: 1, minHeight: 120, marginTop: 12, background: C.white, borderRadius: 14, boxShadow: "0 1px 4px rgba(15,23,42,0.06)", padding: "12px 14px", display: "flex", flexDirection: "column" as const, overflow: "hidden" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
+              <div style={{ flex: 1, minWidth: 0, fontSize: 14, fontWeight: 800, color: C.text }}>
+                {sel.toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long" }).replace(/^./, c => c.toUpperCase())}
+                <span style={{ marginLeft: 8, fontSize: 12, fontWeight: 700, color: C.textSec }}>{selEvents.length ? `${selEvents.length} RDV` : "Aucun RDV"}</span>
+              </div>
+              <button onClick={() => openWeekOf(sel)}
+                style={{ height: 34, padding: "0 14px", borderRadius: 999, background: C.bg, border: `1px solid ${C.border}`, cursor: "pointer", fontFamily: "inherit", fontSize: 12.5, fontWeight: 700, color: C.tealDark, flexShrink: 0 }}>
+                Voir la semaine →
+              </button>
+            </div>
+            <div style={{ flex: 1, overflowY: "auto" as const, display: "flex", flexDirection: "column" as const, gap: 6 }}>
+              {selEvents.map((e, idx) => {
+                const col: any = eventColor(e, idx);
+                const cancelled = isCancelled(e);
+                return (
+                  <button key={e.id} onClick={() => setSelectedEvent(e)}
+                    style={{ display: "flex", alignItems: "center", gap: 12, width: "100%", minHeight: 44, border: "none", borderLeft: `4px solid ${cancelled ? C.border : (col.bar || col.text)}`, borderRadius: 10, padding: "6px 12px", cursor: "pointer", fontFamily: "inherit", textAlign: "left" as const,
+                      background: cancelled ? C.bg : col.bg, opacity: cancelled ? 0.6 : 1 }}>
+                    <span style={{ width: 92, flexShrink: 0, fontSize: 12.5, fontWeight: 800, color: C.text }}>
+                      {e.allday ? "Déplacement" : `${hhmmFR(odooToLocalDate(e.start))}${e.stop ? ` – ${hhmmFR(odooToLocalDate(e.stop))}` : ""}`}
+                    </span>
+                    <span style={{ flex: 1, minWidth: 0 }}>
+                      <span style={{ display: "block", fontSize: 13.5, fontWeight: 700, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const, textDecoration: cancelled ? "line-through" : "none" }}>{eventTitle(e)}</span>
+                    </span>
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={C.muted} strokeWidth="2" style={{ flexShrink: 0 }}><path d="M9 18l6-6-6-6"/></svg>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
         </div>
-      )}
+        );
+      })()}
 
       {/* Vue semaine — grille horaire façon Outlook : les RDV sont placés à leur
           heure, sur leur durée ; les déplacements (journée entière) en bandeau. */}
@@ -3221,6 +3255,8 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
   const [loading, setProdLoading] = useState(false);
   const [search, setSearch] = useState("");
   const [stockOnly, setStockOnly] = useState(true); // n'afficher que les articles avec du stock prévisionnel
+  // Catalogue en vue dense (une ligne par produit), retenu sur l'appareil.
+  const [dense, setDense] = useState<boolean>(() => { try { return localStorage.getItem("wms_catalog_dense") === "1"; } catch { return false; } });
   const searchInput = useRef<HTMLInputElement>(null);
 
   // Pavé numérique quantité : tap sur le chiffre d'un produit (grille ou panier).
@@ -3746,8 +3782,10 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
             <button key={cat.id} onClick={() => setActiveCatId(cat.id)}
               style={{ width: "100%", padding: "10px 10px", background: active ? C.tealSoft : "transparent", border: "none", borderLeft: `3px solid ${active ? C.teal : "transparent"}`, cursor: "pointer", textAlign: "left" as const, fontFamily: "inherit", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6, transition: "all 0.1s" }}>
               <span style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: active ? 700 : 400, color: active ? C.tealDark : C.textSec }}>
-                <span style={{ width: 34, height: 34, borderRadius: 9, background: "#fff", border: `1px solid ${active ? C.tealMid : C.border}`, display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden", flexShrink: 0 }}>
-                  {hero && <ProductImage id={hero.id} networkUrl={imgUrl(hero.id)} style={{ width: 30, height: 30, objectFit: "contain" }} />}
+                <span style={{ position: "relative" as const, width: 34, height: 34, borderRadius: 9, background: "#fff", border: `1px solid ${active ? C.tealMid : C.border}`, display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden", flexShrink: 0 }}>
+                  {/* Initiale de la gamme en fond : visible tant que l'image manque */}
+                  <span style={{ position: "absolute" as const, fontSize: 14, fontWeight: 800, color: active ? C.teal : C.muted }}>{String(cat.label || "").charAt(0).toUpperCase()}</span>
+                  {hero && <ProductImage id={hero.id} networkUrl={imgUrl(hero.id)} style={{ width: 30, height: 30, objectFit: "contain", position: "relative" as const, background: "#fff" }} />}
                 </span>
                 {cat.label}
               </span>
@@ -3826,6 +3864,14 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
             </span>
             <span style={{ fontSize: 12, fontWeight: 600, color: stockOnly ? C.tealDark : C.textSec, whiteSpace: "nowrap" as const }}>Stock dispo</span>
           </button>
+          {/* Vue dense : une ligne par produit (3 fois plus d'articles à l'écran) */}
+          <button onClick={() => setDense(v => { try { localStorage.setItem("wms_catalog_dense", v ? "0" : "1"); } catch {} return !v; })}
+            title={dense ? "Vue cartes (avec images)" : "Vue dense : une ligne par produit"} aria-label="Changer la vue du catalogue"
+            style={{ width: 38, height: 36, flexShrink: 0, borderRadius: 10, background: dense ? C.tealSoft : C.bg, border: `1.5px solid ${dense ? C.teal : C.border}`, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: dense ? C.tealDark : C.textSec }}>
+            {dense
+              ? <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>
+              : <Icon name="list" size={16} />}
+          </button>
           {/* Compteur résultats */}
           {(activeCatId || isSearching) && (
             <div style={{ fontSize: 12, color: C.muted, flexShrink: 0 }}>
@@ -3889,6 +3935,49 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
               <div style={{ marginBottom: 10 }}><Icon name="search" size={32} color={C.border} /></div>
               <div>Aucun résultat</div>
             </div>
+          ) : dense ? (
+            <div style={{ background: C.white, borderRadius: 14, border: `1px solid ${C.border}`, overflow: "hidden" }}>
+              {displayedProducts.map((p, i) => {
+                const qty = cart[p.id]?.qty || 0;
+                const stock = Math.max(0, Math.round(p.virtual_available || 0));
+                const clientPrice = applyPricelist(p.lst_price || 0, p.id, p.product_tmpl_id?.[0] || 0, priceItems, qty || 1);
+                const hasDiscount = priceItems.length > 0 && Math.abs(clientPrice - (p.lst_price || 0)) > 0.01;
+                const gifted = giftQtyById.get(p.id);
+                return (
+                  <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "6px 10px 6px 8px", borderTop: i ? `1px solid ${C.border}` : "none", borderLeft: `4px solid ${qty > 0 ? C.teal : "transparent"}`, background: qty > 0 ? C.tealSoft : C.white }}>
+                    <div onClick={() => openZoom(p)} title="Agrandir l'image" style={{ width: 42, height: 42, flexShrink: 0, borderRadius: 9, background: C.bg, display: "flex", alignItems: "center", justifyContent: "center", cursor: "zoom-in", position: "relative" as const, overflow: "hidden" }}>
+                      <div style={{ position: "absolute" }}><Icon name="package" size={18} color={C.border} /></div>
+                      <ProductImage id={p.id} networkUrl={imgUrl(p.id)} style={{ height: 38, objectFit: "contain", position: "relative" as const, zIndex: 1 }} />
+                    </div>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 13, fontWeight: 600, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>{p.name}</div>
+                      <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 1, minWidth: 0 }}>
+                        <span style={{ fontSize: 10.5, color: C.textSec, fontFamily: "monospace", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>{p.default_code}{p.barcode ? ` · ${p.barcode}` : ""}</span>
+                        {saleStep(p) > 1 && <span style={{ flexShrink: 0, fontSize: 10, fontWeight: 700, color: C.tealDark, background: C.tealMid, borderRadius: 5, padding: "0 5px" }}>min {saleStep(p)}</span>}
+                        {Array.isArray(p.x_offre_produit_id) && <OfferTag name={p.x_offre_produit_id[1]} />}
+                      </div>
+                    </div>
+                    <div style={{ width: 70, flexShrink: 0, textAlign: "right" as const }}>
+                      <div style={{ fontSize: 13.5, fontWeight: 800, color: hasDiscount ? C.green : C.tealDark }}>{clientPrice > 0 ? fmtPrice(clientPrice) : "—"}</div>
+                      {hasDiscount && <div style={{ fontSize: 10, color: C.muted, textDecoration: "line-through" }}>{fmtPrice(p.lst_price)}</div>}
+                    </div>
+                    <span style={{ width: 54, flexShrink: 0, textAlign: "center" as const, fontSize: 10.5, fontWeight: 700, color: stock > 0 ? C.green : C.red, background: stock > 0 ? C.greenSoft : C.redSoft, borderRadius: 5, padding: "2px 0" }}>{stock > 0 ? stock : "Rupture"}</span>
+                    <button onClick={() => offerGift(p)} title="Offrir une unité" aria-label={`Offrir ${p.name}`}
+                      style={{ width: 38, height: 38, flexShrink: 0, borderRadius: 9, background: gifted ? C.green : C.greenSoft, color: gifted ? "#fff" : C.green, border: `1px solid ${C.green}44`, cursor: "pointer", fontFamily: "inherit", fontSize: 11, fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center", gap: 2 }}>
+                      {gifted ? `×${gifted}` : <Icon name="gift" size={15} />}
+                    </button>
+                    <div style={{ display: "flex", flexShrink: 0, background: "#fff", borderRadius: 10, overflow: "hidden", border: `1px solid ${qty > 0 ? C.teal : C.border}` }}>
+                      <button onClick={() => onQtyChange(p, qty - 1, clientPrice)} aria-label="Moins" style={{ width: 40, height: 38, background: "transparent", border: "none", cursor: "pointer", fontSize: 19, fontWeight: 700, color: qty > 0 ? C.red : C.muted, lineHeight: 1 }}>−</button>
+                      <button onClick={() => setPad({ product: p, price: clientPrice })} title="Saisir une quantité"
+                        style={{ width: 44, height: 38, background: "transparent", border: "none", borderLeft: `1px solid ${C.border}`, borderRight: `1px solid ${C.border}`, cursor: "pointer", fontSize: 15, fontWeight: 800, color: qty > 0 ? C.tealDark : C.muted, fontFamily: "inherit" }}>
+                        {qty}
+                      </button>
+                      <button onClick={() => onQtyChange(p, qty + 1, clientPrice)} aria-label="Plus" style={{ width: 40, height: 38, background: "transparent", border: "none", cursor: "pointer", fontSize: 19, fontWeight: 700, color: C.teal, lineHeight: 1 }}>+</button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
           ) : (
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(172px, 1fr))", gap: 10 }}>
               {displayedProducts.map(p => {
@@ -3916,7 +4005,7 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
                       )}
                     </div>
                     <div style={{ padding: "8px 10px 10px" }}>
-                      <div style={{ fontSize: 10.5, color: C.muted, fontFamily: "monospace", marginBottom: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>{p.default_code}{p.barcode ? ` · ${p.barcode}` : ""}</div>
+                      <div style={{ fontSize: 10.5, color: C.textSec, fontFamily: "monospace", marginBottom: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>{p.default_code}{p.barcode ? ` · ${p.barcode}` : ""}</div>
                       <div style={{ fontSize: 12.5, fontWeight: 600, color: C.text, lineHeight: 1.3, height: 33, overflow: "hidden" }}>{p.name}</div>
                       {saleStep(p) > 1 && (
                         <div style={{ fontSize: 10, fontWeight: 700, color: C.tealDark, background: C.tealSoft, borderRadius: 5, padding: "1px 6px", marginTop: 3, display: "inline-block" }}>min {saleStep(p)}</div>
