@@ -3867,10 +3867,11 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
           {/* Vue dense : une ligne par produit (3 fois plus d'articles à l'écran) */}
           <button onClick={() => setDense(v => { try { localStorage.setItem("wms_catalog_dense", v ? "0" : "1"); } catch {} return !v; })}
             title={dense ? "Vue cartes (avec images)" : "Vue dense : une ligne par produit"} aria-label="Changer la vue du catalogue"
-            style={{ width: 38, height: 36, flexShrink: 0, borderRadius: 10, background: dense ? C.tealSoft : C.bg, border: `1.5px solid ${dense ? C.teal : C.border}`, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: dense ? C.tealDark : C.textSec }}>
+            style={{ height: 36, padding: "0 11px", gap: 6, flexShrink: 0, borderRadius: 10, background: C.bg, border: `1.5px solid ${C.border}`, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: C.textSec, fontFamily: "inherit", fontSize: 12, fontWeight: 600 }}>
             {dense
               ? <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>
               : <Icon name="list" size={16} />}
+            {dense ? "Cartes" : "Liste"}
           </button>
           {/* Compteur résultats */}
           {(activeCatId || isSearching) && (
