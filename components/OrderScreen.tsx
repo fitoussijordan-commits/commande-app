@@ -27,7 +27,7 @@ import * as geo from "@/lib/geo";
 import { apiUrl } from "@/lib/apiBase";
 import * as loyalty from "@/lib/loyalty";
 import { PriceItem, sortPriceItems, applyPricelist, resolveBaseLists } from "@/lib/pricing";
-import { descToText, routeUrls } from "@/lib/text";
+import { descToText, routeUrls, stripRouteLinks } from "@/lib/text";
 import { dedupeClients, NOT_SUPPLIER, getMineOnly, setMineOnly, mineDomain, isMine } from "@/lib/clients";
 import { eventOnDay, ALLDAY_FIELDS, linkedPartnerId } from "@/lib/calendar";
 import { pickClientAmong } from "@/lib/clients";
@@ -2234,7 +2234,9 @@ function HomeScreen({ session, onNewOrder, onOpenClient, onToast, initialDate }:
         const e = selectedEvent;
         const start = odooToLocalDate(e.start);
         const stop = e.stop ? odooToLocalDate(e.stop) : null;
-        const desc: string = descToText(e.description || "");
+        // Liens d'itinéraire (Waze / Plans) écrits pour Outlook : retirés de l'affichage,
+        // même quand Odoo a recollé toute la description sur une seule ligne.
+        const desc: string = stripRouteLinks(descToText(e.description || ""));
         const clientLine = (desc.match(/Client\s*:\s*(.+)/i)?.[1]) || "";
         const clientName = clientLine.replace(/\(.*$/, "").replace(/—.*$/, "").trim();
         const clientRef = clientLine.match(/\(([^)]+)\)/)?.[1]?.trim() || "";

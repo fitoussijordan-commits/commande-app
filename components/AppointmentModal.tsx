@@ -2,7 +2,7 @@
 import { useState, useEffect, useMemo } from "react";
 import * as odoo from "@/lib/odoo";
 import * as sync from "@/lib/sync";
-import { descToText, routeLines, ROUTE_LINE } from "@/lib/text";
+import { descToText, routeLines, stripRouteLinks, textToHtml } from "@/lib/text";
 import { eventOnDay, ALLDAY_FIELDS } from "@/lib/calendar";
 import { dedupeClients, NOT_SUPPLIER, getMineOnly, setMineOnly, mineDomain, isMine } from "@/lib/clients";
 
@@ -115,7 +115,7 @@ export default function AppointmentModal({ session, client: clientProp, event, a
   // RDV a été touché côté Odoo. Sans conversion, split(/\n\n/) ne trouvait aucun
   // séparateur → la note existante passait pour vide et disparaissait à l'édition.
   const initNote = (() => {
-    const d: string = descToText(event?.description || "");
+    const d: string = stripRouteLinks(descToText(event?.description || ""));
     const parts = d.split(/\n\n/);
     return parts.length > 1 ? parts.slice(1).join("\n\n").trim() : "";
   })();
@@ -255,7 +255,7 @@ export default function AppointmentModal({ session, client: clientProp, event, a
     const values: any = {
       name, allday: true, start_date: tripFrom, stop_date: tripTo,
       location: destination.trim(),
-      description: [`Déplacement${zone.trim() ? ` — zone : ${zone.trim()}` : ""}`, note.trim()].filter(Boolean).join("\n\n"),
+      description: textToHtml([`Déplacement${zone.trim() ? ` — zone : ${zone.trim()}` : ""}`, note.trim()].filter(Boolean).join("\n\n")),
       user_id: session.uid,
       categ_ids: [[6, 0, [rdvTypeId]]],
     };
@@ -293,9 +293,9 @@ export default function AppointmentModal({ session, client: clientProp, event, a
       if (isEdit) {
         // Idem : sans descToText, clientLine valait TOUT le bloc HTML, qui était
         // alors réécrit tel quel dans la description à chaque modification.
-        const orig: string = descToText(event?.description || "");
+        const orig: string = stripRouteLinks(descToText(event?.description || ""));
         // Liens d'itinéraire refaits d'après le lieu (il a pu changer).
-        const clientLine = (orig.split(/\n\n/)[0] || "").split("\n").filter(l => !ROUTE_LINE.test(l)).join("\n").trim();
+        const clientLine = (orig.split(/\n\n/)[0] || "").trim();
         const head = [clientLine, routeLines(location)].filter(Boolean).join("\n");
         description = head + (head && note ? "\n\n" : "") + (note || "");
       } else {
@@ -313,7 +313,7 @@ export default function AppointmentModal({ session, client: clientProp, event, a
         start: toOdooUTC(start),
         stop: toOdooUTC(stop),
         location: location.trim(),
-        description,
+        description: textToHtml(description),
         user_id: session.uid,
         categ_ids: [[6, 0, [rdvTypeId]]],
         // Code client (uniquement si rattaché à un client).

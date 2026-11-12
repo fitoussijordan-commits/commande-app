@@ -52,3 +52,15 @@ export function routeLines(address: string): string {
   const u = routeUrls(address);
   return `Waze : ${u.waze}\nPlans : ${u.plans}`;
 }
+
+// Retire les liens d'itinéraire d'une description, même recollée sur une seule ligne par Odoo.
+export function stripRouteLinks(text: string): string {
+  return text.replace(/[ \t]*\b(Waze|Plans)\s*:\s*https?:\/\/\S+/gi, "").replace(/\n{3,}/g, "\n\n").trim();
+}
+
+// Texte → HTML pour un champ Odoo « html » : sans <br>, Odoo recolle toutes les
+// lignes en une seule (le téléphone se retrouvait suivi des liens Waze / Plans).
+export function textToHtml(text: string): string {
+  const esc = (t: string) => t.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  return text.split("\n").map(esc).join("<br/>");
+}
