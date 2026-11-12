@@ -47,14 +47,28 @@ export async function fetchActiveLoyaltyPrograms(session: odoo.OdooSession): Pro
     const ruleIds = programs.flatMap((p: any) => p.rule_ids || []);
     const rewardIds = programs.flatMap((p: any) => p.reward_ids || []);
 
+    // Champs « étendus » (catégorie / étiquette produit, produits offerts via une
+    // étiquette) lus si l'instance les a ; sinon repli sur les champs de base.
+    const readOr = async (model: string, ids: number[], base: string[], extra: string[]) => {
+      if (!ids.length) return [];
+      try { return await odoo.searchRead(session, model, [["id", "in", ids]], [...base, ...extra], ids.length); }
+      catch (e) { if (odoo.isNetworkError(e)) throw e; return await odoo.searchRead(session, model, [["id", "in", ids]], base, ids.length); }
+    };
     const [rules, rewards] = await Promise.all([
-      ruleIds.length ? odoo.searchRead(session, "loyalty.rule",
-        [["id", "in", ruleIds]],
-        ["id", "program_id", "product_ids", "minimum_qty", "minimum_amount"], ruleIds.length) : Promise.resolve([]),
-      rewardIds.length ? odoo.searchRead(session, "loyalty.reward",
-        [["id", "in", rewardIds]],
-        ["id", "program_id", "reward_type", "discount", "discount_applicability", "discount_product_ids", "reward_product_id", "reward_product_qty"], rewardIds.length) : Promise.resolve([]),
+      readOr("loyalty.rule", ruleIds, ["id", "program_id", "product_ids", "minimum_qty", "minimum_amount"], ["product_category_id", "product_tag_id"]),
+      readOr("loyalty.reward", rewardIds, ["id", "program_id", "reward_type", "discount", "discount_applicability", "discount_product_ids", "reward_product_id", "reward_product_qty"], ["reward_product_ids"]),
     ]);
+    // Règle sur une catégorie ou une étiquette produit : on la ramène à sa liste
+    // de produits (avant, elle était lue comme « tout le panier »).
+    for (const r of rules) {
+      if ((r.product_ids || []).length) continue;
+      const dom = Array.isArray(r.product_category_id) ? [["categ_id", "child_of", r.product_category_id[0]]]
+        : Array.isArray(r.product_tag_id) ? [["all_product_tag_ids", "in", [r.product_tag_id[0]]]] : null;
+      if (!dom) continue;
+      try { r.product_ids = (await odoo.searchRead(session, "product.product", dom, ["id"], 0)).map((x: any) => x.id); }
+      catch (e) { if (odoo.isNetworkError(e)) throw e; r.product_ids = [-1]; }   // illisible : la règle ne se déclenche pas
+      if (!r.product_ids.length) r.product_ids = [-1];
+    }
 
     return programs.map((p: any) => ({
       id: p.id,
@@ -75,7 +89,8 @@ export async function fetchActiveLoyaltyPrograms(session: odoo.OdooSession): Pro
           discount: rw.discount || 0,
           discount_applicability: rw.discount_applicability,
           discount_product_ids: rw.discount_product_ids || [],
-          reward_product_id: Array.isArray(rw.reward_product_id) ? rw.reward_product_id[0] : null,
+          // Produit offert : direct, ou le 1er des produits de l'étiquette offerte.
+          reward_product_id: Array.isArray(rw.reward_product_id) ? rw.reward_product_id[0] : (rw.reward_product_ids || [])[0] ?? null,
           reward_product_qty: rw.reward_product_qty || 1,
         })),
     })).filter((p: LoyaltyProgram) => p.rules.length > 0 && p.rewards.length > 0);

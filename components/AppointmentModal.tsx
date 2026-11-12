@@ -90,6 +90,20 @@ export default function AppointmentModal({ session, client: clientProp, event, a
   const [picked, setPicked] = useState<any>(null);
   const client = clientProp || picked;
   const canPickClient = !isEdit && !clientProp;
+  // RDV déjà prévus avec ce client (tous commerciaux) : évite d'aller dans
+  // l'historique des RDV avant d'en prendre un nouveau.
+  const [clientRdv, setClientRdv] = useState<any[] | null>(null);
+  useEffect(() => {
+    if (!client?.id) { setClientRdv(null); return; }
+    const now = new Date().toISOString().slice(0, 19).replace("T", " ");
+    const byClient: any[] = client.ref
+      ? ["|", ["res_id", "=", client.id], ["x_studio_code_client_cli_calendar", "=", client.ref]]
+      : [["res_id", "=", client.id]];
+    odoo.searchRead(session, "calendar.event", [["start", ">=", now], ...byClient],
+      ["id", "name", "start", "user_id", "x_studio_annul", "res_model"], 10, "start asc")
+      .then((rows: any[]) => setClientRdv(rows.filter(r => !r.x_studio_annul && r.id !== event?.id && (!r.res_model || r.res_model === "res.partner" || client.ref))))
+      .catch(() => setClientRdv(null));
+  }, [client?.id, client?.ref, session, event?.id]);
   const adminTag = ADMIN_TAGS[0];
 
   // En édition : pré-remplissage depuis le RDV existant.
@@ -439,6 +453,27 @@ export default function AppointmentModal({ session, client: clientProp, event, a
             </select>
           </Field>
         </>}
+
+        {!trip && client && clientRdv && (
+          <div style={{ marginBottom: 14, padding: "9px 12px", borderRadius: 10, background: clientRdv.length ? "#f0fdfa" : C.bg, border: `1px solid ${clientRdv.length ? "#ccfbf1" : C.border}` }}>
+            <div style={{ fontSize: 12, fontWeight: 700, color: C.textSec, marginBottom: clientRdv.length ? 4 : 0 }}>
+              {clientRdv.length ? `RDV déjà prévu${clientRdv.length > 1 ? "s" : ""} avec ce client` : "Aucun RDV à venir avec ce client"}
+            </div>
+            {clientRdv.slice(0, 4).map(r => {
+              const d = fromOdoo(r.start);
+              return (
+                <div key={r.id} style={{ fontSize: 12.5, color: C.text, display: "flex", gap: 6 }}>
+                  <span style={{ fontWeight: 800, color: C.tealDark, flexShrink: 0 }}>
+                    {d.toLocaleDateString("fr-FR", { weekday: "short", day: "numeric", month: "short" })} {d.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}
+                  </span>
+                  <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>
+                    {r.name}{Array.isArray(r.user_id) && r.user_id[0] !== session.uid ? ` · ${r.user_id[1]}` : ""}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        )}
 
         {!trip && <>
         {canPickClient && (

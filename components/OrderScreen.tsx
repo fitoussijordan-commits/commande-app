@@ -605,7 +605,8 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
   const availablePromoCount = triggeredPromos.filter(p => !appliedPromos[p.id]).length;
 
   const applyPromo = async (program: loyalty.LoyaltyProgram) => {
-    const reward = program.rewards[0];
+    // Récompense « produit offert » prioritaire (ex. coffret de Noël) si le programme en a une.
+    const reward = program.rewards.find(r => r.reward_type === "product" && r.reward_product_id) || program.rewards[0];
     if (!reward) return;
     if (reward.reward_type === "product" && reward.reward_product_id) {
       const prod = await loyalty.fetchProductBasics(session, reward.reward_product_id);
