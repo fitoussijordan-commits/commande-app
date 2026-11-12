@@ -14,7 +14,7 @@ import Dashboard from "@/components/Dashboard";
 import AgendaGlass from "@/components/AgendaGlass";
 import { resolveClientFamily, odooRecordUrl } from "@/lib/perimes";
 import { saleStep, snapQty, optionalProductFields, ppcOf } from "@/lib/productFields";
-import { orderMeta, isMea, isImplantation, offerNames, offerOptions, templateMeta, type OrderMeta } from "@/lib/orderOffers";
+import { orderMeta, isMea, isImplantation, offerNames, offerOptions, templateMeta, templateLineMeta, type OrderMeta } from "@/lib/orderOffers";
 import { loadBlockingTags, clientBlockingTags, loadClosedDayTags, clientClosedWeekdays, type BlockingTag, type ClosedDayTag } from "@/lib/clientFlags";
 import { planShipping, toOdooDate, toOdooDatetime, isDirectLogistics, type ShippingPlan } from "@/lib/delivery";
 import { onIncomingFile } from "@/lib/incomingFile";
@@ -3329,13 +3329,14 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
       const lineIds: number[] = template.sale_order_template_line_ids || [];
       if (!lineIds.length) { onToast("Aucun produit dans cette offre", "error"); setApplyingMea(null); return; }
 
+      const tlm = await templateLineMeta(session);
       let lines: any[];
       try {
         // Toutes les lignes, dans l'ordre du modèle : produits ET lignes de
         // section / note (commentaires), reprises telles quelles dans le devis.
         lines = await odoo.searchRead(session, "sale.order.template.line",
           [["id", "in", lineIds]],
-          ["id", "product_id", "product_uom_qty", "display_type", "name", "sequence"],
+          ["id", "product_id", "product_uom_qty", "display_type", "name", "sequence", ...Object.values(tlm).filter(Boolean) as string[]],
           500, "sequence, id");
       } catch {
         // Hors ligne → lignes préchargées
@@ -3358,7 +3359,7 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
       }
       const productMap = new Map<number, any>(products.map((p: any) => [p.id as number, p]));
 
-      let added = 0;
+      let added = 0, gifts = 0;
       for (const line of lines) {
         if (line.display_type === "line_section" || line.display_type === "line_note") {
           if (line.name) onAddNote(String(line.name), line.display_type, template.name);
@@ -3373,8 +3374,26 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
         if (isSeparatorProduct(product)) { onAddNote(String(line.name || product.name), "line_note", template.name); continue; }
         // Quantité du modèle telle quelle : 0 reste 0 (ligne optionnelle).
         const qty = Math.max(0, Math.round(line.product_uom_qty || 0));
+        const discount = tlm.discount ? Number(line[tlm.discount]) || 0 : 0;
+        // Ligne remisée à 100 % = gratuité du modèle (coffrets offerts…) : en
+        // ligne offerte, avec le type de gratuité du modèle.
+        if (discount >= 99.99) {
+          if (qty > 0) {
+            const t = tlm.freeType ? String(line[tlm.freeType] || "") : "";
+            const type = t && (freeTypes.some(f => f.value === t) || !freeTypes.length) ? t : giftType;
+            setGiftItems(prev => {
+              const i = prev.findIndex(g => g.product.id === product.id && g.type === type);
+              if (i >= 0) return prev.map((g, j) => j === i ? { ...g, qty: g.qty + qty } : g);
+              return [...prev, { product, qty, type }];
+            });
+            gifts += qty;
+          }
+          continue;
+        }
         if (qty === 0 && cart[product.id]) continue;
-        const clientPrice = applyPricelist(product.lst_price || 0, product.id, product.product_tmpl_id?.[0] || 0, priceItems, Math.max(1, qty));
+        const listPrice = applyPricelist(product.lst_price || 0, product.id, product.product_tmpl_id?.[0] || 0, priceItems, Math.max(1, qty));
+        // Remise partielle du modèle appliquée au prix de la ligne.
+        const clientPrice = discount > 0 ? Math.round(listPrice * (1 - discount / 100) * 100) / 100 : listPrice;
         onQtyChange(product, (cart[product.id]?.qty || 0) + qty, clientPrice, template.name, true);
         added++;
       }
@@ -3387,7 +3406,7 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
           || offers.find(o => fold(template.name).includes(fold(o.name)) || fold(o.name).includes(fold(template.name)));
         if (offer) setOfferIds(prev => prev.includes(offer.id) ? prev : [...prev, offer.id]);
       }
-      onToast(`✅ ${template.name} — ${added} produit${added > 1 ? "s" : ""} ajouté${added > 1 ? "s" : ""}`, "success");
+      onToast(`✅ ${template.name} — ${added} produit${added > 1 ? "s" : ""} ajouté${added > 1 ? "s" : ""}${gifts ? ` + ${gifts} offert${gifts > 1 ? "s" : ""}` : ""}`, "success");
     } catch (e: any) { onToast("Erreur: " + e.message, "error"); }
     setApplyingMea(null);
   };

@@ -129,3 +129,25 @@ export async function templateMeta(session: odoo.OdooSession): Promise<TemplateM
   _tmeta = out;
   return out;
 }
+
+// Lignes de MODÈLE de devis : remise (%) et « Type de gratuité », si l'instance
+// les a. Une ligne remisée à 100 % est une gratuité (ex. coffrets offerts des
+// MEA de Noël) : elle doit partir en ligne offerte, pas s'ajouter à la quantité payante.
+export interface TemplateLineMeta { discount?: string; freeType?: string }
+let _tlmeta: TemplateLineMeta | null = null;
+export async function templateLineMeta(session: odoo.OdooSession): Promise<TemplateLineMeta> {
+  if (_tlmeta) return _tlmeta;
+  const out: TemplateLineMeta = {};
+  try {
+    const fields: Record<string, any> = await odoo.callMethod(session, "sale.order.template.line", "fields_get", [],
+      { attributes: ["string", "type"] });
+    if (fields.discount && fields.discount.type === "float") out.discount = "discount";
+    for (const [name, f] of Object.entries(fields)) {
+      if (!out.freeType && /gratuit/i.test(String(f.string || "")) && (f.type === "selection" || f.type === "char")) out.freeType = name;
+    }
+  } catch (e) {
+    if (odoo.isNetworkError(e)) return out;
+  }
+  _tlmeta = out;
+  return out;
+}

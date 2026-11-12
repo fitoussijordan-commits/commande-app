@@ -11,6 +11,7 @@ import * as db from "@/lib/localdb";
 import * as loyalty from "@/lib/loyalty";
 import * as perimes from "@/lib/perimes";
 import { descToText } from "@/lib/text";
+import { templateLineMeta } from "@/lib/orderOffers";
 
 // Champs produits — identiques à ceux consommés dans OrderScreen (favoris, MEA, recherche).
 // x_type_de_produit_id : type de produit Odoo (échantillon, testeur, travel size…).
@@ -108,7 +109,7 @@ export async function preloadCatalog(
       lines = await odoo.searchRead(
         session, "sale.order.template.line",
         [["id", "in", allLineIds], ["product_id", "!=", false]],
-        ["id", "product_id", "product_uom_qty"],
+        ["id", "product_id", "product_uom_qty", ...Object.values(await templateLineMeta(session)).filter(Boolean) as string[]],
         allLineIds.length
       );
     }
