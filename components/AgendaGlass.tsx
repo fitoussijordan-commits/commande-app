@@ -23,9 +23,11 @@ const fromOdoo = (s: string) => new Date(String(s).replace(" ", "T") + "Z");
 const toOdoo = (d: Date) => d.toISOString().slice(0, 19).replace("T", " ");
 const hhmm = (d: Date) => d.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
 
-export default function AgendaGlass({ session, onOpenPlanning }: {
+export default function AgendaGlass({ session, onOpenPlanning, onOpenClient, onOrder }: {
   session: odoo.OdooSession;
   onOpenPlanning: (day: Date) => void;
+  onOpenClient?: (partnerId: number) => void;   // tap sur un RDV lié à un client → sa fiche
+  onOrder?: (partnerId: number) => void;        // bouton « Commander » → catalogue du client
 }) {
   const [view, setView] = useState<"week" | "month">(() => {
     try { return localStorage.getItem("wms_agenda_view") === "month" ? "month" : "week"; } catch { return "week"; }
@@ -65,7 +67,7 @@ export default function AgendaGlass({ session, onOpenPlanning }: {
       const end = new Date(days[days.length - 1]); end.setDate(end.getDate() + 1);
       try {
         const domain = [["user_id", "=", session.uid], ["start", "<", toOdoo(end)], ["stop", ">=", toOdoo(days[0])], ["active", "in", [true, false]]];
-        const BASE = ["id", "name", "start", ...ALLDAY_FIELDS, "location", "x_studio_annul", "active"];
+        const BASE = ["id", "name", "start", "stop", ...ALLDAY_FIELDS, "location", "x_studio_annul", "active"];
         // res_model / res_id = client lié au RDV (cf. AppointmentModal) ; repli
         // sans ces champs s'ils n'existent pas sur l'instance.
         let rows: any[];
@@ -79,11 +81,11 @@ export default function AgendaGlass({ session, onOpenPlanning }: {
         const ids = Array.from(new Set(rows.filter(r => linkedPartnerId(r)).map(r => linkedPartnerId(r)!)));
         if (ids.length) {
           try {
-            const partners = await odoo.searchRead(session, "res.partner", [["id", "in", ids]], ["id", "name", "city"], ids.length);
+            const partners = await odoo.searchRead(session, "res.partner", [["id", "in", ids]], ["id", "name", "city", "street", "zip"], ids.length);
             const byId = new Map(partners.map((p: any) => [p.id, p]));
             rows = rows.map(r => {
               const p: any = linkedPartnerId(r) && byId.get(linkedPartnerId(r)!);
-              return p ? { ...r, label: `Visite de ${p.name}${p.city ? ` à ${p.city}` : r.location ? ` à ${r.location}` : ""}` } : r;
+              return p ? { ...r, _p: p, label: `Visite de ${p.name}${p.city ? ` à ${p.city}` : r.location ? ` à ${r.location}` : ""}` } : r;
             });
           } catch {}
         }
@@ -98,6 +100,10 @@ export default function AgendaGlass({ session, onOpenPlanning }: {
   const cancelled = (e: any) => Boolean(e.x_studio_annul) || e.active === false;
   const countOn = (d: Date) => events.filter(e => !cancelled(e) && eventOnDay(e, d)).length;
   const dayEvents = events.filter(e => eventOnDay(e, selected));
+  // Prochain RDV du jour (en cours ou à venir, non annulé) : mis en avant.
+  const nextId = sameDay(selected, today)
+    ? dayEvents.find(e => !cancelled(e) && !e.allday && fromOdoo(e.stop || e.start).getTime() >= Date.now() - (e.stop ? 0 : 3600_000))?.id
+    : undefined;
   const label = view === "month"
     ? monthRef.toLocaleDateString("fr-FR", { month: "long", year: "numeric" }).replace(/^./, c => c.toUpperCase())
     : `${days[0].toLocaleDateString("fr-FR", { day: "numeric", month: "short" })} – ${days[6].toLocaleDateString("fr-FR", { day: "numeric", month: "short" })}`;
@@ -169,16 +175,49 @@ export default function AgendaGlass({ session, onOpenPlanning }: {
         {state !== "offline" && dayEvents.length === 0 && (
           <div style={{ fontSize: 13, color: C.faint }}>{state === "loading" ? "…" : "Rien de prévu."}</div>
         )}
-        <div style={{ display: "flex", flexDirection: "column" as const, gap: 6, maxHeight: 200, overflowY: "auto" as const }}>
-          {dayEvents.map(e => (
-            <button key={e.id} onClick={() => onOpenPlanning(selected)}
-              style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 12px", borderRadius: 14, border: "none", cursor: "pointer", fontFamily: "inherit", textAlign: "left" as const,
-                background: "rgba(255,255,255,0.7)", opacity: cancelled(e) ? 0.55 : 1 }}>
-              <span style={{ width: 4, alignSelf: "stretch", borderRadius: 2, background: cancelled(e) ? C.faint : C.teal }} />
-              <span style={{ fontSize: 12.5, fontWeight: 800, color: C.tealDark, width: 42, flexShrink: 0 }}>{e.allday ? "Journée" : hhmm(fromOdoo(e.start))}</span>
-              <span style={{ fontSize: 13.5, fontWeight: 600, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const, textDecoration: cancelled(e) ? "line-through" : "none" }}>{e.label || (e.allday && e.location) || e.name}</span>
-            </button>
-          ))}
+        <div style={{ display: "flex", flexDirection: "column" as const, gap: 8, maxHeight: 340, overflowY: "auto" as const }}>
+          {dayEvents.map(e => {
+            const p = e._p;
+            const off = cancelled(e);
+            const isNext = e.id === nextId;
+            const addr = p ? [p.street, p.zip, p.city].filter(Boolean).join(" ") : "";
+            return (
+              <div key={e.id}
+                style={{ display: "flex", alignItems: "center", gap: 10, padding: isNext ? "12px 12px" : "8px 12px", borderRadius: 16,
+                  background: isNext ? "rgba(255,255,255,0.95)" : "rgba(255,255,255,0.7)", opacity: off ? 0.55 : 1,
+                  boxShadow: isNext ? "0 6px 18px rgba(13,148,136,0.18), inset 0 0 0 1.5px rgba(13,148,136,0.45)" : "none" }}>
+                <button onClick={() => p && onOpenClient ? onOpenClient(p.id) : onOpenPlanning(selected)}
+                  style={{ flex: 1, minWidth: 0, display: "flex", alignItems: "center", gap: 10, background: "none", border: "none", padding: 0, cursor: "pointer", fontFamily: "inherit", textAlign: "left" as const, minHeight: 40 }}>
+                  <span style={{ width: 4, alignSelf: "stretch", borderRadius: 2, background: off ? C.faint : C.teal, flexShrink: 0 }} />
+                  <span style={{ width: 48, flexShrink: 0 }}>
+                    <span style={{ display: "block", fontSize: isNext ? 15 : 13, fontWeight: 800, color: C.tealDark }}>{e.allday ? "Journée" : hhmm(fromOdoo(e.start))}</span>
+                    {isNext && <span style={{ display: "block", fontSize: 9.5, fontWeight: 800, color: C.teal, textTransform: "uppercase" as const, letterSpacing: "0.04em" }}>Prochain</span>}
+                  </span>
+                  <span style={{ flex: 1, minWidth: 0 }}>
+                    <span style={{ display: "block", fontSize: isNext ? 15.5 : 13.5, fontWeight: 700, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const, textDecoration: off ? "line-through" : "none" }}>
+                      {p ? p.name : (e.allday && e.location) || e.name}
+                    </span>
+                    <span style={{ display: "block", fontSize: 11.5, color: C.muted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>
+                      {p ? [p.city, e.name].filter(Boolean).join(" · ") : e.location || ""}
+                    </span>
+                  </span>
+                </button>
+                {p && !off && addr && (
+                  <a href={`https://maps.apple.com/?daddr=${encodeURIComponent(addr)}`} target="_blank" rel="noopener noreferrer" title="Itinéraire" aria-label={`Itinéraire vers ${p.name}`}
+                    style={{ ...GLASS_PILL, width: 40, height: 40, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", color: C.textSec, background: "rgba(255,255,255,0.85)" }}>
+                    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinejoin="round"><path d="M3 11l18-8-8 18-2-8-8-2z"/></svg>
+                  </a>
+                )}
+                {p && !off && onOrder && (
+                  <button onClick={() => onOrder(p.id)}
+                    style={{ height: 40, padding: "0 16px", flexShrink: 0, borderRadius: 999, border: "none", cursor: "pointer", fontFamily: "inherit", fontSize: 13.5, fontWeight: 800,
+                      background: isNext ? C.teal : "rgba(13,148,136,0.12)", color: isNext ? "#fff" : C.tealDark, boxShadow: isNext ? "0 6px 14px rgba(13,148,136,0.3)" : "none" }}>
+                    Commander
+                  </button>
+                )}
+              </div>
+            );
+          })}
         </div>
       </div>
 

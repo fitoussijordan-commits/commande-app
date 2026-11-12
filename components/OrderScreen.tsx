@@ -14,6 +14,7 @@ import Dashboard from "@/components/Dashboard";
 import AgendaGlass from "@/components/AgendaGlass";
 import { resolveClientFamily, odooRecordUrl } from "@/lib/perimes";
 import InvoiceHistory from "@/components/InvoiceHistory";
+import { GLASS, GLASS_PILL } from "@/components/glass";
 import { saleStep, snapQty, optionalProductFields, ppcOf } from "@/lib/productFields";
 import { orderMeta, isMea, isImplantation, offerNames, offerOptions, templateMeta, templateLineMeta, type OrderMeta } from "@/lib/orderOffers";
 import { loadBlockingTags, clientBlockingTags, loadClosedDayTags, clientClosedWeekdays, type BlockingTag, type ClosedDayTag } from "@/lib/clientFlags";
@@ -282,6 +283,16 @@ function listDrafts(): { clientId: string; draft: Draft }[] {
     .sort((a, b) => b.draft.savedAt - a.draft.savedAt);
 }
 
+// Derniers clients ouverts (accueil → « Reprendre ») : 6 max, sur l'appareil.
+const LS_RECENTS = "wms_recent_clients";
+function loadRecentClients(): any[] {
+  try { const v = JSON.parse(localStorage.getItem(LS_RECENTS) || "[]"); return Array.isArray(v) ? v : []; } catch { return []; }
+}
+function pushRecentClient(c: any) {
+  if (!c?.id) return;
+  try { localStorage.setItem(LS_RECENTS, JSON.stringify([c, ...loadRecentClients().filter(r => r.id !== c.id)].slice(0, 6))); } catch {}
+}
+
 // ── Migration douce de l'ancien format (1 seul brouillon global) ──────────────
 function migrateLegacyDraft() {
   try {
@@ -490,11 +501,22 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
 
   // Sélectionne un client (depuis la recherche ou depuis un RDV du planning) et ouvre sa fiche.
   const selectClient = useCallback((c: any, origin: "search" | "planning" = "search") => {
+    pushRecentClient(c);
     setClient(c);
     setClientOrigin(origin);
     setStep("hub");
     loadClientPricelist(c);
   }, [loadClientPricelist]);
+
+  // Depuis l'accueil (RDV du jour) : ouvre la fiche du client, ou directement son catalogue.
+  const openPartner = async (partnerId: number, order: boolean) => {
+    let c: any = null;
+    try { c = (await odoo.searchRead(session, "res.partner", [["id", "=", partnerId]], CLIENT_FIELDS, 1))[0]; }
+    catch { c = loadRecentClients().find(r => r.id === partnerId) || null; }
+    if (!c) { onToast("Fiche client indisponible (hors ligne ?) — passe par la recherche", "error"); return; }
+    selectClient(c);
+    if (order) beginOrder(c);
+  };
 
   // Import d'un bon : depuis la fiche client (client connu) ou depuis l'accueil /
   // la recherche client (client retrouvé d'après le bon, puis confirmé).
@@ -667,8 +689,8 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
   // Depuis le hub client → "Prise de commande" : repart d'un panier vide, détecte un brouillon
   // existant pour CE client précisément, puis entre dans le catalogue.
   // (La pricelist est déjà chargée par selectClient — pas de 2ᵉ appel redondant.)
-  const enterOrderMode = () => {
-    if (!client) return;
+  const enterOrderMode = () => { if (client) beginOrder(client); };
+  const beginOrder = (client: any) => {
     setCart({});
     setNote("");
     setAppliedPromos({});
@@ -1363,7 +1385,9 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
       )}
 
       {step === "client" && <ClientStep session={session} onSelect={selectClient} onImportBon={() => pickBonFile("client")}
-        onOpenPlanning={(d) => { setPlanningDate(d); setStep("home"); }} onToast={onToast} />}
+        onOpenPlanning={(d) => { setPlanningDate(d); setStep("home"); }} onToast={onToast}
+        drafts={pendingDrafts} onResumeDraft={resumeDraftFromPanel}
+        onOpenPartner={id => void openPartner(id, false)} onOrderPartner={id => void openPartner(id, true)} />}
 
       {step === "hub" && client && (
         <ClientHub
@@ -2353,14 +2377,17 @@ function Row({ icon, label }: { icon: string; label: string }) {
 // ═══════════════════════════════════════════════════════════════════════════
 // ÉTAPE 1 — Sélection client
 // ═══════════════════════════════════════════════════════════════════════════
-function ClientStep({ session, onSelect, onImportBon, onOpenPlanning, onToast }: {
+function ClientStep({ session, onSelect, onImportBon, onOpenPlanning, onToast, drafts, onResumeDraft, onOpenPartner, onOrderPartner }: {
   session: odoo.OdooSession; onSelect: (c: any) => void; onImportBon: () => void; onOpenPlanning: (d: Date) => void;
+  drafts: { clientId: string; draft: Draft }[]; onResumeDraft: (d: Draft) => void;
+  onOpenPartner: (id: number) => void; onOrderPartner: (id: number) => void;
   onToast: (msg: string, type?: "success" | "error" | "info") => void;
 }) {
   const [q, setQ] = useState("");
   const [results, setResults] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const timer = useRef<any>(null);
+  const [recents] = useState<any[]>(loadRecentClients);
 
   // ── Mode localisation ──────────────────────────────────────────────────
   const [locMode, setLocMode] = useState(false);
@@ -2437,25 +2464,22 @@ function ClientStep({ session, onSelect, onImportBon, onOpenPlanning, onToast }:
   const showWidgets = q.trim().length < 2 && !locMode;
 
   return (
-    <div style={{ flex: 1, display: "flex", flexDirection: "column" as const, alignItems: "center", justifyContent: showWidgets ? "flex-start" : "center",
-      padding: showWidgets ? "32px 24px 40px" : 40, overflowY: "auto" as const,
+    <div style={{ flex: 1, display: "flex", flexDirection: "column" as const, alignItems: "center", justifyContent: "flex-start",
+      padding: showWidgets ? "18px 24px 40px" : "24px 24px 40px", overflowY: "auto" as const,
       // Fond coloré doux : sans lui, l'effet verre des cartes ne se voit pas.
       background: "radial-gradient(circle at 12% 18%, rgba(45,212,191,0.30), transparent 42%), radial-gradient(circle at 88% 26%, rgba(125,211,252,0.28), transparent 44%), radial-gradient(circle at 55% 100%, rgba(253,186,116,0.22), transparent 50%), #eef3f6" }}>
-      <div style={{ width: "100%", maxWidth: 560 }}>
-        <div style={{ textAlign: "center", marginBottom: showWidgets ? 20 : 32 }}>
-          {showWidgets && (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img src="/logo-accueil.png" alt="Dr. Hauschka" width={150}
-              style={{ display: "block", height: "auto", margin: "0 auto 6px" }} />
-          )}
-          {!showWidgets && (
-            <div style={{ width: 72, height: 72, borderRadius: 20, background: C.tealSoft, border: `1.5px solid ${C.tealMid}`, display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 16px" }}>
-              <Icon name="user" size={34} color={C.teal} />
+      <div style={{ width: "100%", maxWidth: showWidgets ? 1040 : 640 }}>
+        {/* Accueil : bandeau fin (logo + date), la recherche vient tout de suite. */}
+        {showWidgets && (
+          <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 12 }}>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src="/logo-accueil.png" alt="Dr. Hauschka" style={{ display: "block", height: 52, width: "auto" }} />
+            <div style={{ flex: 1 }} />
+            <div style={{ fontSize: 14, fontWeight: 700, color: C.textSec }}>
+              {new Date().toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long" }).replace(/^./, c => c.toUpperCase())}
             </div>
-          )}
-          <div style={{ fontSize: 26, fontWeight: 800, color: C.text }}>Choisir un client</div>
-          <div style={{ fontSize: 14, color: C.muted, marginTop: 6 }}>Recherche par nom, référence ou ville</div>
-        </div>
+          </div>
+        )}
 
         <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
           <div style={{ position: "relative" as const, flex: 1 }}>
@@ -2463,7 +2487,7 @@ function ClientStep({ session, onSelect, onImportBon, onOpenPlanning, onToast }:
               <circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/>
             </svg>
             <input value={q} onChange={e => setQ(e.target.value)}
-              placeholder="Nom du client..."
+              placeholder="Chercher un client : nom, référence ou ville"
               style={{ width: "100%", boxSizing: "border-box" as const, padding: "14px 14px 14px 44px", border: `1.5px solid ${C.border}`, borderRadius: 14, fontSize: 16, fontFamily: "inherit", background: C.white, color: C.text, boxShadow: C.shadowMd, outline: "none" }} />
           </div>
           {/* Mes clients / tous les clients */}
@@ -2557,9 +2581,42 @@ function ClientStep({ session, onSelect, onImportBon, onOpenPlanning, onToast }:
       </div>
 
       {showWidgets && (
-        <div style={{ width: "100%", maxWidth: 1040, marginTop: 6, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(400px, 1fr))", gap: 18, alignItems: "start" }}>
-          <AgendaGlass session={session} onOpenPlanning={onOpenPlanning} />
-          <VisitPriority session={session} onOpenClient={onSelect} />
+        <div style={{ width: "100%", maxWidth: 1040, marginTop: 2, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(400px, 1fr))", gap: 18, alignItems: "start" }}>
+          <AgendaGlass session={session} onOpenPlanning={onOpenPlanning} onOpenClient={onOpenPartner} onOrder={onOrderPartner} />
+          <div style={{ display: "flex", flexDirection: "column" as const, gap: 18, minWidth: 0 }}>
+            {/* Reprendre : brouillons en cours + derniers clients ouverts, en un tap */}
+            {(drafts.length > 0 || recents.length > 0) && (
+              <div style={{ ...GLASS, padding: 18 }}>
+                <div style={{ fontSize: 17, fontWeight: 800, color: C.text, marginBottom: 10 }}>Reprendre</div>
+                {drafts.slice(0, 3).map(({ clientId, draft: d }) => {
+                  const lines = Object.values(d.cart).filter(i => !i.note);
+                  const total = lines.reduce((t, i) => t + i.qty * i.unitPrice, 0);
+                  return (
+                    <button key={clientId} onClick={() => onResumeDraft(d)}
+                      style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", minHeight: 48, padding: "8px 12px", marginBottom: 6, borderRadius: 14, border: "none", cursor: "pointer", fontFamily: "inherit", textAlign: "left" as const, background: "rgba(255,255,255,0.75)" }}>
+                      <span style={{ width: 34, height: 34, borderRadius: 10, background: "#fef9c3", color: "#92400e", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}><Icon name="cart" size={16} /></span>
+                      <span style={{ flex: 1, minWidth: 0 }}>
+                        <span style={{ display: "block", fontSize: 13.5, fontWeight: 700, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>{d.client?.name}</span>
+                        <span style={{ display: "block", fontSize: 11.5, color: C.textSec }}>Commande en cours · {lines.length} article{lines.length > 1 ? "s" : ""} · {fmtPrice(total)}</span>
+                      </span>
+                      <span style={{ fontSize: 12.5, fontWeight: 800, color: C.tealDark, flexShrink: 0 }}>Reprendre →</span>
+                    </button>
+                  );
+                })}
+                {recents.length > 0 && (
+                  <div style={{ display: "flex", flexWrap: "wrap" as const, gap: 6, marginTop: drafts.length ? 6 : 0 }}>
+                    {recents.slice(0, 6).map(c => (
+                      <button key={c.id} onClick={() => onSelect(c)}
+                        style={{ ...GLASS_PILL, maxWidth: "100%", height: 38, padding: "0 14px", cursor: "pointer", fontFamily: "inherit", fontSize: 13, fontWeight: 700, color: C.text, background: "rgba(255,255,255,0.8)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>
+                        {c.name}{c.city ? <span style={{ fontWeight: 500, color: C.textSec }}> · {c.city}</span> : null}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+            <VisitPriority session={session} onOpenClient={onSelect} />
+          </div>
         </div>
       )}
     </div>
@@ -3945,12 +4002,13 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
                 const hasDiscount = priceItems.length > 0 && Math.abs(clientPrice - (p.lst_price || 0)) > 0.01;
                 const gifted = giftQtyById.get(p.id);
                 return (
-                  <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "6px 10px 6px 8px", borderTop: i ? `1px solid ${C.border}` : "none", borderLeft: `4px solid ${qty > 0 ? C.teal : "transparent"}`, background: qty > 0 ? C.tealSoft : C.white }}>
+                  <div key={p.id} style={{ display: "flex", flexWrap: "wrap" as const, rowGap: 4, alignItems: "center", gap: 10, padding: "6px 10px 6px 8px", borderTop: i ? `1px solid ${C.border}` : "none", borderLeft: `4px solid ${qty > 0 ? C.teal : "transparent"}`, background: qty > 0 ? C.tealSoft : C.white }}>
                     <div onClick={() => openZoom(p)} title="Agrandir l'image" style={{ width: 42, height: 42, flexShrink: 0, borderRadius: 9, background: C.bg, display: "flex", alignItems: "center", justifyContent: "center", cursor: "zoom-in", position: "relative" as const, overflow: "hidden" }}>
                       <div style={{ position: "absolute" }}><Icon name="package" size={18} color={C.border} /></div>
                       <ProductImage id={p.id} networkUrl={imgUrl(p.id)} style={{ height: 38, objectFit: "contain", position: "relative" as const, zIndex: 1 }} />
                     </div>
-                    <div style={{ flex: 1, minWidth: 0 }}>
+                    {/* Catalogue étroit (portrait) : le nom garde sa ligne, prix et quantité passent dessous */}
+                    <div style={{ flex: "1 1 190px", minWidth: 0 }}>
                       <div style={{ fontSize: 13, fontWeight: 600, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>{p.name}</div>
                       <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 1, minWidth: 0 }}>
                         <span style={{ fontSize: 10.5, color: C.textSec, fontFamily: "monospace", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>{p.default_code}{p.barcode ? ` · ${p.barcode}` : ""}</span>
@@ -3958,22 +4016,24 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
                         {Array.isArray(p.x_offre_produit_id) && <OfferTag name={p.x_offre_produit_id[1]} />}
                       </div>
                     </div>
-                    <div style={{ width: 70, flexShrink: 0, textAlign: "right" as const }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0, marginLeft: "auto" }}>
+                    <div style={{ width: 64, flexShrink: 0, textAlign: "right" as const }}>
                       <div style={{ fontSize: 13.5, fontWeight: 800, color: hasDiscount ? C.green : C.tealDark }}>{clientPrice > 0 ? fmtPrice(clientPrice) : "—"}</div>
                       {hasDiscount && <div style={{ fontSize: 10, color: C.muted, textDecoration: "line-through" }}>{fmtPrice(p.lst_price)}</div>}
                     </div>
-                    <span style={{ width: 54, flexShrink: 0, textAlign: "center" as const, fontSize: 10.5, fontWeight: 700, color: stock > 0 ? C.green : C.red, background: stock > 0 ? C.greenSoft : C.redSoft, borderRadius: 5, padding: "2px 0" }}>{stock > 0 ? stock : "Rupture"}</span>
+                    <span style={{ width: 46, flexShrink: 0, textAlign: "center" as const, fontSize: 10.5, fontWeight: 700, color: stock > 0 ? C.green : C.red, background: stock > 0 ? C.greenSoft : C.redSoft, borderRadius: 5, padding: "2px 0" }}>{stock > 0 ? stock : "Rupture"}</span>
                     <button onClick={() => offerGift(p)} title="Offrir une unité" aria-label={`Offrir ${p.name}`}
                       style={{ width: 38, height: 38, flexShrink: 0, borderRadius: 9, background: gifted ? C.green : C.greenSoft, color: gifted ? "#fff" : C.green, border: `1px solid ${C.green}44`, cursor: "pointer", fontFamily: "inherit", fontSize: 11, fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center", gap: 2 }}>
                       {gifted ? `×${gifted}` : <Icon name="gift" size={15} />}
                     </button>
                     <div style={{ display: "flex", flexShrink: 0, background: "#fff", borderRadius: 10, overflow: "hidden", border: `1px solid ${qty > 0 ? C.teal : C.border}` }}>
-                      <button onClick={() => onQtyChange(p, qty - 1, clientPrice)} aria-label="Moins" style={{ width: 40, height: 38, background: "transparent", border: "none", cursor: "pointer", fontSize: 19, fontWeight: 700, color: qty > 0 ? C.red : C.muted, lineHeight: 1 }}>−</button>
+                      <button onClick={() => onQtyChange(p, qty - 1, clientPrice)} aria-label="Moins" style={{ width: 36, height: 38, background: "transparent", border: "none", cursor: "pointer", fontSize: 19, fontWeight: 700, color: qty > 0 ? C.red : C.muted, lineHeight: 1 }}>−</button>
                       <button onClick={() => setPad({ product: p, price: clientPrice })} title="Saisir une quantité"
-                        style={{ width: 44, height: 38, background: "transparent", border: "none", borderLeft: `1px solid ${C.border}`, borderRight: `1px solid ${C.border}`, cursor: "pointer", fontSize: 15, fontWeight: 800, color: qty > 0 ? C.tealDark : C.muted, fontFamily: "inherit" }}>
+                        style={{ width: 40, height: 38, background: "transparent", border: "none", borderLeft: `1px solid ${C.border}`, borderRight: `1px solid ${C.border}`, cursor: "pointer", fontSize: 15, fontWeight: 800, color: qty > 0 ? C.tealDark : C.muted, fontFamily: "inherit" }}>
                         {qty}
                       </button>
-                      <button onClick={() => onQtyChange(p, qty + 1, clientPrice)} aria-label="Plus" style={{ width: 40, height: 38, background: "transparent", border: "none", cursor: "pointer", fontSize: 19, fontWeight: 700, color: C.teal, lineHeight: 1 }}>+</button>
+                      <button onClick={() => onQtyChange(p, qty + 1, clientPrice)} aria-label="Plus" style={{ width: 36, height: 38, background: "transparent", border: "none", cursor: "pointer", fontSize: 19, fontWeight: 700, color: C.teal, lineHeight: 1 }}>+</button>
+                    </div>
                     </div>
                   </div>
                 );
