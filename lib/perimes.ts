@@ -940,7 +940,9 @@ export function buildExchangeOrderPayload(opts: {
         product_id: opts.serviceProductId || r.product.id,
         product_uom_qty: -Math.abs(r.qty),
         price_unit: price,
-        ...(discount > 0 ? { discount } : {}),
+        // Remise TOUJOURS envoyée (même 0) : sinon Odoo y met la remise de la
+        // liste de prix du client (ex. 17 %) et le BC ne tombe plus à 0 €.
+        discount,
         name: `Reprise périmé — ${r.product.name}`
           + (r.lot ? ` — lot ${r.lot}` : "")
           + (r.product.default_code ? ` [${r.product.default_code}]` : ""),
@@ -950,7 +952,7 @@ export function buildExchangeOrderPayload(opts: {
         product_id: e.product.id,
         product_uom_qty: e.qty,
         price_unit: price,
-        ...(discount > 0 ? { discount } : {}),
+        discount,   // idem : pas de remise de liste de prix ajoutée par Odoo
         ...(opts.freeType ? { type_gratuit: opts.freeType } : {}),
       }]),
     ],
