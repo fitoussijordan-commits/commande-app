@@ -813,7 +813,7 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
       const ruptures = cartRuptures(cart);
       const groupsInCart = new Set(Object.values(cart).map(i => i.group).filter(Boolean) as string[]);
       const internalLines = [
-        ...(ruptures.length ? [`RUPTURES À VÉRIFIER : ${ruptures.map(r => `${r.code || r.name} (${r.qty} dem. / ${r.stock} dispo)`).join(", ")}`] : []),
+        ...(ruptures.length ? [`RUPTURES (manquant envoyé à 0 sur le devis) : ${ruptures.map(r => `${r.code || r.name} (${r.qty} dem. / ${r.stock} livrés)`).join(", ")}`] : []),
         ...Object.entries(templateInfo).filter(([g, t]) => groupsInCart.has(g) && t.note).map(([, t]) => String(t.note)),
       ];
       const internalNote = internalLines.join("\n");
@@ -846,8 +846,8 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
         ...metaVals,
         order_line: [
           // Ordre d'ajout : les lignes d'une même MEA restent groupées dans le devis.
-          ...orderedCart(cart).filter(item => item.note ? !!String(item.product.name || "").trim() : item.qty > 0).map(item => {
-            if (item.note) return [0, 0, { display_type: item.note, name: String(item.product.name).trim() }];
+          ...orderedCart(cart).filter(item => item.note ? !!String(item.product.name || "").trim() : item.qty > 0).flatMap(item => {
+            if (item.note) return [[0, 0, { display_type: item.note, name: String(item.product.name).trim() }]];
             // Remise ligne = promo Odoo + remise événement Co + remise du devis
             // d'implantation (cumul, plafonné à 100%).
             const promoDisc = Math.min(100, (lineDiscounts[item.product.id] || 0) + (eventDiscount || 0)
@@ -860,12 +860,23 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
             const disc = asBon
               ? Math.round(10000 * (1 - (1 - item.bonRemise! / 100) * (1 - promoDisc / 100))) / 100
               : promoDisc;
-            return [0, 0, {
+            // Rupture : la quantité en stock part normalement, le manquant part
+            // sur une ligne « [RUPTURE] » à 0 — visible par le client sur le
+            // devis/la confirmation, sans mouvement de stock (logistique non bloquée).
+            const stock = isSeparatorProduct(item.product) ? item.qty : Math.max(0, Math.floor(item.product.virtual_available || 0));
+            const served = Math.min(item.qty, stock), missing = item.qty - served;
+            const line = (qty: number, extra: any = {}) => [0, 0, {
               product_id: item.product.id,
-              product_uom_qty: item.qty,
+              product_uom_qty: qty,
               price_unit: price,
               ...(disc > 0 ? { discount: disc } : {}),
+              ...extra,
             }];
+            const label = `${item.product.default_code ? `[${item.product.default_code}] ` : ""}${String(item.product.name || "").replace(/^\[[^\]]*\]\s*/, "")}`;
+            return [
+              ...(served > 0 ? [line(served)] : []),
+              ...(missing > 0 ? [line(0, { name: `RUPTURE — ${label} — ${missing} manquant${missing > 1 ? "s" : ""} (non livré${missing > 1 ? "s" : ""})` })] : []),
+            ];
           }),
           // Produits offerts par une offre marketing → 0€ + type "Gratuités des offres" (auto).
           ...promoFreeLines.map(p => [0, 0, {
@@ -1003,7 +1014,7 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
           )}
           {!!done.ruptures && (
             <div style={{ marginTop: 14, padding: "10px 12px", borderRadius: 12, background: C.orangeSoft, color: C.orange, fontSize: 13.5, fontWeight: 700, lineHeight: 1.45 }}>
-              Votre commande comporte des ruptures ({done.ruptures} article{done.ruptures > 1 ? "s" : ""}) : le service client va vérifier.
+              {done.ruptures} article{done.ruptures > 1 ? "s" : ""} en rupture : la quantité manquante figure à 0 sur le devis (« RUPTURE »).
             </div>
           )}
         </div>
@@ -4082,7 +4093,7 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
         {hasStockIssue && (
           <div style={{ margin: "0 12px 8px", display: "flex", alignItems: "center", gap: 6, fontSize: 11.5, fontWeight: 700, color: C.red }}>
             <span style={{ width: 8, height: 8, borderRadius: "50%", background: C.red }} />
-            Commande avec {overStockItems.length} rupture{overStockItems.length > 1 ? "s" : ""} : le service client vérifiera
+            {overStockItems.length} rupture{overStockItems.length > 1 ? "s" : ""} : le manquant partira à 0 sur le devis
           </div>
         )}
 
