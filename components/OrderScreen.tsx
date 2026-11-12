@@ -1418,6 +1418,27 @@ const CLIENT_FIELDS = ["id", "name", "ref", "street", "zip", "city", "user_id", 
 // stocke un RATIO et multiplie par 100 à l'affichage. Vérifié sur les données de
 // PHARMACIE AZUR — CA à date N-1 = 6 075,97 € et CA à date N = 5 389,33 €, soit
 // -0,11301 en base, affiché « -11,3% » par Odoo. On applique donc le même ×100.
+// Champs Odoo « CA à date N » / « CA à date N-1 » (res.partner), repérés à leur
+// libellé : le CA à date se compare au CA à date N-1, pas au CA N-1 complet.
+let _caDateFields: Promise<{ n?: string; n1?: string }> | null = null;
+function caDateFields(session: odoo.OdooSession) {
+  if (!_caDateFields) {
+    _caDateFields = odoo.callMethod(session, "res.partner", "fields_get", [], { attributes: ["string", "type"] })
+      .then((f: Record<string, any>) => {
+        const out: { n?: string; n1?: string } = {};
+        for (const [name, d] of Object.entries(f)) {
+          const l = String(d.string || "").trim();
+          if (!["monetary", "float"].includes(d.type) || !/^ca\s+[àa]\s+date/i.test(l)) continue;
+          if (/n\s*-\s*1\s*$/i.test(l)) out.n1 = out.n1 || name;
+          else if (/\bn\s*$/i.test(l)) out.n = out.n || name;
+        }
+        return out;
+      })
+      .catch(() => { _caDateFields = null; return {}; });
+  }
+  return _caDateFields;
+}
+
 function fmtEvolution(v: unknown): string | null {
   if (typeof v !== "number" || !isFinite(v)) return null;
   const pct = v * 100;
@@ -2516,11 +2537,29 @@ function ClientHub({ session, client, hasDraft, onOrder, onHistory, onAppointmen
 
   // Évolution CA N/N-1 : lue directement sur la fiche client, donc disponible hors
   // ligne sans appel supplémentaire (contrairement aux stats calculées sur sale.order).
-  const evolutionValue = typeof client.x_evolution_ca_n_n_1 === "number" ? client.x_evolution_ca_n_n_1 : 0;
-  const evolution = fmtEvolution(client.x_evolution_ca_n_n_1);
-  // Montant de référence affiché sous le pourcentage (champ monétaire x_ca_n_1).
-  // Odoo renvoie `false` — et non 0 — quand le champ n'est pas rempli.
-  const caN1 = typeof client.x_ca_n_1 === "number" ? fmtPrice(client.x_ca_n_1) : null;
+  // CA à date N vs CA à date N-1 (champs Odoo, relus à l'ouverture de la fiche).
+  // Odoo renvoie `false` — et non 0 — quand un champ n'est pas rempli.
+  const [caDate, setCaDate] = useState<{ n: number | null; n1: number | null } | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    setCaDate(null);
+    (async () => {
+      const f = await caDateFields(session);
+      if (!f.n) return;
+      const [r] = await odoo.searchRead(session, "res.partner", [["id", "=", client.id]], [f.n, ...(f.n1 ? [f.n1] : [])], 1).catch(() => []);
+      if (!cancelled && r) setCaDate({ n: typeof r[f.n] === "number" ? r[f.n] : null, n1: f.n1 && typeof r[f.n1] === "number" ? r[f.n1] : null });
+    })();
+    return () => { cancelled = true; };
+  }, [client.id, session]);
+  const caDateN = caDate?.n ?? (typeof client.x_ca_a_date_n === "number" ? client.x_ca_a_date_n : null);
+  const caDateN1 = caDate?.n1 ?? null;
+  const evoRatio = caDateN != null && caDateN1 ? (caDateN - caDateN1) / caDateN1
+    : typeof client.x_evolution_ca_n_n_1 === "number" ? client.x_evolution_ca_n_n_1 : null;
+  const evolutionValue = evoRatio ?? 0;
+  const evolution = fmtEvolution(evoRatio);
+  // Montant de référence sous le pourcentage : CA à date N-1 (sinon CA N-1).
+  const caN1 = caDateN1 != null ? fmtPrice(caDateN1) : typeof client.x_ca_n_1 === "number" ? fmtPrice(client.x_ca_n_1) : null;
+  const evoLabel = caDateN1 != null ? "vs CA à date N-1" : "Évolution CA N-1";
 
   // Refonte : une seule carte accentuée (l'action principale), les autres en blanc.
   const cards = [
@@ -2567,8 +2606,8 @@ function ClientHub({ session, client, hasDraft, onOrder, onHistory, onAppointmen
         <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12, marginBottom: 28 }}>
           <div style={{ background: "#0f766e", borderRadius: 16, padding: "14px 16px", color: "#fff", boxShadow: "0 8px 20px rgba(13,148,136,0.25)" }}>
             {/* CA à date N (champ Odoo, depuis le 1er janvier) ; repli sur le CA 12 mois calculé. */}
-            <div style={{ fontSize: 19, fontWeight: 800 }}>{typeof client.x_ca_a_date_n === "number" ? fmtPrice(client.x_ca_a_date_n) : stats ? fmtPrice(stats.ca) : "…"}</div>
-            <div style={{ fontSize: 10.5, opacity: 0.85, fontWeight: 600, marginTop: 2, textTransform: "uppercase" as const, letterSpacing: "0.03em" }}>{typeof client.x_ca_a_date_n === "number" ? "CA à date N" : "CA 12 mois"}</div>
+            <div style={{ fontSize: 19, fontWeight: 800 }}>{caDateN != null ? fmtPrice(caDateN) : stats ? fmtPrice(stats.ca) : "…"}</div>
+            <div style={{ fontSize: 10.5, opacity: 0.85, fontWeight: 600, marginTop: 2, textTransform: "uppercase" as const, letterSpacing: "0.03em" }}>{caDateN != null ? "CA à date N" : "CA 12 mois"}</div>
           </div>
           <div style={{ background: C.white, border: `1.5px solid ${C.border}`, borderRadius: 16, padding: "14px 16px", boxShadow: C.shadow }}>
             <div style={{ fontSize: 19, fontWeight: 800, color: evolution === null ? C.muted : (evolutionValue >= 0 ? C.green : C.red) }}>
@@ -2577,7 +2616,7 @@ function ClientHub({ session, client, hasDraft, onOrder, onHistory, onAppointmen
             {caN1 && (
               <div style={{ fontSize: 12, fontWeight: 700, color: C.textSec, marginTop: 1 }}>{caN1}</div>
             )}
-            <div style={{ fontSize: 10.5, color: C.muted, fontWeight: 600, marginTop: 2, textTransform: "uppercase" as const, letterSpacing: "0.03em" }}>Évolution CA N-1</div>
+            <div style={{ fontSize: 10.5, color: C.muted, fontWeight: 600, marginTop: 2, textTransform: "uppercase" as const, letterSpacing: "0.03em" }}>{evoLabel}</div>
           </div>
           <div style={{ background: C.white, border: `1.5px solid ${C.border}`, borderRadius: 16, padding: "14px 16px", boxShadow: C.shadow }}>
             <div style={{ fontSize: 19, fontWeight: 800, color: C.text }}>{lastDateLabel}</div>
