@@ -1414,7 +1414,12 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
           onAddNote={addNote} onNoteText={setNoteText}
           groupDiscounts={groupDiscounts} setGroupDiscounts={setGroupDiscounts}
           orderType={orderType} setOrderType={setOrderType} offerIds={offerIds} setOfferIds={setOfferIds} autoOffers={autoOffers}
-          onTemplateApplied={(name, info) => setTemplateInfo(prev => ({ ...prev, [name]: info }))} />
+          onTemplateApplied={(name, info) => setTemplateInfo(prev => ({ ...prev, [name]: info }))}
+          onRenameGroup={(from, to) => {
+            // Variante de MEA changée : les lignes (et réglages) du groupe suivent le nouveau nom.
+            setCart(prev => Object.fromEntries(Object.entries(prev).map(([k, i]) => [k, i.group === from ? { ...i, group: to } : i])) as Record<number, CartItem>);
+            setGroupDiscounts(prev => from in prev ? (({ [from]: v, ...rest }) => ({ ...rest, [to]: v }))(prev) : prev);
+          }} />
       )}
 
       {showAppointment && client && (
@@ -3184,7 +3189,7 @@ function ClientHistory({ session, client }: { session: odoo.OdooSession; client:
 // ═══════════════════════════════════════════════════════════════════════════
 // ÉTAPE 2 — Catalogue + Panier persistant
 // ═══════════════════════════════════════════════════════════════════════════
-function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submitting, note, setNote, client, priceItems, onToast, appliedPromos, giftItems, setGiftItems, freeTypes, eventDiscount, setEventDiscount, shipping, onChangeExpedition, onAddNote, onNoteText, groupDiscounts, setGroupDiscounts, orderType, setOrderType, offerIds, setOfferIds, autoOffers, onTemplateApplied }: {
+function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submitting, note, setNote, client, priceItems, onToast, appliedPromos, giftItems, setGiftItems, freeTypes, eventDiscount, setEventDiscount, shipping, onChangeExpedition, onAddNote, onNoteText, groupDiscounts, setGroupDiscounts, orderType, setOrderType, offerIds, setOfferIds, autoOffers, onTemplateApplied, onRenameGroup }: {
   onAddNote: (text: string, kind?: "line_note" | "line_section", group?: string) => void;
   onNoteText: (id: number, text: string) => void;
   groupDiscounts: Record<string, number>; setGroupDiscounts: React.Dispatch<React.SetStateAction<Record<string, number>>>;
@@ -3192,6 +3197,7 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
   offerIds: number[]; setOfferIds: React.Dispatch<React.SetStateAction<number[]>>;
   autoOffers: { id: number; name: string }[];
   onTemplateApplied: (name: string, info: { note?: string; shipDate?: string }) => void;
+  onRenameGroup: (from: string, to: string) => void;
   // Commande transmise directement à la logistique : dates prévues (sinon null).
   shipping?: ShippingPlan | null;
   onChangeExpedition?: (d: Date | null) => void;
@@ -3499,7 +3505,7 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
         if (offer) setOfferIds(prev => prev.includes(offer.id) ? prev : [...prev, offer.id]);
         if (parsed.length > 1) setMeaVariants(prev => ({ ...prev, [key]: { current: v.id, variants: parsed } }));
       }
-      onToast(`✅ ${template.name} — ${added} produit${added > 1 ? "s" : ""} ajouté${added > 1 ? "s" : ""}${gifts ? ` + ${gifts} offert${gifts > 1 ? "s" : ""}` : ""}`, "success");
+      onToast(`${template.name} — ${added} produit${added > 1 ? "s" : ""} ajouté${added > 1 ? "s" : ""}${gifts ? ` + ${gifts} offert${gifts > 1 ? "s" : ""}` : ""}`, "success");
     } catch (e: any) { onToast("Erreur: " + e.message, "error"); }
     setApplyingMea(null);
   };
@@ -3549,6 +3555,7 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
         const n = prev.filter(id => id !== oldOffer?.id);
         return newOffer && !n.includes(newOffer.id) ? [...n, newOffer.id] : n;
       });
+      onRenameGroup(cur.name, best.name);
       setMeaVariants(prev => ({ ...prev, [key]: { ...g, current: best.id } }));
       onToast(`MEA passée en « ${best.name} » (${inCart(best)} articles)`, "info");
     }
@@ -3939,7 +3946,7 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
       </div>
 
       {/* ── Panier persistant (droite), largeur réglable par la poignée ── */}
-      <div style={{ width: listView ? undefined : cartW, flex: listView ? 1 : undefined, minWidth: 0, position: "relative" as const, background: C.white, borderLeft: `1px solid ${C.border}`, display: "flex", flexDirection: "column" as const, flexShrink: 0 }}>
+      <div style={{ width: listView ? undefined : cartW, maxWidth: listView ? undefined : "52%", flex: listView ? 1 : undefined, minWidth: 0, position: "relative" as const, background: C.white, borderLeft: `1px solid ${C.border}`, display: "flex", flexDirection: "column" as const, flexShrink: 0 }}>
         {!listView && <div onPointerDown={startResize} title="Glisser pour élargir ou réduire le panier"
           style={{ position: "absolute" as const, left: -12, top: 0, bottom: 0, width: 24, cursor: "col-resize", zIndex: 5, touchAction: "none" as const, display: "flex", alignItems: "center", justifyContent: "center" }}>
           <div style={{ width: 5, height: 44, borderRadius: 3, background: C.border, boxShadow: "0 0 0 2px #fff" }} />
