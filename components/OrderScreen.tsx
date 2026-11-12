@@ -2788,8 +2788,8 @@ function ClientHub({ session, client, hasDraft, onOrder, onHistory, onAppointmen
               {c.key === "note" && (
                 <span role="button" tabIndex={0} aria-label="Dicter une note tout de suite" title="Dicter une note tout de suite"
                   onClick={e => { e.stopPropagation(); onNoteRec(); }}
-                  style={{ position: "absolute" as const, top: 10, right: 10, height: 38, padding: "0 13px", borderRadius: 999, background: C.red, color: "#fff", display: "flex", alignItems: "center", gap: 6, fontSize: 12.5, fontWeight: 800, letterSpacing: "0.04em", boxShadow: "0 6px 14px rgba(220,38,38,0.3)" }}>
-                  <span style={{ width: 9, height: 9, borderRadius: "50%", background: "#fff" }} /> REC
+                  style={{ position: "absolute" as const, top: 8, right: 8, height: 36, padding: "0 11px", borderRadius: 999, background: C.bg, border: `1px solid ${C.border}`, color: C.textSec, display: "flex", alignItems: "center", gap: 6, fontSize: 11, fontWeight: 700, letterSpacing: "0.04em" }}>
+                  <span style={{ width: 8, height: 8, borderRadius: "50%", background: C.red }} /> REC
                 </span>
               )}
               <div style={{ width: 38, height: 38, borderRadius: 11, marginBottom: 10, background: C.tealSoft, display: "flex", alignItems: "center", justifyContent: "center" }}>

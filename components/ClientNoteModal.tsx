@@ -47,54 +47,79 @@ export default function ClientNoteModal({ session, client, onClose, onToast, aut
     })();
   }, [session, client.id]);
 
-  // Dictée vocale — Web Speech API (dispo sur Safari iOS récent). Repli silencieux si absente :
-  // le bouton micro ne s'affiche simplement pas, la saisie au clavier reste toujours possible.
-  useEffect(() => {
-    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-    if (!SpeechRecognition) { setSpeechSupported(false); return; }
-    const rec = new SpeechRecognition();
-    rec.lang = "fr-FR";
-    rec.continuous = true;
-    rec.interimResults = true;
-    rec.onresult = (e: any) => {
-      let finalTranscript = "";
-      let interim = "";
-      for (let i = 0; i < e.results.length; i++) {
-        const t = e.results[i][0].transcript;
-        if (e.results[i].isFinal) finalTranscript += t;
-        else interim += t;
-      }
-      const sep = baseTextRef.current && !baseTextRef.current.endsWith(" ") ? " " : "";
-      setText(baseTextRef.current + sep + finalTranscript + interim);
-    };
-    rec.onerror = () => setRecording(false);
-    rec.onend = () => setRecording(false);
-    recognitionRef.current = rec;
-    // Bouton REC de la fiche client : enregistrement direct, sans tap supplémentaire.
-    if (autoRecord) { try { rec.start(); setRecording(true); } catch {} }
-    return () => { try { rec.stop(); } catch {} };
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const toggleRecording = () => {
-    if (!recognitionRef.current) return;
-    if (recording) {
-      recognitionRef.current.stop();
-      setRecording(false);
-    } else {
-      baseTextRef.current = text;
-      try {
+  // Dictée vocale :
+  //  • app iPad (Capacitor) → plugin natif SpeechRecognition (la Web Speech API
+  //    n'existe pas dans la WebView iOS) ;
+  //  • navigateur → Web Speech API (Safari, Chrome, Edge).
+  // Sans l'un ni l'autre : saisie au clavier (le micro du clavier iPad marche aussi).
+  const nativeRef = useRef<any>(null);
+  const applyDictation = (spoken: string) => {
+    const sep = baseTextRef.current && !baseTextRef.current.endsWith(" ") ? " " : "";
+    setText(baseTextRef.current + sep + spoken);
+  };
+  const startDictation = async () => {
+    baseTextRef.current = textRef.current;
+    const nat = nativeRef.current;
+    try {
+      if (nat) {
+        const perm = await nat.requestPermissions();
+        if (perm?.speechRecognition && perm.speechRecognition !== "granted") { setError("Micro refusé — autorise-le dans Réglages › Commande"); return; }
+        setRecording(true);
+        await nat.start({ language: "fr-FR", partialResults: true, maxResults: 1, popup: false });
+      } else if (recognitionRef.current) {
         recognitionRef.current.start();
         setRecording(true);
-      } catch {}
-    }
+      }
+    } catch { setRecording(false); }
   };
+  const stopDictation = () => {
+    try { if (nativeRef.current) void nativeRef.current.stop(); else recognitionRef.current?.stop(); } catch {}
+    setRecording(false);
+  };
+  const textRef = useRef("");
+  textRef.current = text;
+
+  useEffect(() => {
+    const cap = (window as any).Capacitor;
+    const nat = cap?.isNativePlatform?.() ? cap.Plugins?.SpeechRecognition : null;
+    const handles: any[] = [];
+    let rec: any = null;
+    if (nat) {
+      nativeRef.current = nat;
+      Promise.resolve(nat.addListener("partialResults", (d: any) => { if (d?.matches?.[0]) applyDictation(String(d.matches[0])); })).then(h => handles.push(h)).catch(() => {});
+      Promise.resolve(nat.addListener("listeningState", (d: any) => { if (d?.status === "stopped") setRecording(false); })).then(h => handles.push(h)).catch(() => {});
+    } else {
+      const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+      if (!SpeechRecognition) { setSpeechSupported(false); return; }
+      rec = new SpeechRecognition();
+      rec.lang = "fr-FR";
+      rec.continuous = true;
+      rec.interimResults = true;
+      rec.onresult = (e: any) => {
+        let spoken = "";
+        for (let i = 0; i < e.results.length; i++) spoken += e.results[i][0].transcript;
+        applyDictation(spoken);
+      };
+      rec.onerror = () => setRecording(false);
+      rec.onend = () => setRecording(false);
+      recognitionRef.current = rec;
+    }
+    // Bouton REC de la fiche client : enregistrement direct, sans tap supplémentaire.
+    if (autoRecord) void startDictation();
+    return () => {
+      try { if (nat) void nat.stop(); else rec?.stop(); } catch {}
+      handles.forEach(h => { try { h?.remove?.(); } catch {} });
+    };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const toggleRecording = () => { if (recording) stopDictation(); else void startDictation(); };
 
   const handleSave = async () => {
     setError("");
     if (!text.trim()) { setError("Note vide"); return; }
     setSaving(true);
     try {
-      if (recording) { recognitionRef.current?.stop(); setRecording(false); }
+      if (recording) stopDictation();
       // Ajoutée en tête des Notes DC, datée et signée.
       const now = new Date();
       const stamp = `${now.toLocaleDateString("fr-FR")} ${now.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}`;
@@ -170,7 +195,7 @@ export default function ClientNoteModal({ session, client, onClose, onToast, aut
             )}
           </div>
           {recording && <div style={{ fontSize: 12, color: C.red, fontWeight: 700, marginTop: 6 }}>● REC — parle normalement, relis puis « Enregistrer »</div>}
-          {!speechSupported && <div style={{ fontSize: 11, color: C.muted, marginTop: 6 }}>Dictée vocale non disponible sur ce navigateur — saisie au clavier uniquement.</div>}
+          {!speechSupported && <div style={{ fontSize: 11, color: C.muted, marginTop: 6 }}>Dictée non disponible sur ce navigateur (utilise Safari, Chrome ou l'app iPad) — saisie au clavier.</div>}
         </div>
 
         <div style={{ padding: "16px 24px 22px", display: "flex", gap: 10, flexShrink: 0 }}>

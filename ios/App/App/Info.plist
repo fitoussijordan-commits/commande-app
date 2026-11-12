@@ -51,6 +51,10 @@
 	<false/>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>en</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Le micro sert à dicter les notes client.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>La reconnaissance vocale transcrit les notes client dictées.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>Votre position sert à trouver les clients proches de vous.</string>
 	<key>CFBundleDisplayName</key>
