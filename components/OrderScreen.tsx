@@ -126,11 +126,15 @@ function matchesSearch(p: any, words: string[]): boolean {
   return words.every(w => hay.includes(w));
 }
 // Ligne offerte : produit à 0€ + type de gratuité (type_gratuit sur sale.order.line).
-// cond : gratuité d'un modèle (MEA) — valable seulement si les quantités
-// payantes du modèle sont atteintes (ex. « 48 coffrets + 8 offerts »).
+// cond : gratuité d'un modèle (MEA) — valable tant que le TOTAL des articles
+// payants du modèle est atteint, répartition libre (« 48 coffrets + 8 offerts » :
+// 13 + 25 + 16 = 54 ≥ 48 → offert).
 interface GiftItem { product: any; qty: number; type: string; cond?: { label: string; required: Record<number, number> } }
 function giftActive(g: GiftItem, cart: Record<number, { qty: number }>): boolean {
-  return !g.cond || Object.entries(g.cond.required).every(([pid, q]) => (cart[Number(pid)]?.qty || 0) >= q);
+  if (!g.cond) return true;
+  const ids = Object.keys(g.cond.required).map(Number);
+  const need = ids.reduce((s, id) => s + g.cond!.required[id], 0);
+  return ids.reduce((s, id) => s + (cart[id]?.qty || 0), 0) >= need;
 }
 interface FreeRule {
   id: string; name: string; triggerQty: number; freeQty: number;
@@ -3404,7 +3408,8 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
           continue;
         }
         // Quantités payantes du modèle : condition des gratuités (vérifiée en continu).
-        if (qty > 0 && !isSeparatorProduct(product)) required[product.id] = (required[product.id] ?? (cart[product.id]?.qty || 0)) + qty;
+        // (hors article « kit » de la MEA, ligne marquée gratuité à 0 €)
+        if (qty > 0 && !isSeparatorProduct(product) && !(tlm.freeType && line[tlm.freeType])) required[product.id] = (required[product.id] ?? (cart[product.id]?.qty || 0)) + qty;
         if (qty === 0 && cart[product.id]) continue;
         const listPrice = applyPricelist(product.lst_price || 0, product.id, product.product_tmpl_id?.[0] || 0, priceItems, Math.max(1, qty));
         // Remise partielle du modèle appliquée au prix de la ligne.
@@ -3975,7 +3980,7 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
               {giftItems.map((g, i) => (
                 /* Une ligne par gratuité ; le type se choisit en tête du bloc (choix
                    par ligne seulement s'il manque). */
-                <div key={i} title={!giftActive(g, cart) ? `Offre suspendue : quantités de « ${g.cond?.label} » non atteintes` : undefined}
+                <div key={i} title={!giftActive(g, cart) ? `Offre suspendue : total d'articles de « ${g.cond?.label} » non atteint` : undefined}
                   style={{ display: "flex", alignItems: "center", gap: 6, padding: "3px 0", borderBottom: i < giftItems.length - 1 ? `1px solid ${C.green}22` : "none", flexWrap: g.type ? "nowrap" as const : "wrap" as const, opacity: giftActive(g, cart) ? 1 : 0.45 }}>
                   <span title={g.product.default_code || ""} style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const, fontSize: 11.5, fontWeight: 600, color: C.text, textDecoration: giftActive(g, cart) ? "none" : "line-through" }}>
                     {g.product.name}
@@ -4001,7 +4006,7 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
               ))}
               {giftItems.some(g => !giftActive(g, cart)) && (
                 <div style={{ marginTop: 6, fontSize: 11, fontWeight: 700, color: C.orange }}>
-                  Offre gratuite suspendue : quantités de l'offre non atteintes (elle revient si tu remets les quantités).
+                  Offre gratuite suspendue : total d'articles de l'offre non atteint (elle revient dès qu'il l'est).
                 </div>
               )}
               {/* Récap gratuités */}
