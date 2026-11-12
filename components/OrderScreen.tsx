@@ -13,6 +13,7 @@ import VisitPriority from "@/components/VisitPriority";
 import Dashboard from "@/components/Dashboard";
 import AgendaGlass from "@/components/AgendaGlass";
 import { resolveClientFamily, odooRecordUrl } from "@/lib/perimes";
+import InvoiceHistory from "@/components/InvoiceHistory";
 import { saleStep, snapQty, optionalProductFields, ppcOf } from "@/lib/productFields";
 import { orderMeta, isMea, isImplantation, offerNames, offerOptions, templateMeta, templateLineMeta, type OrderMeta } from "@/lib/orderOffers";
 import { loadBlockingTags, clientBlockingTags, loadClosedDayTags, clientClosedWeekdays, type BlockingTag, type ClosedDayTag } from "@/lib/clientFlags";
@@ -2730,7 +2731,7 @@ function ClientHistory({ session, client }: { session: odoo.OdooSession; client:
   const [loadingLines, setLoadingLines] = useState(false);
 
   // Onglets : commandes / palmarès produits / MEA / gratuités — + année sélectionnée.
-  const [mode, setMode] = useState<"orders" | "ranking" | "mea" | "gifts">("orders");
+  const [mode, setMode] = useState<"orders" | "ranking" | "mea" | "gifts" | "invoices">("orders");
   const nowYear = new Date().getFullYear();
   const [year, setYear] = useState(nowYear);
   const YEARS = [nowYear, nowYear - 1, nowYear - 2];
@@ -2777,7 +2778,7 @@ function ClientHistory({ session, client }: { session: odoo.OdooSession; client:
   }, [mode, session, giftTypes.length]);
 
   useEffect(() => {
-    if (mode === "orders") return;
+    if (mode === "orders" || mode === "invoices") return;
     let cancelled = false;
     (async () => {
       setAnalyLoading(true);
@@ -2906,8 +2907,9 @@ function ClientHistory({ session, client }: { session: odoo.OdooSession; client:
     cancel:   { label: "Annulée",   color: C.red,    bg: C.redSoft },
   };
 
-  const TABS: { id: "orders" | "ranking" | "mea" | "gifts"; label: string }[] = [
+  const TABS: { id: "orders" | "ranking" | "mea" | "gifts" | "invoices"; label: string }[] = [
     { id: "orders", label: "Commandes" },
+    { id: "invoices", label: "Factures" },
     { id: "ranking", label: "Palmarès" },
     { id: "mea", label: "MEA" },
     { id: "gifts", label: "Gratuités" },
@@ -2941,6 +2943,9 @@ function ClientHistory({ session, client }: { session: odoo.OdooSession; client:
             ))}
           </div>
         )}
+
+        {/* ── Onglet FACTURES (factures + avoirs, avoir → facture) ── */}
+        {mode === "invoices" && <InvoiceHistory session={session} client={client} year={year} />}
 
         {/* ── Onglet PALMARÈS ── */}
         {mode === "ranking" && (
