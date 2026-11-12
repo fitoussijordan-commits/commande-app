@@ -254,9 +254,9 @@ export default function PerimeScreen({ session, client, priceItems, freeTypes, o
     setQ(""); setResults([]); setLotHits([]); setLotNote("");
   };
 
-  const addProduct = (p: any) => {
+  const addProduct = (p: any, as: Mode = mode) => {
     const price = p.lst_price || 0;
-    if (mode === "return") {
+    if (as === "return") {
       setReturns(prev => prev.some(l => l.product.id === p.id)
         ? prev.map(l => l.product.id === p.id ? { ...l, qty: l.qty + 1 } : l)
         : [...prev, { product: p, qty: 1, basePrice: price,
@@ -280,6 +280,34 @@ export default function PerimeScreen({ session, client, priceItems, freeTypes, o
   // du côté le plus élevé (perimes.balancedLines). > 0 : remise sur la reprise ;
   // < 0 : remise sur l'échange. Les prix des articles restent les vrais prix.
   const adjustment = perimes.balanceAdjustment(returns, exchanges);
+
+  // Reliquat de reprise (reprise > échange) : produits de vente en stock dont le
+  // prix client tient dans le reliquat, le plus proche en premier (ex. il reste
+  // 6 € → stick lèvres à 5,66 €). Un tap l'ajoute à l'échange.
+  const [fillers, setFillers] = useState<any[]>([]);
+  const remaining = adjustment > 0 ? adjustment : 0;
+  useEffect(() => {
+    if (remaining < 1) { setFillers([]); return; }
+    let cancelled = false;
+    const t = setTimeout(async () => {
+      let rows: any[] = [];
+      try {
+        rows = await odoo.searchRead(session, "product.product",
+          [["sale_ok", "=", true], ["active", "=", true], ["virtual_available", ">", 0], ["default_code", "=like", "1%"],
+           ["lst_price", ">", 0], ["lst_price", "<=", remaining * 1.6]],
+          ["id", "name", "default_code", "barcode", "lst_price", "product_tmpl_id", "virtual_available"], 300, "lst_price desc");
+      } catch {
+        try { rows = (await sync.getCachedProducts()).filter((p: any) => /^1/.test(String(p.default_code || "")) && (p.lst_price || 0) > 0 && (p.virtual_available || 0) > 0); }
+        catch { rows = []; }
+      }
+      const priced = rows.map(p => ({ p, price: Math.round(applyPricelist(p.lst_price || 0, p.id, p.product_tmpl_id?.[0] || 0, priceItems as any, 1) * 100) / 100 }))
+        .filter(x => x.price > 0 && x.price <= remaining + 0.005 && !exchanges.some(e => e.product.id === x.p.id))
+        .sort((a, b) => b.price - a.price)
+        .slice(0, 8);
+      if (!cancelled) setFillers(priced);
+    }, 300);
+    return () => { cancelled = true; clearTimeout(t); };
+  }, [remaining, session]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const validate = async () => {
     if (sansReprise) { onToast("Statut sans droit à reprise", "error"); return; }
@@ -650,6 +678,24 @@ export default function PerimeScreen({ session, client, priceItems, freeTypes, o
                 )}
               </div>
             ))}
+          </div>
+        )}
+
+        {/* Reliquat : produits qui tiennent dans le montant restant */}
+        {remaining >= 1 && fillers.length > 0 && (
+          <div style={{ marginBottom: 12, padding: "10px 12px", borderRadius: 14, background: C.white, border: `1px solid ${C.border}` }}>
+            <div style={{ fontSize: 12.5, fontWeight: 800, color: C.text, marginBottom: 8 }}>
+              Il reste {fmt(remaining)} de reprise — à compléter avec :
+            </div>
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" as const }}>
+              {fillers.map(({ p, price }) => (
+                <button key={p.id} onClick={() => { setMode("exchange"); addProduct(p, "exchange"); }} title={`${p.default_code || ""} ${p.name}`}
+                  style={{ display: "flex", alignItems: "center", gap: 8, maxWidth: "100%", height: 34, padding: "0 12px", borderRadius: 999, border: `1.5px solid ${C.border}`, background: C.white, cursor: "pointer", fontFamily: "inherit" }}>
+                  <span style={{ fontSize: 12.5, fontWeight: 600, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const, maxWidth: 220 }}>{p.name}</span>
+                  <span style={{ fontSize: 12.5, fontWeight: 800, color: C.teal, flexShrink: 0 }}>{fmt(price)}</span>
+                </button>
+              ))}
+            </div>
           </div>
         )}
 
