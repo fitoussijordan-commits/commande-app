@@ -48,7 +48,7 @@ export async function loadBdcImages(session: import("@/lib/odoo").OdooSession, p
   }
   let logo: string | undefined;
   try {
-    const res = await fetch("/logo-full.png");
+    const res = await fetch("/logo-bdc.png");   // logo officiel, repris des BDC de séminaire
     const buf = new Uint8Array(await res.arrayBuffer());
     let bin = ""; for (let i = 0; i < buf.length; i++) bin += String.fromCharCode(buf[i]);
     logo = btoa(bin);
@@ -70,15 +70,19 @@ export async function buildBdc(clients: BdcClient[], images?: BdcImages): Promis
       { width: 20 }, { width: 12 }, { width: 44 }, { width: 16 }, { width: 10 }, { width: 10 },
       { width: 12 }, { width: 14 }, { width: 16 }, { width: 16 }, { width: 16 },
     ];
-    ws.mergeCells("H2:K2");
+    // Lignes d'en-tête de hauteur fixe (sinon Excel les agrandit), titre sur D→K.
+    ws.getRow(1).height = 14; ws.getRow(2).height = 30;
+    [3, 4, 5].forEach(n => { ws.getRow(n).height = 18; });
+    ws.getRow(6).height = 8;
+    ws.mergeCells("D2:K2");
     if (images?.logo) {
       const id = wb.addImage({ base64: images.logo, extension: "png" });
-      ws.addImage(id, { tl: { col: 0.15, row: 1.1 }, ext: { width: 150, height: 58 } });
+      ws.addImage(id, { tl: { col: 0.1, row: 0.3 }, ext: { width: 128, height: 70 } });
     }
-    const t = ws.getCell("H2");
+    const t = ws.getCell("D2");
     t.value = `Bon de Commande ${c.campaign.key}`;
     t.font = { bold: true, size: 16, color: { argb: TEAL } };
-    t.alignment = { horizontal: "right" };
+    t.alignment = { horizontal: "right", vertical: "middle", shrinkToFit: true };
     ws.getCell("K3").value = `Tarifs ${year}`;
     ws.getCell("K3").alignment = { horizontal: "right" };
     ws.getCell("K3").font = { color: { argb: MUTED } };

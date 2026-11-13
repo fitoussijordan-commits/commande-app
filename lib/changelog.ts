@@ -10,7 +10,7 @@ export const CHANGELOG: ChangelogEntry[] = [
     items: [
       "Fiche client → « Préparer le RDV » : CA à date N / N-1, offres du cycle faites ou à proposer (offre prévue + note), quantités proposées par produit d'après les achats N-1, plus grosses baisses du client.",
       "Fiche client : tuile « Assistant » retirée.",
-      "BDC Excel : photo de chaque produit et logo, comme sur les BDC de séminaire.",
+      "BDC Excel : photo de chaque produit et logo officiel Dr. Hauschka (repris des BDC de séminaire), titre et en-tête bien cadrés.",
       "Mes MEA → « BDC Excel » : BDC de la MEA pour tous les clients affichés en un fichier (un onglet par client), pour l'après-séminaire.",
       "BDC Excel de la MEA généré pour le client (même présentation que les BDC de séminaire : achats N-1, proposition commerciale, remise client, kit offert).",
       "Création du devis : animation des produits qui sautent et barre de progression avec les étapes pendant l'envoi à Odoo.",
