@@ -54,6 +54,7 @@ const C = {
 
 // ── Icônes SVG (remplacent les emojis du chrome — trait unique, currentColor) ──
 const ICON_PATHS: Record<string, React.ReactNode> = {
+  trash: <><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6M10 11v6M14 11v6"/></>,
   calendar: <><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M16 3v4M8 3v4M3 11h18"/></>,
   clock: <><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></>,
   note: <><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></>,
@@ -1455,6 +1456,11 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
 
       {step === "catalog" && client && (
         <CatalogStep session={session} cart={cart} onQtyChange={setQty} freeItems={freeItems}
+          onClearCart={group => {
+            // Vider le panier (ou une seule MEA) en une fois.
+            setCart(prev => group ? Object.fromEntries(Object.entries(prev).filter(([, i]) => i.group !== group)) as Record<number, CartItem> : {});
+            if (!group) setAppliedPromos({});
+          }}
           onValidate={handleValidate} submitting={submitting}
           note={note} setNote={setNote} client={client} priceItems={priceItems} onToast={onToast}
           appliedPromos={appliedPromos}
@@ -3269,7 +3275,7 @@ function ClientHistory({ session, client }: { session: odoo.OdooSession; client:
 // ═══════════════════════════════════════════════════════════════════════════
 // ÉTAPE 2 — Catalogue + Panier persistant
 // ═══════════════════════════════════════════════════════════════════════════
-function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submitting, note, setNote, client, priceItems, onToast, appliedPromos, giftItems, setGiftItems, freeTypes, eventDiscount, setEventDiscount, shipping, onChangeExpedition, onAddNote, onNoteText, groupDiscounts, setGroupDiscounts, orderType, setOrderType, offerIds, setOfferIds, autoOffers, onTemplateApplied, onRenameGroup }: {
+function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submitting, note, setNote, client, priceItems, onToast, appliedPromos, giftItems, setGiftItems, freeTypes, eventDiscount, setEventDiscount, shipping, onChangeExpedition, onAddNote, onNoteText, groupDiscounts, setGroupDiscounts, orderType, setOrderType, offerIds, setOfferIds, autoOffers, onTemplateApplied, onRenameGroup, onClearCart }: {
   onAddNote: (text: string, kind?: "line_note" | "line_section", group?: string) => void;
   onNoteText: (id: number, text: string) => void;
   groupDiscounts: Record<string, number>; setGroupDiscounts: React.Dispatch<React.SetStateAction<Record<string, number>>>;
@@ -3278,6 +3284,7 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
   autoOffers: { id: number; name: string }[];
   onTemplateApplied: (name: string, info: { note?: string; shipDate?: string }) => void;
   onRenameGroup: (from: string, to: string) => void;
+  onClearCart: (group?: string) => void;
   // Commande transmise directement à la logistique : dates prévues (sinon null).
   shipping?: ShippingPlan | null;
   onChangeExpedition?: (d: Date | null) => void;
@@ -3371,6 +3378,24 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
       onQtyChange(product, 0);
       setRemoving(prev => { const n = new Set(prev); n.delete(product.id); return n; });
     }, 190);
+  };
+  // Tout vider, ou retirer une MEA entière (ses lignes, rubriques, gratuités,
+  // remise et offre cochée). Confirmation : un tap de trop coûte tout le panier.
+  const clearCart = () => {
+    if (!window.confirm("Vider tout le panier ?\n\nTous les articles, gratuités et MEA seront retirés.")) return;
+    onClearCart();
+    setGiftItems([]); setGroupDiscounts({}); setOfferIds([]); setMeaVariants({}); setEventDiscount(0);
+    onToast("Panier vidé", "info");
+  };
+  const removeGroup = (group: string) => {
+    if (!window.confirm(`Retirer « ${group} » du panier ?\n\nSes articles, rubriques et gratuités seront retirés.`)) return;
+    onClearCart(group);
+    setGiftItems(prev => prev.filter(g => g.cond?.label !== group));
+    setGroupDiscounts(prev => { const n = { ...prev }; delete n[group]; return n; });
+    const offer = offerFor(group);
+    if (offer) setOfferIds(prev => prev.filter(id => id !== offer.id));
+    setMeaVariants(prev => Object.fromEntries(Object.entries(prev).filter(([, g]) => !g.variants.some(v => v.name === group))));
+    onToast(`${group} retiré du panier`, "info");
   };
   const toggleRecap = () => setRecapOpen(o => { try { localStorage.setItem("wms_recap_open", o ? "0" : "1"); } catch {} return !o; });
   // Type de gratuité appliqué à toutes les gratuités (Coffre DC par défaut).
@@ -4123,6 +4148,13 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
               style={{ width: 30, height: 30, borderRadius: 8, background: "rgba(255,255,255,0.15)", border: "none", color: "#fff", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
               <Icon name="note" size={15} />
             </button>
+            {/* Vider le panier */}
+            {cartItems.length + giftItems.length > 0 && (
+              <button onClick={clearCart} title="Vider tout le panier" aria-label="Vider tout le panier"
+                style={{ width: 30, height: 30, borderRadius: 8, background: "rgba(255,255,255,0.15)", border: "none", color: "#fff", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                <Icon name="trash" size={15} />
+              </button>
+            )}
             {/* Vue liste plein écran */}
             <button onClick={() => setListView(v => !v)} title={listView ? "Revenir au catalogue" : "Vue liste : une ligne par article"}
               style={{ width: 30, height: 30, borderRadius: 8, background: listView ? "#fff" : "rgba(255,255,255,0.15)", border: "none", color: listView ? "#0f766e" : "#fff", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
@@ -4175,6 +4207,13 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
                       {sepLabel}
                     </span>
                     <span style={{ flex: 1, height: 1, background: item.group ? C.tealMid : C.border }} />
+                    {/* Retirer toute la MEA en un tap */}
+                    {item.group && (
+                      <button onClick={() => removeGroup(item.group!)} title={`Retirer « ${item.group} » du panier`}
+                        style={{ flexShrink: 0, height: 26, padding: "0 9px", borderRadius: 999, border: `1px solid ${C.red}33`, background: C.redSoft, color: C.red, cursor: "pointer", fontFamily: "inherit", fontSize: 11, fontWeight: 700, display: "flex", alignItems: "center", gap: 4 }}>
+                        <Icon name="trash" size={12} /> Retirer
+                      </button>
+                    )}
                     {/* Devis d'implantation : remise modifiable, appliquée à toutes ses lignes */}
                     {item.group && /implantation/i.test(item.group) && (
                       <label style={{ display: "flex", alignItems: "center", gap: 3, fontSize: 10.5, fontWeight: 700, color: C.orange, flexShrink: 0 }}>

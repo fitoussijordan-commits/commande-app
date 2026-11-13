@@ -8,6 +8,7 @@ export const CHANGELOG: ChangelogEntry[] = [
   {
     date: "2026-11-13",
     items: [
+      "Panier : bouton corbeille pour tout vider d'un coup, et bouton « Retirer » sur chaque MEA (articles, gratuités, remise et offre cochée retirés ensemble).",
       "MEA : les testeurs du modèle à quantité 0 sont repris dans les gratuités, à 0 — au commercial de choisir (les lignes à 0 ne partent pas sur le devis).",
       "Ruptures : la ligne « RUPTURE » du devis indique le manquant, la référence, l'EAN et le nom de l'article.",
       "Version de l'app affichée en bas de l'écran, avec ce journal des nouveautés.",
