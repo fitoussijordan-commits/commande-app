@@ -20,6 +20,9 @@ Vercel. Objectif principal : **fonctionner hors ligne** (vraie app iPad native).
 ## RÈGLES ABSOLUES
 
 1. **Une seule base : `main`.** Une seule branche, une seule URL.
+   **Jordan veut que chaque modification parte en production systématiquement**
+   (push sur `main` + `capacitor`), sans redemander : une branche de preview ne
+   lui sert à rien.
    `main` sert la **production** `https://commande-app-tan.vercel.app`, et c'est
    cette même URL qu'appelle l'app iPad (`NEXT_PUBLIC_API_BASE` dans `.env.local`).
    Un push sur `main` met donc à jour d'un coup ce que Jordan vérifie sur PC **et**
