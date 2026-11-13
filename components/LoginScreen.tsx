@@ -1,5 +1,6 @@
 "use client";
 import { useState, useEffect } from "react";
+import VersionFooter from "@/components/VersionFooter";
 import * as odoo from "@/lib/odoo";
 
 const C = {
@@ -95,6 +96,7 @@ export default function LoginScreen({ onLogin }: Props) {
           style={{ width: "100%", marginTop: 8, padding: "14px", background: loading ? C.muted : C.teal, color: "#fff", border: "none", borderRadius: 12, fontSize: 15, fontWeight: 700, cursor: loading ? "default" : "pointer", fontFamily: "inherit" }}>
           {loading ? "Connexion…" : "Se connecter"}
         </button>
+        <VersionFooter style={{ marginTop: 14 }} />
       </form>
     </div>
   );

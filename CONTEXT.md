@@ -299,3 +299,15 @@ Tout le mouvement de l'app est en CSS pur (aucune bibliothèque, marche hors lig
 - Ne jamais laisser un `transform` permanent sur un conteneur d'écran : les modales
   en `position: fixed` se positionneraient par rapport à lui (d'où le remplissage
   `backwards` des animations).
+
+---
+
+## Version et journal des nouveautés
+
+- La version (commit + heure du build) s'affiche en bas de l'écran d'accueil et
+  du login ; un tap ouvre « Nouveautés ». Injectée par `next.config.js`
+  (`NEXT_PUBLIC_APP_VERSION`, `NEXT_PUBLIC_BUILD_TIME`, `NEXT_PUBLIC_APP_TARGET`).
+- **À chaque mise en production, ajouter les changements dans `lib/changelog.ts`**
+  (phrases pour les commerciaux, entrée du jour en tête).
+- Au lancement : version tracée dans la console, historique des versions vues
+  dans `localStorage.app_versions`, toast « Mise à jour … » après un changement.

@@ -4,6 +4,8 @@ import * as odoo from "@/lib/odoo";
 import LoginScreen from "@/components/LoginScreen";
 import OrderScreen from "@/components/OrderScreen";
 import { initIncomingFiles } from "@/lib/incomingFile";
+import { versionLabel, APP_VERSION } from "@/components/VersionFooter";
+import { CHANGELOG } from "@/lib/changelog";
 
 const LS_SESSION = "commande_session";
 
@@ -137,6 +139,24 @@ export default function HomePage() {
   // Écoute dès le lancement les PDF / photos ouverts depuis Mail (partager → Commande),
   // même si le commercial n'est pas encore connecté.
   useEffect(() => { initIncomingFiles(); }, []);
+
+  // Journal de version : tracée dans la console à chaque lancement, et
+  // historique des versions vues sur l'appareil (localStorage « app_versions »,
+  // 20 dernières) — pour savoir quelle version tournait lors d'un souci.
+  // Après une mise à jour, un toast annonce la nouveauté principale.
+  useEffect(() => {
+    console.info(`[commande-app] ${versionLabel()}`);
+    try {
+      const log: { v: string; at: string }[] = JSON.parse(localStorage.getItem("app_versions") || "[]");
+      const last = log[log.length - 1]?.v;
+      if (last !== APP_VERSION) {
+        log.push({ v: APP_VERSION, at: new Date().toISOString() });
+        localStorage.setItem("app_versions", JSON.stringify(log.slice(-20)));
+        const news = CHANGELOG[0]?.items[0];
+        if (last && news) setTimeout(() => toast(`Mise à jour ${APP_VERSION} — ${news}`, "info"), 2600);
+      }
+    } catch {}
+  }, [toast]);
 
   // Restaure la session au chargement (évite de se reconnecter à chaque ouverture)
   useEffect(() => {

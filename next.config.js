@@ -5,9 +5,20 @@
 // Déclenché par CAPACITOR_BUILD=1 — le build Vercel normal n'est pas affecté.
 const isCapacitor = process.env.CAPACITOR_BUILD === "1";
 
+// Version affichée en bas de l'app (et journalisée au lancement) : commit
+// déployé + heure du build. Vercel fournit le commit ; en local, git.
+let sha = (process.env.VERCEL_GIT_COMMIT_SHA || "").slice(0, 7);
+if (!sha) { try { sha = require("child_process").execSync("git rev-parse --short=7 HEAD").toString().trim(); } catch { sha = "dev"; } }
+const appEnv = {
+  NEXT_PUBLIC_APP_VERSION: sha,
+  NEXT_PUBLIC_BUILD_TIME: new Date().toISOString(),
+  NEXT_PUBLIC_APP_TARGET: isCapacitor ? "ipad" : "web",
+};
+
 const nextConfig = isCapacitor
   ? {
       reactStrictMode: true,
+      env: appEnv,
       output: "export",
       // Les images passent par le proxy Odoo (URL absolue), pas par next/image.
       images: { unoptimized: true },
@@ -15,6 +26,7 @@ const nextConfig = isCapacitor
     }
   : {
       reactStrictMode: true,
+      env: appEnv,
       async headers() {
         return [
           {

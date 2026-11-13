@@ -24,11 +24,19 @@ export interface OrderMeta {
 
 let _meta: OrderMeta | null = null;
 
+const LS_META = "wms_order_meta";
 export async function orderMeta(session: odoo.OdooSession): Promise<OrderMeta> {
   if (_meta) return _meta;
   const meta: OrderMeta = { implantValues: [], typeOptions: [] };
-  const fields: Record<string, any> = await odoo.callMethod(session, "sale.order", "fields_get", [],
-    { attributes: ["string", "type", "relation", "selection"] });
+  let fields: Record<string, any>;
+  try {
+    fields = await odoo.callMethod(session, "sale.order", "fields_get", [],
+      { attributes: ["string", "type", "relation", "selection"] });
+  } catch (e) {
+    // Hors ligne : dernière détection connue (sinon type et offres disparaissent du panier).
+    if (odoo.isNetworkError(e)) { try { const c = JSON.parse(localStorage.getItem(LS_META) || "null"); if (c) return c; } catch {} }
+    throw e;
+  }
 
   // Champ connu de cette instance (vérifié dans Odoo) ; la recherche par libellé
   // ci-dessous ne sert que si on le renomme un jour.
@@ -64,6 +72,7 @@ export async function orderMeta(session: odoo.OdooSession): Promise<OrderMeta> {
     }
   }
   _meta = meta;
+  try { localStorage.setItem(LS_META, JSON.stringify(meta)); } catch {}
   return meta;
 }
 

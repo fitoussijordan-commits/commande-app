@@ -23,6 +23,7 @@ import { onIncomingFile } from "@/lib/incomingFile";
 import { needsShippingFee, shippingProduct, SHIPPING_FEE_HT, FRANCO_HT } from "@/lib/franco";
 import OrderCheck from "@/components/OrderCheck";
 import OrderDetailModal from "@/components/OrderDetailModal";
+import VersionFooter from "@/components/VersionFooter";
 import { CountUp, TubeLoader, TubeSuccess, CatalogSkeleton, ListSkeleton } from "@/components/motion";
 import * as sync from "@/lib/sync";
 import * as geo from "@/lib/geo";
@@ -2638,6 +2639,8 @@ function ClientStep({ session, onSelect, onImportBon, onOpenPlanning, onToast, d
           </div>
         </div>
       )}
+      {/* Version de l'app (un tap : journal des nouveautés) */}
+      <VersionFooter style={{ marginTop: "auto", paddingTop: 24 }} />
     </div>
   );
 }

@@ -18,6 +18,11 @@ body {
   background: #f8fafc;
 }
 
+/* Listes déroulantes : options toujours lisibles. Les <select> du récap
+   sombre du panier ont un texte blanc ; sous Windows (Chrome / Edge) la liste
+   ouverte reste blanche → options blanches sur blanc, invisibles. */
+select option, select optgroup { color: #0f172a; background-color: #fff; }
+
 /* ═══════════════════════════════════════════════════════════════════════════
    MOUVEMENT — animations de l'app (CSS pur, aucun fichier externe : tout
    marche hors ligne). Courtes (150–300 ms) : elles confirment un geste, elles

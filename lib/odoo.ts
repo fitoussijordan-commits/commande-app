@@ -116,6 +116,11 @@ export async function write(session: OdooSession, model: string, ids: number[], 
 }
 
 export async function callMethod(session: OdooSession, model: string, method: string, args: any[] = [], kwargs: any = {}) {
+  // fields_get : libellés TOUJOURS en français. Plusieurs champs Studio sont
+  // repérés par leur libellé (« Type de commande », « Offres commandées »…) ;
+  // un utilisateur Odoo réglé en anglais les recevait traduits et ne les
+  // voyait plus dans l'app.
+  if (method === "fields_get" && !kwargs?.context) kwargs = { ...kwargs, context: FR_CTX };
   const res = await call(session, "/web/dataset/call_kw", { model, method, args, kwargs });
   return /^(unlink|action_archive|action_unarchive)$/.test(method) ? afterWrite(session, model, res) : res;
 }
