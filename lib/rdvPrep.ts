@@ -78,6 +78,118 @@ function splitCode(label: string) {
 }
 const snap = (p: any, q: number) => { const s = saleStep(p); return q <= 0 ? 0 : Math.max(s, Math.round(q / s) * s); };
 
+// ── Modèles de devis d'une campagne → produits mis en avant, kit, variantes ──
+export interface TemplateCtx { tLines: any[]; tlm: { discount?: string; freeType?: string }; pMap: Map<number, any>; templates: any[] }
+export interface CampaignBase { campaign: MeaCampaign; variants: PrepVariant[]; tpls: any[]; prodLines: any[]; kit: { code: string; name: string }[]; linesOf: (tpl: any) => any[]; isKit: (l: any) => boolean }
+
+export const templatesOf = (templates: any[], c: MeaCampaign) =>
+  templates.filter(t => fold(String(t.name || "")).startsWith(fold(c.key)) && !/implantation/i.test(String(t.name)));
+
+export function campaignBase(ctx: TemplateCtx, c: MeaCampaign): CampaignBase {
+  const tpls = templatesOf(ctx.templates, c);
+  const linesOf = (tpl: any) => ctx.tLines.filter(l => (tpl.sale_order_template_line_ids || []).includes(l.id) && l.product_id && !l.display_type);
+  const isKit = (l: any) => (ctx.tlm.discount ? Number(l[ctx.tlm.discount]) || 0 : 0) >= 99.99 || !!(ctx.tlm.freeType && l[ctx.tlm.freeType]);
+  const variants: PrepVariant[] = tpls.map(tpl => ({
+    id: tpl.id, name: String(tpl.name),
+    total: linesOf(tpl).filter(l => !isKit(l)).reduce((s, l) => s + (Number(l.product_uom_qty) || 0), 0),
+  })).sort((a, b) => a.total - b.total);
+  const seen = new Set<number>(); const kitSeen = new Set<number>();
+  const prodLines: any[] = []; const kit: { code: string; name: string }[] = [];
+  for (const tpl of tpls) for (const l of linesOf(tpl)) {
+    const pid = m2oId(l.product_id)!; const p = ctx.pMap.get(pid); if (!p) continue;
+    if (isKit(l)) { if (!kitSeen.has(pid)) { kitSeen.add(pid); kit.push({ code: String(p.default_code || ""), name: String(p.name) }); } continue; }
+    if (!seen.has(pid)) { seen.add(pid); prodLines.push(p); }
+  }
+  return { campaign: c, variants, tpls, prodLines, kit, linesOf, isKit };
+}
+
+// Proposition : variante la plus grande atteinte par les achats N-1 du client
+// (sinon la plus petite), répartie selon son mix d'achats N-1.
+export function propose(base: CampaignBase, n1Map: Map<number, { qty: number }>, nMap: Map<number, { qty: number }>, y: number) {
+  const { variants, tpls, prodLines, linesOf, isKit } = base;
+  const n1Total = prodLines.reduce((s, p) => s + (n1Map.get(p.id)?.qty || 0), 0);
+  const withTotal = variants.filter(v => v.total > 0);
+  const reach = withTotal.filter(v => v.total <= n1Total);
+  const chosen = reach.length ? reach[reach.length - 1] : withTotal[0] || null;
+  const chosenTpl = chosen ? tpls.find(tp => tp.id === chosen.id) : null;
+  const tplQty = (pid: number) => chosenTpl ? linesOf(chosenTpl).filter(l => m2oId(l.product_id) === pid && !isKit(l)).reduce((s, l) => s + (Number(l.product_uom_qty) || 0), 0) : 0;
+  const products: PrepProduct[] = prodLines.map(p => {
+    const { code, name } = splitCode(String(p.name || ""));
+    return {
+      product: p, code: String(p.default_code || code), name: name.replace(/\u200b/g, ""), ean: String(p.barcode || ""),
+      price: Number(p.lst_price) || 0, ppc: ppcOf(p), templateQty: tplQty(p.id),
+      n1: n1Map.get(p.id)?.qty || 0, n: nMap.get(p.id)?.qty || 0, proposal: 0,
+    };
+  });
+  let reason: string;
+  if (chosen && n1Total > 0) {
+    products.forEach(x => { x.proposal = snap(x.product, (chosen.total * x.n1) / n1Total); });
+    let diff = chosen.total - products.reduce((s, x) => s + x.proposal, 0);
+    const byN1 = [...products].sort((a, b) => b.n1 - a.n1);
+    for (let i = 0; diff > 0 && i < 200; i++) { const x = byN1[i % byN1.length]; const st = saleStep(x.product); x.proposal += st; diff -= st; }
+    reason = `Variante « ${chosen.name.slice(chosen.name.lastIndexOf(" - ") + 3) || chosen.name} » (${chosen.total} u.) : le client a acheté ${Math.round(n1Total)} u. de ces produits en ${y - 1}, réparties selon ses achats.`;
+  } else if (chosen) {
+    products.forEach(x => { x.proposal = x.templateQty; });
+    reason = `Pas d'achat de ces produits en ${y - 1} : quantités du palier d'entrée (${chosen.total} u.).`;
+  } else {
+    products.forEach(x => { x.proposal = snap(x.product, x.n1); });
+    reason = n1Total > 0 ? `Quantités achetées en ${y - 1} (pas de palier dans le modèle).` : `Pas d'historique ni de palier : à compléter.`;
+  }
+  return { chosen, reason, products };
+}
+
+// Contexte des modèles (lignes, articles) pour une liste de campagnes.
+export async function loadTemplateCtx(session: odoo.OdooSession, campaigns: MeaCampaign[]): Promise<TemplateCtx> {
+  const tlm = await templateLineMeta(session);
+  const templates: any[] = await odoo.searchRead(session, "sale.order.template", [], ["id", "name", "sale_order_template_line_ids"], 0).catch(() => []);
+  const used = campaigns.flatMap(c => templatesOf(templates, c));
+  const lineIds = used.flatMap(t => t.sale_order_template_line_ids || []);
+  const tLines: any[] = lineIds.length ? await odoo.searchRead(session, "sale.order.template.line", [["id", "in", lineIds]],
+    ["id", "product_id", "product_uom_qty", "display_type", "sequence", ...(tlm.discount ? [tlm.discount] : []), ...(tlm.freeType ? [tlm.freeType] : [])], 0, "sequence, id") : [];
+  const productIds = Array.from(new Set(tLines.map(l => m2oId(l.product_id)).filter(Boolean))) as number[];
+  const products: any[] = productIds.length ? await odoo.searchRead(session, "product.product", [["id", "in", productIds]],
+    ["id", "name", "default_code", "barcode", "lst_price", "product_tmpl_id", ...await optionalProductFields(session)], 0) : [];
+  return { tLines, tlm, templates, pMap: new Map<number, any>(products.map(p => [p.id, p])) };
+}
+
+// ── BDC en lot (fin de séminaire) : une campagne, plusieurs clients ──────────
+// Une seule requête d'historique pour tous les clients (regroupée par société).
+export async function loadBatchBdc(session: odoo.OdooSession, campaign: MeaCampaign, clients: any[]) {
+  const y = new Date().getFullYear();
+  const ctx = await loadTemplateCtx(session, [campaign]);
+  const base = campaignBase(ctx, campaign);
+  const pids = base.prodLines.map(p => p.id);
+  const ids = clients.map(c => c.id);
+  const byClient = new Map<number, { n1: Map<number, { qty: number }>; n: Map<number, { qty: number }> }>();
+  if (pids.length && ids.length) {
+    const rows: any[] = await odoo.searchRead(session, "sale.order.line",
+      [["order_id.partner_id.commercial_partner_id", "in", ids], ["order_id.state", "in", ["sale", "done"]],
+       ["order_id.date_order", ">=", `${y - 1}-01-01 00:00:00`], ["product_id", "in", pids]],
+      ["product_id", "product_uom_qty", "order_id"], 0);
+    // Société et date de chaque commande.
+    const orderIds = Array.from(new Set(rows.map(r => m2oId(r.order_id)).filter(Boolean))) as number[];
+    const orders: any[] = orderIds.length ? await odoo.searchRead(session, "sale.order", [["id", "in", orderIds]], ["id", "date_order", "partner_id"], 0) : [];
+    const partnerIds = Array.from(new Set(orders.map(o => m2oId(o.partner_id)).filter(Boolean))) as number[];
+    const partners: any[] = partnerIds.length ? await odoo.searchRead(session, "res.partner", [["id", "in", partnerIds]], ["id", "commercial_partner_id"], 0) : [];
+    const company = new Map<number, number>(partners.map(p => [p.id, m2oId(p.commercial_partner_id) || p.id]));
+    const oInfo = new Map<number, { cid: number; year: number }>(orders.map(o => [o.id, { cid: company.get(m2oId(o.partner_id)!) || m2oId(o.partner_id)!, year: Number(String(o.date_order).slice(0, 4)) }]));
+    for (const r of rows) {
+      const info = oInfo.get(m2oId(r.order_id)!); if (!info) continue;
+      const b = byClient.get(info.cid) || { n1: new Map(), n: new Map() };
+      const m = info.year === y ? b.n : info.year === y - 1 ? b.n1 : null; if (!m) continue;
+      const pid = m2oId(r.product_id)!;
+      m.set(pid, { qty: (m.get(pid)?.qty || 0) + (Number(r.product_uom_qty) || 0) });
+      byClient.set(info.cid, b);
+    }
+  }
+  return clients.map(c => {
+    const h = byClient.get(c.id) || { n1: new Map(), n: new Map() };
+    const { chosen, reason, products } = propose(base, h.n1, h.n, y);
+    const pc: PrepCampaign = { campaign, status: "todo", orders: [], variantsTaken: [], plan: null, variants: base.variants, chosen, reason, products, kit: base.kit };
+    return { client: c, campaign: pc };
+  });
+}
+
 export async function loadRdvPrep(session: odoo.OdooSession, client: any): Promise<RdvPrep> {
   const family = await resolveClientFamily(session, client).catch(() => [client.id]);
   const now = new Date(), y = now.getFullYear();
@@ -113,17 +225,8 @@ export async function loadRdvPrep(session: odoo.OdooSession, client: any): Promi
   const { tracking, plans } = await clientPlans(session, client.id);
 
   // ── Modèles de devis des campagnes (produits mis en avant + kit) ──
-  const tlm = await templateLineMeta(session);
-  const templates: any[] = await odoo.searchRead(session, "sale.order.template", [], ["id", "name", "sale_order_template_line_ids"], 0).catch(() => []);
-  const tplOf = (c: MeaCampaign) => templates.filter(t => fold(String(t.name || "")).startsWith(fold(c.key)) && !/implantation/i.test(String(t.name)));
-  const usedTpl = active.flatMap(tplOf);
-  const lineIds = usedTpl.flatMap(t => t.sale_order_template_line_ids || []);
-  const tLines: any[] = lineIds.length ? await odoo.searchRead(session, "sale.order.template.line", [["id", "in", lineIds]],
-    ["id", "product_id", "product_uom_qty", "display_type", "sequence", ...(tlm.discount ? [tlm.discount] : []), ...(tlm.freeType ? [tlm.freeType] : [])], 0, "sequence, id") : [];
-  const productIds = Array.from(new Set(tLines.map(l => m2oId(l.product_id)).filter(Boolean))) as number[];
-  const products: any[] = productIds.length ? await odoo.searchRead(session, "product.product", [["id", "in", productIds]],
-    ["id", "name", "default_code", "barcode", "lst_price", "product_tmpl_id", ...await optionalProductFields(session)], 0) : [];
-  const pMap = new Map<number, any>(products.map(p => [p.id, p]));
+  const { tLines, tlm, templates, pMap } = await loadTemplateCtx(session, active);
+  const productIds = Array.from(pMap.keys());
 
   // ── Achats du client sur ces produits : N-1 (année complète) et N (à date) ──
   const [n1Map, nMap] = productIds.length ? await Promise.all([
@@ -131,61 +234,15 @@ export async function loadRdvPrep(session: odoo.OdooSession, client: any): Promi
     qtyByProduct(session, family, `${y}-01-01`, todayN, productIds),
   ]) : [new Map(), new Map()];
 
+  const ctx: TemplateCtx = { tLines, tlm, pMap, templates };
   const prepCampaigns: PrepCampaign[] = active.map(c => {
     const t = taken.get(c.key);
-    const tpls = tplOf(c);
-    const linesOf = (tpl: any) => tLines.filter(l => (tpl.sale_order_template_line_ids || []).includes(l.id) && l.product_id && !l.display_type);
-    const isKit = (l: any) => (tlm.discount ? Number(l[tlm.discount]) || 0 : 0) >= 99.99 || !!(tlm.freeType && l[tlm.freeType]);
-    const variants: PrepVariant[] = tpls.map(tpl => ({
-      id: tpl.id, name: String(tpl.name),
-      total: linesOf(tpl).filter(l => !isKit(l)).reduce((s, l) => s + (Number(l.product_uom_qty) || 0), 0),
-    })).sort((a, b) => a.total - b.total);
-
-    // Produits mis en avant (union des variantes, ordre du modèle) et kit offert.
-    const seen = new Set<number>(); const kitSeen = new Set<number>();
-    const prodLines: any[] = []; const kit: { code: string; name: string }[] = [];
-    for (const tpl of tpls) for (const l of linesOf(tpl)) {
-      const pid = m2oId(l.product_id)!; const p = pMap.get(pid); if (!p) continue;
-      if (isKit(l)) { if (!kitSeen.has(pid)) { kitSeen.add(pid); kit.push({ code: String(p.default_code || ""), name: String(p.name) }); } continue; }
-      if (!seen.has(pid)) { seen.add(pid); prodLines.push(p); }
-    }
-    const n1Total = prodLines.reduce((s, p) => s + (n1Map.get(p.id)?.qty || 0), 0);
-
-    // Variante conseillée : la plus grande que les achats N-1 du client atteignent ;
-    // sans historique, la plus petite.
-    const withTotal = variants.filter(v => v.total > 0);
-    const reach = withTotal.filter(v => v.total <= n1Total);
-    const chosen = reach.length ? reach[reach.length - 1] : withTotal[0] || null;
-    const chosenTpl = chosen ? tpls.find(tp => tp.id === chosen.id) : null;
-    const tplQty = (pid: number) => chosenTpl ? linesOf(chosenTpl).filter(l => m2oId(l.product_id) === pid && !isKit(l)).reduce((s, l) => s + (Number(l.product_uom_qty) || 0), 0) : 0;
-
-    let reason: string;
-    const prods: PrepProduct[] = prodLines.map(p => {
-      const { code, name } = splitCode(String(p.name || ""));
-      return {
-        product: p, code: String(p.default_code || code), name: name.replace(/​/g, ""), ean: String(p.barcode || ""),
-        price: Number(p.lst_price) || 0, ppc: ppcOf(p), templateQty: tplQty(p.id),
-        n1: n1Map.get(p.id)?.qty || 0, n: nMap.get(p.id)?.qty || 0, proposal: 0,
-      };
-    });
-    if (chosen && n1Total > 0) {
-      // Palier de la variante réparti selon ce que le client achète (son mix N-1).
-      prods.forEach(x => { x.proposal = snap(x.product, (chosen.total * x.n1) / n1Total); });
-      let diff = chosen.total - prods.reduce((s, x) => s + x.proposal, 0);
-      const byN1 = [...prods].sort((a, b) => b.n1 - a.n1);
-      for (let i = 0; diff > 0 && i < 200; i++) { const x = byN1[i % byN1.length]; const st = saleStep(x.product); x.proposal += st; diff -= st; }
-      reason = `Variante « ${chosen.name.slice(chosen.name.lastIndexOf(" - ") + 3) || chosen.name} » (${chosen.total} u.) : le client a acheté ${Math.round(n1Total)} u. de ces produits en ${y - 1}, réparties selon ses achats.`;
-    } else if (chosen) {
-      prods.forEach(x => { x.proposal = x.templateQty; });
-      reason = `Pas d'achat de ces produits en ${y - 1} : quantités du palier d'entrée (${chosen.total} u.).`;
-    } else {
-      prods.forEach(x => { x.proposal = snap(x.product, x.n1); });
-      reason = n1Total > 0 ? `Quantités achetées en ${y - 1} (pas de palier dans le modèle).` : `Pas d'historique ni de palier : à compléter.`;
-    }
+    const base = campaignBase(ctx, c);
+    const { chosen, reason, products: prods } = propose(base, n1Map, nMap, y);
     return {
       campaign: c, status: t?.state || "todo", orders: t?.orders || [], variantsTaken: t?.variants || [],
       plan: plans.get(planKey(c.key, client.id)) || null,
-      variants, chosen, reason, products: prods, kit,
+      variants: base.variants, chosen, reason, products: prods, kit: base.kit,
     };
   });
 

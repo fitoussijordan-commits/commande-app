@@ -7,6 +7,8 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { TubeLoader } from "@/components/motion";
 import * as odoo from "@/lib/odoo";
 import { linkedPartnerId } from "@/lib/calendar";
+import { loadBatchBdc, pricelistDiscount } from "@/lib/rdvPrep";
+import { buildBdc, downloadBlob } from "@/lib/bdcExcel";
 import { loadMeaData, savePlan, planKey, localPlans, saveLocalPlan, type MeaData, type Plan } from "@/lib/meaTracking";
 import AppointmentModal from "@/components/AppointmentModal";
 import { getMineOnly, setMineOnly } from "@/lib/clients";
@@ -56,7 +58,8 @@ export default function MeaDashboard({ session, onClose, onOpenClient, onToast }
   const [err, setErr] = useState("");
   const [rdvFor, setRdvFor] = useState<any>(null);
   const [mine, setMine] = useState(getMineOnly);
-  const [showAll, setShowAll] = useState(false);   // MEA actives seulement (par défaut) / toutes   // Mes clients / Tous (même choix que la recherche)
+  const [showAll, setShowAll] = useState(false);
+  const [bdcBusy, setBdcBusy] = useState(false);   // MEA actives seulement (par défaut) / toutes   // Mes clients / Tous (même choix que la recherche)
 
   const reloadVisits = useCallback(() => { loadNextVisits(session).then(setVisits); }, [session]);
   useEffect(() => {
@@ -114,6 +117,24 @@ export default function MeaDashboard({ session, onClose, onOpenClient, onToast }
   const meaOptionsFor = (clientId: number) =>
     (data?.campaigns || []).filter(c => c.active && data?.taken.get(c.key)?.get(clientId)?.state !== "pris").map(c => meaLabel(c.key, clientId));
   const camp = data?.campaigns.find(c => c.key === key);
+
+  // BDC de séminaire pour les clients affichés : achats N-1 et proposition par client.
+  const exportBdcs = async () => {
+    if (!camp || !rows.length) return;
+    if (rows.length > 150 && !window.confirm(`Générer ${rows.length} BDC (un onglet par client) ? Cela peut prendre un moment.`)) return;
+    setBdcBusy(true);
+    try {
+      const list = await loadBatchBdc(session, camp, rows);
+      const blob = await buildBdc(list.map(x => ({
+        code: String(x.client.ref || ""), name: String(x.client.name || ""),
+        discount: pricelistDiscount(Array.isArray(x.client.property_product_pricelist) ? x.client.property_product_pricelist[1] : ""),
+        campaign: x.campaign,
+      })));
+      downloadBlob(blob, `BDC ${camp.key} - ${rows.length} clients.xlsx`.replace(/[\\/:*?"<>|]/g, " "));
+      onToast(`${rows.length} BDC générés`, "success");
+    } catch (e: any) { onToast(odoo.isNetworkError(e) ? "Hors ligne : génération impossible" : `Génération impossible : ${e?.message || e}`, "error"); }
+    setBdcBusy(false);
+  };
   const total = data?.clients.length || 0;
   const GRID = "minmax(0, 2fr) 120px 140px minmax(0, 1.6fr)";
 
@@ -136,6 +157,13 @@ export default function MeaDashboard({ session, onClose, onOpenClient, onToast }
               style={{ height: 38, padding: "0 14px", borderRadius: 10, border: `1.5px solid ${mine ? C.teal : C.border}`, background: mine ? C.teal : C.white, color: mine ? "#fff" : C.textSec, fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" as const }}>
               {mine ? "Mes clients" : "Tous les clients"}
             </button>
+            {/* BDC de séminaire : un onglet Excel par client de la liste affichée */}
+            {camp && rows.length > 0 && (
+              <button onClick={exportBdcs} disabled={bdcBusy} title="Générer les BDC Excel de cette MEA pour les clients affichés (un onglet par client)"
+                style={{ height: 38, padding: "0 14px", borderRadius: 10, border: "none", background: C.teal, color: "#fff", fontSize: 13, fontWeight: 800, cursor: bdcBusy ? "default" : "pointer", fontFamily: "inherit", opacity: bdcBusy ? 0.6 : 1, whiteSpace: "nowrap" as const }}>
+                {bdcBusy ? "Génération…" : `BDC Excel (${rows.length})`}
+              </button>
+            )}
             <input value={q} onChange={e => setQ(e.target.value)} placeholder="Chercher un client…"
               style={{ width: 230, height: 38, padding: "0 12px", borderRadius: 10, border: `1.5px solid ${C.border}`, fontSize: 13, fontFamily: "inherit", outline: "none" }} />
           </div>

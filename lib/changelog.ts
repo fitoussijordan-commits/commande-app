@@ -9,6 +9,7 @@ export const CHANGELOG: ChangelogEntry[] = [
     date: "2026-11-13",
     items: [
       "Fiche client → « Préparer le RDV » : CA à date N / N-1, offres du cycle faites ou à proposer (offre prévue + note), quantités proposées par produit d'après les achats N-1, plus grosses baisses du client.",
+      "Mes MEA → « BDC Excel » : BDC de la MEA pour tous les clients affichés en un fichier (un onglet par client), pour l'après-séminaire.",
       "BDC Excel de la MEA généré pour le client (même présentation que les BDC de séminaire : achats N-1, proposition commerciale, remise client, kit offert).",
       "Création du devis : animation des produits qui sautent et barre de progression avec les étapes pendant l'envoi à Odoo.",
       "MEA : filtre « Actives / Toutes » (tableau de bord et suivi), actives par défaut ; seules les MEA actives sont proposées dans les RDV.",
