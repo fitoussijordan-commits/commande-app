@@ -8,7 +8,7 @@ import { TubeLoader } from "@/components/motion";
 import * as odoo from "@/lib/odoo";
 import { linkedPartnerId } from "@/lib/calendar";
 import { loadBatchBdc, pricelistDiscount } from "@/lib/rdvPrep";
-import { buildBdc, downloadBlob } from "@/lib/bdcExcel";
+import { buildBdc, downloadBlob, loadBdcImages } from "@/lib/bdcExcel";
 import { loadMeaData, savePlan, planKey, localPlans, saveLocalPlan, type MeaData, type Plan } from "@/lib/meaTracking";
 import AppointmentModal from "@/components/AppointmentModal";
 import { getMineOnly, setMineOnly } from "@/lib/clients";
@@ -125,11 +125,12 @@ export default function MeaDashboard({ session, onClose, onOpenClient, onToast }
     setBdcBusy(true);
     try {
       const list = await loadBatchBdc(session, camp, rows);
+      const images = await loadBdcImages(session, list[0]?.campaign.products.map(p => p.product.id) || []);
       const blob = await buildBdc(list.map(x => ({
         code: String(x.client.ref || ""), name: String(x.client.name || ""),
         discount: pricelistDiscount(Array.isArray(x.client.property_product_pricelist) ? x.client.property_product_pricelist[1] : ""),
         campaign: x.campaign,
-      })));
+      })), images);
       downloadBlob(blob, `BDC ${camp.key} - ${rows.length} clients.xlsx`.replace(/[\\/:*?"<>|]/g, " "));
       onToast(`${rows.length} BDC générés`, "success");
     } catch (e: any) { onToast(odoo.isNetworkError(e) ? "Hors ligne : génération impossible" : `Génération impossible : ${e?.message || e}`, "error"); }

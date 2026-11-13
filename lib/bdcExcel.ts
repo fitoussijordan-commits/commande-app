@@ -21,7 +21,42 @@ const sheetName = (s: string, used: Set<string>) => {
   used.add(n); return n;
 };
 
-export async function buildBdc(clients: BdcClient[]): Promise<Blob> {
+// Photos produits (image_256 d'Odoo, base64) et logo, comme sur les BDC d'origine.
+export interface BdcImages { products: Map<number, { b64: string; w: number; h: number }>; logo?: string }
+
+const imgExt = (b64: string): "png" | "jpeg" | "gif" | null =>
+  b64.startsWith("iVBOR") ? "png" : b64.startsWith("/9j/") ? "jpeg" : b64.startsWith("R0lG") ? "gif" : null;
+
+export async function loadBdcImages(session: import("@/lib/odoo").OdooSession, productIds: number[]): Promise<BdcImages> {
+  const odoo = await import("@/lib/odoo");
+  const products = new Map<number, { b64: string; w: number; h: number }>();
+  // Dimensions réelles de l'image : la photo garde ses proportions dans la case.
+  const size = (b64: string, ext: string) => new Promise<{ w: number; h: number }>(res => {
+    const im = new Image();
+    im.onload = () => res({ w: im.naturalWidth || 1, h: im.naturalHeight || 1 });
+    im.onerror = () => res({ w: 1, h: 1 });
+    im.src = `data:image/${ext};base64,${b64}`;
+  });
+  if (productIds.length) {
+    try {
+      const rows: any[] = await odoo.searchRead(session, "product.product", [["id", "in", productIds]], ["id", "image_256"], 0);
+      for (const r of rows) {
+        const b64 = r.image_256 ? String(r.image_256) : ""; const ext = imgExt(b64);
+        if (ext) products.set(r.id, { b64, ...(await size(b64, ext)) });
+      }
+    } catch { /* sans photos */ }
+  }
+  let logo: string | undefined;
+  try {
+    const res = await fetch("/logo-full.png");
+    const buf = new Uint8Array(await res.arrayBuffer());
+    let bin = ""; for (let i = 0; i < buf.length; i++) bin += String.fromCharCode(buf[i]);
+    logo = btoa(bin);
+  } catch { /* sans logo */ }
+  return { products, logo };
+}
+
+export async function buildBdc(clients: BdcClient[], images?: BdcImages): Promise<Blob> {
   const ExcelJS = (await import("exceljs")).default;
   const wb = new ExcelJS.Workbook();
   wb.creator = "Commande DC";
@@ -32,10 +67,14 @@ export async function buildBdc(clients: BdcClient[]): Promise<Blob> {
     const c = cl.campaign;
     const ws = wb.addWorksheet(sheetName(cl.name, used), { pageSetup: { orientation: "landscape", fitToPage: true, fitToWidth: 1, fitToHeight: 0 } });
     ws.columns = [
-      { width: 2 }, { width: 12 }, { width: 44 }, { width: 16 }, { width: 10 }, { width: 10 },
+      { width: 20 }, { width: 12 }, { width: 44 }, { width: 16 }, { width: 10 }, { width: 10 },
       { width: 12 }, { width: 14 }, { width: 16 }, { width: 16 }, { width: 16 },
     ];
     ws.mergeCells("H2:K2");
+    if (images?.logo) {
+      const id = wb.addImage({ base64: images.logo, extension: "png" });
+      ws.addImage(id, { tl: { col: 0.15, row: 1.1 }, ext: { width: 150, height: 58 } });
+    }
     const t = ws.getCell("H2");
     t.value = `Bon de Commande ${c.campaign.key}`;
     t.font = { bold: true, size: 16, color: { argb: TEAL } };
@@ -82,6 +121,17 @@ export async function buildBdc(clients: BdcClient[]): Promise<Blob> {
       ["E", "F", "K"].forEach(col => { ws.getCell(`${col}${r}`).numFmt = EUR; });
       ws.getCell(`D${r}`).numFmt = "0";
       ws.getCell(`H${r}`).font = { bold: true, color: { argb: TEAL } };
+      // Photo du produit dans la colonne A (ligne haute, comme sur les BDC d'origine).
+      const img = images?.products.get(p.product.id);
+      const ext = img ? imgExt(img.b64) : null;
+      if (img && ext) {
+        row.height = 82;
+        const box = 100, k = Math.min(box / img.w, box / img.h);
+        const w = Math.round(img.w * k), h = Math.round(img.h * k);
+        const id = wb.addImage({ base64: img.b64, extension: ext });
+        // Centrée dans la colonne A (≈ 145 px de large).
+        ws.addImage(id, { tl: { col: Math.max(0, (145 - w) / 2) / 145, row: r - 1 + 0.06 }, ext: { width: w, height: h } });
+      } else row.height = 30;
       ws.getCell(`I${r}`).fill = { type: "pattern", pattern: "solid", fgColor: { argb: TEAL_SOFT } };
       ws.getCell(`J${r}`).fill = { type: "pattern", pattern: "solid", fgColor: { argb: TEAL_SOFT } };
       r++;

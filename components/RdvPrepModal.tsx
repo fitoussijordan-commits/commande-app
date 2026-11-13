@@ -6,7 +6,7 @@ import { useEffect, useMemo, useState } from "react";
 import * as odoo from "@/lib/odoo";
 import { loadRdvPrep, type RdvPrep, type PrepCampaign } from "@/lib/rdvPrep";
 import { savePlan, saveLocalPlan, planKey, type Plan } from "@/lib/meaTracking";
-import { buildBdc, downloadBlob } from "@/lib/bdcExcel";
+import { buildBdc, downloadBlob, loadBdcImages } from "@/lib/bdcExcel";
 import { saleStep } from "@/lib/productFields";
 import { useExit, TubeLoader, Sk, CountUp } from "@/components/motion";
 
@@ -70,7 +70,8 @@ export default function RdvPrepModal({ session, client, onClose: onCloseProp, on
     if (!data) return;
     const withEdits: PrepCampaign = { ...pc, products: pc.products.map(p => ({ ...p, proposal: qtyOf(pc, p.product.id, p.proposal) })) };
     try {
-      const blob = await buildBdc([{ code: String(client.ref || ""), name: String(client.name), discount: data.discount, campaign: withEdits }]);
+      const images = await loadBdcImages(session, withEdits.products.map(p => p.product.id));
+      const blob = await buildBdc([{ code: String(client.ref || ""), name: String(client.name), discount: data.discount, campaign: withEdits }], images);
       downloadBlob(blob, `BDC ${pc.campaign.key} - ${client.name}.xlsx`.replace(/[\\/:*?"<>|]/g, " "));
       onToast("BDC Excel généré", "success");
     } catch (e: any) { onToast(`Génération impossible : ${e?.message || e}`, "error"); }
