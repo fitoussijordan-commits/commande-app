@@ -101,6 +101,7 @@ export default function Dashboard({ session, onClose, onOpenClient, onToast }: {
   const [mea, setMea] = useState<MeaData | null>(null);
   const [error, setError] = useState("");
   const [showMea, setShowMea] = useState(false);
+  const [meaAll, setMeaAll] = useState(false);   // MEA actives seulement / toutes
   const [bestAll, setBestAll] = useState(false);
 
   useEffect(() => {
@@ -194,8 +195,17 @@ export default function Dashboard({ session, onClose, onOpenClient, onToast }: {
                 Ouvrir le suivi
               </button>}>
               {!mea && <div style={{ fontSize: 13, color: C.muted }}>…</div>}
-              {mea && !mea.campaigns.length && <div style={{ fontSize: 13, color: C.muted }}>Aucune MEA active.</div>}
-              {mea && mea.campaigns.map(c => {
+              {mea && mea.campaigns.length > 0 && (
+                <div style={{ display: "flex", gap: 6, marginBottom: 6 }}>
+                  {([[false, `Actives (${mea.campaigns.filter(c => c.active).length})`], [true, `Toutes (${mea.campaigns.length})`]] as const).map(([v, l]) => (
+                    <button key={String(v)} onClick={() => setMeaAll(v)}
+                      style={{ height: 26, padding: "0 10px", borderRadius: 999, border: `1.5px solid ${meaAll === v ? C.teal : C.border}`, background: meaAll === v ? C.tealSoft : C.white,
+                        color: meaAll === v ? C.tealDark : C.textSec, fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>{l}</button>
+                  ))}
+                </div>
+              )}
+              {mea && !mea.campaigns.some(c => meaAll || c.active) && <div style={{ fontSize: 13, color: C.muted }}>Aucune MEA active.</div>}
+              {mea && mea.campaigns.filter(c => meaAll || c.active).map(c => {
                 const took = Array.from(mea.taken.get(c.key)?.values() || []).filter(t => t.state === "pris").length;
                 const total = mea.clients.length;
                 const pct = total ? Math.round((took / total) * 100) : 0;

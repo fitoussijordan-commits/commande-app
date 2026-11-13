@@ -16,7 +16,7 @@ import { orderMeta } from "@/lib/orderOffers";
 import { NOT_SUPPLIER, mineDomain } from "@/lib/clients";
 
 export interface MeaOffer { id: number; name: string; variant: string }
-export interface MeaCampaign { key: string; offers: MeaOffer[] }
+export interface MeaCampaign { key: string; offers: MeaOffer[]; active: boolean }
 export interface Taken { state: "pris" | "devis"; orders: string[]; offers: string[]; date: string }
 export interface Plan { id?: number; offerId: number | null; note: string }
 export interface TrackingModel {
@@ -62,26 +62,53 @@ export async function loadMeaData(session: odoo.OdooSession, mine = true): Promi
   const rel = meta.offersRelation, offersField = meta.offersField;
   if (!rel || !offersField) throw new Error("Champ « Offres commandées » introuvable sur les commandes");
 
-  // Offres actives, regroupées par campagne.
-  const ofields: Record<string, any> = await odoo.callMethod(session, rel, "fields_get", [], { attributes: ["type"] });
+  // Toutes les offres récentes (archivées comprises), regroupées par campagne,
+  // chacune marquée active ou non. L'écran filtre « Actives / Toutes ».
+  const ofields: Record<string, any> = await odoo.callMethod(session, rel, "fields_get", [], { attributes: ["type", "string"] });
   const activeField = ["x_active", "active"].find(f => ofields[f]?.type === "boolean");
-  let offerRows = await odoo.searchRead(session, rel, activeField ? [[activeField, "=", true]] : [], ["display_name"], 500, "id desc");
-  // MEA active = offre dont au moins un article (champ « Offre produit ») est
-  // actif et encore en stock. Sans ce champ article : toutes les offres.
+  // Dates de validité de l'offre, si le modèle en a (repérées par libellé).
+  const dateField = (re: RegExp) => Object.entries(ofields).find(([, f]: [string, any]) => ["date", "datetime"].includes(f.type) && re.test(String(f.string || "")))?.[0];
+  const endField = dateField(/\b(fin|end|jusqu|expir)/i);
+  const startField = dateField(/\b(d[ée]but|start|depuis)/i);
+  const offerRows: any[] = await odoo.searchRead(session, rel,
+    activeField ? [[activeField, "in", [true, false]]] : [],
+    ["display_name", ...(activeField ? [activeField] : []), ...(endField ? [endField] : []), ...(startField ? [startField] : [])], 500, "id desc");
+  const today = new Date().toISOString().slice(0, 10);
+  const offerOk = (r: any) => (!activeField || r[activeField] !== false)
+    && (!endField || !r[endField] || String(r[endField]).slice(0, 10) >= today)
+    && (!startField || !r[startField] || String(r[startField]).slice(0, 10) <= today);
+
+  // Encore proposée = un modèle de devis actif porte le nom de la campagne (c'est
+  // ce que le commercial applique dans le catalogue). À défaut de modèle
+  // reconnu : au moins un article de l'offre actif et en stock.
+  const fold = (t: string) => t.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]/g, "");
+  let templateNames: string[] = [];
+  try {
+    templateNames = (await odoo.searchRead(session, "sale.order.template", [], ["name"], 0)).map((t: any) => fold(String(t.name || "")));
+  } catch (e) { if (odoo.isNetworkError(e)) throw e; }
+  let liveStock = new Set<number>();
   try {
     const prods = await odoo.searchRead(session, "product.product",
       [["x_offre_produit_id", "!=", false], ["active", "=", true], ["virtual_available", ">", 0]], ["x_offre_produit_id"], 0);
-    const live = new Set(prods.map((p: any) => p.x_offre_produit_id?.[0]).filter(Boolean));
-    offerRows = offerRows.filter((r: any) => live.has(r.id));
+    liveStock = new Set(prods.map((p: any) => p.x_offre_produit_id?.[0]).filter(Boolean));
   } catch (e) { if (odoo.isNetworkError(e)) throw e; }
+
   const byKey = new Map<string, MeaCampaign>();
   for (const r of offerRows) {
     const name = String(r.display_name || "");
     const { key, variant } = campaignOf(name);
-    if (!byKey.has(key)) byKey.set(key, { key, offers: [] });
+    if (!byKey.has(key)) byKey.set(key, { key, offers: [], active: false });
     byKey.get(key)!.offers.push({ id: r.id, name, variant });
   }
-  const campaigns = Array.from(byKey.values());   // ordre : offres les plus récentes d'abord
+  const all = Array.from(byKey.values());
+  const okOffers = (c: MeaCampaign) => c.offers.filter(o => offerOk(offerRows.find(r => r.id === o.id)));
+  const byTemplate = (c: MeaCampaign) => templateNames.some(t => t.startsWith(fold(c.key)));
+  const byStock = (c: MeaCampaign) => c.offers.some(o => liveStock.has(o.id));
+  all.forEach(c => { c.active = okOffers(c).length > 0 && byTemplate(c); });
+  // Aucun modèle ne correspond aux noms d'offres : on garde l'ancien critère (stock).
+  if (!all.some(c => c.active)) all.forEach(c => { c.active = okOffers(c).length > 0 && (byStock(c) || liveStock.size === 0); });
+  // Actives d'abord, puis les plus récentes.
+  const campaigns = [...all.filter(c => c.active), ...all.filter(c => !c.active)];
   const offerCampaign = new Map<number, string>();
   campaigns.forEach(c => c.offers.forEach(o => offerCampaign.set(o.id, c.key)));
 

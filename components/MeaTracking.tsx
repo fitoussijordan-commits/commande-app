@@ -40,6 +40,13 @@ async function loadNextVisits(session: odoo.OdooSession): Promise<Map<number, Da
   return out;
 }
 
+// Sans le modèle Studio « Suivi MEA », les prévisions (offre prévue + note)
+// sont gardées sur l'appareil : utilisables tout de suite, mais ni partagées
+// ni sauvegardées dans Odoo.
+const LS_PLANS = "mea_plans_local";
+function localPlans(): Record<string, Plan> { try { return JSON.parse(localStorage.getItem(LS_PLANS) || "{}"); } catch { return {}; } }
+function saveLocalPlan(k: string, p: Plan) { try { localStorage.setItem(LS_PLANS, JSON.stringify({ ...localPlans(), [k]: p })); } catch {} }
+
 export default function MeaDashboard({ session, onClose, onOpenClient, onToast }: {
   session: odoo.OdooSession;
   onClose: () => void;
@@ -55,13 +62,17 @@ export default function MeaDashboard({ session, onClose, onOpenClient, onToast }
   const [saving, setSaving] = useState<string | null>(null);
   const [err, setErr] = useState("");
   const [rdvFor, setRdvFor] = useState<any>(null);
-  const [mine, setMine] = useState(getMineOnly);   // Mes clients / Tous (même choix que la recherche)
+  const [mine, setMine] = useState(getMineOnly);
+  const [showAll, setShowAll] = useState(false);   // MEA actives seulement (par défaut) / toutes   // Mes clients / Tous (même choix que la recherche)
 
   const reloadVisits = useCallback(() => { loadNextVisits(session).then(setVisits); }, [session]);
   useEffect(() => {
     setData(null); setError("");
     loadMeaData(session, mine)
-      .then(d => { setData(d); setKey(k => d.campaigns.some(c => c.key === k) ? k : d.campaigns[0]?.key || ""); })
+      .then(d => {
+        if (!d.tracking) { const lp = localPlans(); d.plans = new Map(Object.entries(lp)); }
+        setData(d); setKey(k => d.campaigns.some(c => c.key === k && (showAll || c.active)) ? k : (d.campaigns.find(c => showAll || c.active) || d.campaigns[0])?.key || "");
+      })
       .catch(e => setError(odoo.isNetworkError(e) ? "Indisponible hors ligne." : (e?.message || "Lecture impossible")));
     reloadVisits();
   }, [session, reloadVisits, mine]);
@@ -81,11 +92,16 @@ export default function MeaDashboard({ session, onClose, onOpenClient, onToast }
   }, [data, taken, filter, q]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const save = async (clientId: number, patch: Partial<Plan>) => {
-    if (!data?.tracking) return;
+    if (!data) return;
     const k = planKey(key, clientId);
     const cur = data.plans.get(k) || { offerId: null, note: "" };
     const next = { ...cur, ...patch };
     if (next.offerId === cur.offerId && next.note === cur.note) return;
+    if (!data.tracking) {
+      saveLocalPlan(k, next);
+      setData(d => d && { ...d, plans: new Map(d.plans).set(k, next) });
+      return;
+    }
     setSaving(k); setErr("");
     try {
       const id = await savePlan(session, data.tracking, key, clientId, next);
@@ -103,7 +119,7 @@ export default function MeaDashboard({ session, onClose, onOpenClient, onToast }
     return v ? `${k} (${v})` : k;
   };
   const meaOptionsFor = (clientId: number) =>
-    (data?.campaigns || []).filter(c => data?.taken.get(c.key)?.get(clientId)?.state !== "pris").map(c => meaLabel(c.key, clientId));
+    (data?.campaigns || []).filter(c => c.active && data?.taken.get(c.key)?.get(clientId)?.state !== "pris").map(c => meaLabel(c.key, clientId));
   const camp = data?.campaigns.find(c => c.key === key);
   const total = data?.clients.length || 0;
   const GRID = "minmax(0, 2fr) 120px 140px minmax(0, 1.6fr)";
@@ -133,8 +149,17 @@ export default function MeaDashboard({ session, onClose, onOpenClient, onToast }
 
           {/* Campagnes actives */}
           {data && data.campaigns.length > 0 && (
-            <div style={{ display: "flex", gap: 10, overflowX: "auto" as const, marginTop: 16, paddingBottom: 2 }}>
-              {data.campaigns.map(c => {
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 14 }}>
+              {([[false, `Actives (${data.campaigns.filter(c => c.active).length})`], [true, `Toutes (${data.campaigns.length})`]] as const).map(([v, l]) => (
+                <button key={String(v)} onClick={() => { setShowAll(v); if (!v && !data.campaigns.find(c => c.key === key)?.active) setKey(data.campaigns.find(c => c.active)?.key || ""); }}
+                  style={{ height: 30, padding: "0 12px", borderRadius: 999, border: `1.5px solid ${showAll === v ? C.teal : C.border}`, background: showAll === v ? C.tealSoft : C.white,
+                    color: showAll === v ? C.tealDark : C.textSec, fontSize: 12.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>{l}</button>
+              ))}
+            </div>
+          )}
+          {data && data.campaigns.length > 0 && (
+            <div style={{ display: "flex", gap: 10, overflowX: "auto" as const, marginTop: 10, paddingBottom: 2 }}>
+              {data.campaigns.filter(c => showAll || c.active).map(c => {
                 const took = Array.from(data.taken.get(c.key)?.values() || []).filter(t => t.state === "pris").length;
                 const pct = total ? Math.round((took / total) * 100) : 0;
                 const sel = c.key === key;
@@ -172,7 +197,7 @@ export default function MeaDashboard({ session, onClose, onOpenClient, onToast }
 
           {data && !data.tracking && (
             <div style={{ marginTop: 12, padding: "8px 12px", borderRadius: 10, background: C.orangeSoft, color: C.orange, fontSize: 12, fontWeight: 600 }}>
-              Prévisions en lecture seule : le modèle Studio « Suivi MEA » n'existe pas encore dans Odoo.
+              Offre prévue et notes enregistrées sur cet appareil seulement : le modèle Studio « Suivi MEA » n'existe pas encore dans Odoo.
             </div>
           )}
           {err && <div style={{ marginTop: 8, fontSize: 12, color: C.red, fontWeight: 600 }}>{err}</div>}
@@ -222,14 +247,14 @@ export default function MeaDashboard({ session, onClose, onOpenClient, onToast }
                         {t.offers.join(", ")}
                       </span>
                     ) : (
-                      <select value={plan?.offerId || ""} disabled={!data.tracking || saving === k}
+                      <select value={plan?.offerId || ""} disabled={saving === k}
                         onChange={e => save(c.id, { offerId: e.target.value ? Number(e.target.value) : null })}
                         style={{ width: "100%", height: 32, padding: "0 6px", borderRadius: 8, border: `1px solid ${plan?.offerId ? C.teal : C.border}`, background: plan?.offerId ? C.tealSoft : C.white, fontSize: 12.5, fontFamily: "inherit", color: plan?.offerId ? C.tealDark : C.muted, fontWeight: plan?.offerId ? 700 : 500 }}>
                         <option value="">—</option>
                         {camp.offers.map(o => <option key={o.id} value={o.id}>{o.variant}</option>)}
                       </select>
                     )}
-                    <input key={`${k}-${plan?.note || ""}`} defaultValue={plan?.note || ""} placeholder="Ajouter une note…" disabled={!data.tracking}
+                    <input key={`${k}-${plan?.note || ""}`} defaultValue={plan?.note || ""} placeholder="Ajouter une note…"
                       onBlur={e => save(c.id, { note: e.target.value.trim() })}
                       onKeyDown={e => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
                       style={{ width: "100%", boxSizing: "border-box" as const, height: 32, padding: "0 10px", borderRadius: 8, border: "1px solid transparent", background: C.bg, fontSize: 12.5, fontFamily: "inherit", outline: "none", color: C.text }} />

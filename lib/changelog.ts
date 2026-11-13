@@ -8,6 +8,8 @@ export const CHANGELOG: ChangelogEntry[] = [
   {
     date: "2026-11-13",
     items: [
+      "MEA : filtre « Actives / Toutes » (tableau de bord et suivi), actives par défaut ; seules les MEA actives sont proposées dans les RDV.",
+      "Suivi MEA : « Offre prévue » et notes de nouveau saisissables (gardées sur l'appareil tant que le modèle Odoo « Suivi MEA » n'existe pas).",
       "Tableau de bord : CA et évolution par client calculés comme sur la fiche client (champs Odoo « CA à date N / N-1 »).",
       "Factures : fenêtre de détail (règlements et avoirs imputés, échéance et retard, lignes, adresses, PDF et pièces jointes, accès à la commande d'origine).",
       "Factures : les tuiles « Avoirs » et « Reste dû » filtrent la liste ; chaque avoir s'ouvre dans sa propre fenêtre.",
