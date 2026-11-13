@@ -5,7 +5,6 @@ import AppointmentModal from "@/components/AppointmentModal";
 import ClientNoteModal from "@/components/ClientNoteModal";
 import OfflineBar from "@/components/OfflineBar";
 import PerimeScreen from "@/components/PerimeScreen";
-import AssistantScreen from "@/components/AssistantScreen";
 import BonCommandeScreen, { ImportedLine } from "@/components/BonCommandeScreen";
 import QtyPad from "@/components/QtyPad";
 import PerimesReportScreen from "@/components/PerimesReportScreen";
@@ -1437,7 +1436,6 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
           onNote={() => { setNoteAutoRec(false); setShowClientNote(true); }}
           onNoteRec={() => { setNoteAutoRec(true); setShowClientNote(true); }}
           onPerime={() => setStep("perime")}
-          onAssistant={() => setStep("assistant")}
           onImportBon={() => pickBonFile("hub")}
         />
       )}
@@ -1446,9 +1444,6 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
         <ClientHistory session={session} client={client} />
       )}
 
-      {step === "assistant" && (
-        <AssistantScreen session={session} client={client} />
-      )}
 
       {step === "perimesReport" && <PerimesReportScreen session={session} onToast={onToast} />}
 
@@ -2669,12 +2664,11 @@ function ClientStep({ session, onSelect, onImportBon, onOpenPlanning, onToast, d
 // ═══════════════════════════════════════════════════════════════════════════
 // HUB CLIENT — écran d'accueil une fois le client sélectionné
 // ═══════════════════════════════════════════════════════════════════════════
-function ClientHub({ session, client, hasDraft, onPrep, onOrder, onHistory, onAppointment, onNote, onNoteRec, onPerime, onAssistant, onImportBon }: {
+function ClientHub({ session, client, hasDraft, onPrep, onOrder, onHistory, onAppointment, onNote, onNoteRec, onPerime, onImportBon }: {
   session: odoo.OdooSession; client: any; hasDraft: boolean;
   onPrep: () => void;
   onOrder: () => void; onHistory: () => void; onAppointment: () => void; onNote: () => void; onNoteRec: () => void;
   onPerime: () => void;
-  onAssistant: () => void;
   onImportBon: () => void;
 }) {
   const [stats, setStats] = useState<{ ca: number; count: number; lastDate: string | null } | null>(null);
@@ -2747,7 +2741,6 @@ function ClientHub({ session, client, hasDraft, onPrep, onOrder, onHistory, onAp
     { key: "rdv", icon: "calendar", title: "Prendre un RDV", subtitle: "Agenda Odoo", primary: false, badge: false, onClick: onAppointment },
     { key: "note", icon: "note", title: "Note client", subtitle: "Compte rendu, vocal ou écrit", primary: false, badge: false, onClick: onNote },
     { key: "perime", icon: "package", title: "Retour périmés", subtitle: "Reprise + échange", primary: false, badge: false, onClick: onPerime },
-    { key: "assistant", icon: "search", title: "Assistant", subtitle: "Questions sur les données", primary: false, badge: false, onClick: onAssistant },
   ];
 
   return (
