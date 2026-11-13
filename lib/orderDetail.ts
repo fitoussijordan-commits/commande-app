@@ -10,7 +10,7 @@
 import * as odoo from "@/lib/odoo";
 
 const fieldCache = new Map<string, Promise<Record<string, any>>>();
-function fieldsOf(session: odoo.OdooSession, model: string): Promise<Record<string, any>> {
+export function fieldsOf(session: odoo.OdooSession, model: string): Promise<Record<string, any>> {
   let p = fieldCache.get(model);
   if (!p) {
     p = odoo.callMethod(session, model, "fields_get", [], { attributes: ["type", "relation"] })
@@ -20,7 +20,7 @@ function fieldsOf(session: odoo.OdooSession, model: string): Promise<Record<stri
   }
   return p;
 }
-const only = (fields: Record<string, any>, wanted: string[]) => wanted.filter(f => f === "id" || f in fields);
+export const only = (fields: Record<string, any>, wanted: string[]) => wanted.filter(f => f === "id" || f in fields);
 
 export interface DetailLine {
   id: number;

@@ -7,8 +7,9 @@
 // (invoice_origin) fait le lien avec le module commande.
 import { useEffect, useMemo, useState } from "react";
 import { ListSkeleton } from "@/components/motion";
+import InvoiceDetailModal from "@/components/InvoiceDetailModal";
 import * as odoo from "@/lib/odoo";
-import { resolveClientFamily, odooRecordUrl } from "@/lib/perimes";
+import { resolveClientFamily } from "@/lib/perimes";
 
 const C = {
   bg: "#f8fafc", white: "#fff", text: "#0f172a", textSec: "#334155", muted: "#94a3b8", border: "#e2e8f0",
@@ -39,7 +40,8 @@ export default function InvoiceHistory({ session, client, year }: { session: odo
   const [moves, setMoves] = useState<Move[] | null>(null);
   const [links, setLinks] = useState<Map<number, Link[]>>(new Map());   // facture → avoirs
   const [error, setError] = useState("");
-  const [open, setOpen] = useState<number | null>(null);
+  const [openId, setOpenId] = useState<number | null>(null);          // pièce ouverte dans la fenêtre de détail
+  const [filter, setFilter] = useState<"all" | "refunds" | "due">("all");
 
   useEffect(() => {
     let cancelled = false;
@@ -120,15 +122,31 @@ export default function InvoiceHistory({ session, client, year }: { session: odo
   if (!moves) return <ListSkeleton count={5} height={70} />;
   if (!moves.length) return <div style={{ textAlign: "center", color: C.muted, padding: 40 }}>Aucune facture ni avoir en {year}</div>;
 
-  const Tile = ({ label, value, color }: { label: string; value: number; color: string }) => (
-    <div style={{ flex: 1, minWidth: 0, padding: "10px 12px", background: C.white, border: `1px solid ${C.border}`, borderRadius: 12, boxShadow: C.shadow }}>
-      <div style={{ fontSize: 10.5, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: "0.04em" }}>{label}</div>
-      <div style={{ fontSize: 15, fontWeight: 800, color, marginTop: 2, whiteSpace: "nowrap" }}>{eur(value)}</div>
-    </div>
-  );
+  // Avoir → facture(s) sur lesquelles il est imputé (pour la vue « Avoirs »).
+  const refundTargets = new Map<number, string[]>();
+  links.forEach((ls, invId) => {
+    const inv = (moves || []).find(m => m.id === invId);
+    ls.forEach(l => refundTargets.set(l.refund.id, [...(refundTargets.get(l.refund.id) || []), inv?.name || `#${invId}`]));
+  });
+  const allRefunds = (moves || []).filter(m => m.move_type === "out_refund");
+  const dueInvoices = invoices.filter(m => m.amount_residual > 0.01);
+
+  const Tile = ({ id, label, value, color, count }: { id: typeof filter; label: string; value: number; color: string; count: number }) => {
+    const active = filter === id;
+    return (
+      <button onClick={() => setFilter(active ? "all" : id)} className="press"
+        style={{ flex: 1, minWidth: 0, textAlign: "left", padding: "10px 12px", background: active ? color : C.white, border: `1.5px solid ${active ? color : C.border}`, borderRadius: 12,
+          boxShadow: C.shadow, cursor: "pointer", fontFamily: "inherit" }}>
+        <div style={{ fontSize: 10.5, fontWeight: 700, color: active ? "rgba(255,255,255,0.85)" : C.muted, textTransform: "uppercase", letterSpacing: "0.04em", display: "flex", justifyContent: "space-between" }}>
+          <span>{label}</span><span>{count}</span>
+        </div>
+        <div style={{ fontSize: 15, fontWeight: 800, color: active ? "#fff" : color, marginTop: 2, whiteSpace: "nowrap" }}>{eur(value)}</div>
+      </button>
+    );
+  };
   const RefundRow = ({ r, amount }: { r: Move; amount: number | null }) => (
-    <a href={odooRecordUrl(session, "account.move", r.id)} target="_blank" rel="noopener noreferrer"
-      style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 10px", borderRadius: 8, background: C.orangeSoft, textDecoration: "none", fontSize: 12 }}>
+    <button onClick={() => setOpenId(r.id)} className="press"
+      style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", padding: "6px 10px", borderRadius: 8, background: C.orangeSoft, border: "none", cursor: "pointer", fontFamily: "inherit", textAlign: "left", fontSize: 12 }}>
       <span style={{ fontWeight: 800, color: C.orange }}>Avoir</span>
       <span style={{ flex: 1, minWidth: 0, color: C.textSec, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
         {r.name} · {dmy(r.invoice_date)}{r.ref ? ` · ${r.ref}` : ""}
@@ -136,67 +154,98 @@ export default function InvoiceHistory({ session, client, year }: { session: odo
       <span style={{ fontWeight: 800, color: C.orange, whiteSpace: "nowrap" }}>
         −{eur(amount ?? r.amount_total)}{amount != null && Math.abs(amount - r.amount_total) > 0.01 ? ` / ${eur(r.amount_total)}` : ""}
       </span>
-    </a>
+      <span style={{ color: C.orange, fontWeight: 800 }}>›</span>
+    </button>
   );
+  const InvoiceCard = ({ m }: { m: Move }) => {
+    const pay = PAY[m.payment_state] || { label: m.payment_state, color: C.muted, bg: C.bg };
+    const refs = links.get(m.id) || [];
+    const late = m.amount_residual > 0.01 && m.invoice_date_due && new Date(`${m.invoice_date_due}T23:59:59`) < new Date();
+    return (
+      <div style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 14, boxShadow: C.shadow, overflow: "hidden" }}>
+        <button onClick={() => setOpenId(m.id)}
+          style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", padding: "12px 14px", background: "none", border: "none", cursor: "pointer", fontFamily: "inherit", textAlign: "left" }}>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 13, fontWeight: 700, color: C.text }}>
+              {m.name}
+              {refs.length > 0 && <span style={{ marginLeft: 8, fontSize: 10.5, fontWeight: 800, color: C.orange, background: C.orangeSoft, borderRadius: 5, padding: "1px 6px" }}>{refs.length} avoir{refs.length > 1 ? "s" : ""}</span>}
+            </div>
+            <div style={{ fontSize: 11, color: C.muted, marginTop: 2 }}>
+              {dmy(m.invoice_date)}{m.invoice_origin ? ` · Cde ${m.invoice_origin}` : ""}
+              {m.amount_residual > 0.01 && m.invoice_date_due && <span style={{ color: late ? C.red : C.muted, fontWeight: late ? 700 : 400 }}> · échéance {dmy(m.invoice_date_due)}</span>}
+            </div>
+          </div>
+          <span style={{ fontSize: 10.5, fontWeight: 700, color: late ? "#fff" : pay.color, background: late ? C.red : pay.bg, borderRadius: 6, padding: "2px 7px", flexShrink: 0 }}>{late ? "En retard" : pay.label}</span>
+          <div style={{ textAlign: "right", flexShrink: 0 }}>
+            <div style={{ fontSize: 14, fontWeight: 800, color: C.tealDark }}>{eur(m.amount_total)}</div>
+            {m.amount_residual > 0.01 && m.payment_state !== "not_paid" && <div style={{ fontSize: 10.5, color: C.red }}>reste {eur(m.amount_residual)}</div>}
+          </div>
+          <span style={{ color: C.muted, fontSize: 18, lineHeight: 1 }}>›</span>
+        </button>
+        {refs.length > 0 && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 4, padding: "0 14px 10px" }}>
+            {refs.map(l => <RefundRow key={l.refund.id} r={l.refund} amount={l.amount} />)}
+          </div>
+        )}
+      </div>
+    );
+  };
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
       <div style={{ display: "flex", gap: 8 }}>
-        <Tile label="Facturé TTC" value={totals.inv} color={C.tealDark} />
-        <Tile label="Avoirs" value={-totals.ref} color={C.orange} />
-        <Tile label="Reste dû" value={totals.due} color={totals.due > 0.01 ? C.red : C.green} />
+        <Tile id="all" label="Facturé TTC" value={totals.inv} color={C.tealDark} count={invoices.length} />
+        <Tile id="refunds" label="Avoirs" value={-totals.ref} color={C.orange} count={allRefunds.length} />
+        <Tile id="due" label="Reste dû" value={totals.due} color={totals.due > 0.01 ? C.red : C.green} count={dueInvoices.length} />
+      </div>
+      {filter !== "all" && (
+        <div className="fade-in" style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: C.textSec }}>
+          <span>Filtre : <strong>{filter === "refunds" ? "avoirs" : "factures non soldées"}</strong></span>
+          <button onClick={() => setFilter("all")} style={{ background: "none", border: "none", color: C.teal, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", fontSize: 12 }}>Tout afficher</button>
+        </div>
+      )}
+
+      <div key={filter} className="stagger" style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+        {filter === "all" && invoices.map(m => <InvoiceCard key={m.id} m={m} />)}
+        {filter === "due" && (dueInvoices.length ? dueInvoices.map(m => <InvoiceCard key={m.id} m={m} />)
+          : <div style={{ textAlign: "center", color: C.green, padding: 30, fontWeight: 700 }}>Tout est réglé en {year} ✓</div>)}
+        {filter === "refunds" && (allRefunds.length ? allRefunds.map(r => {
+          const targets = refundTargets.get(r.id) || (r.reversed_entry_id ? [r.reversed_entry_id[1]] : []);
+          const pay = PAY[r.payment_state] || { label: r.payment_state, color: C.muted, bg: C.bg };
+          return (
+            <button key={r.id} onClick={() => setOpenId(r.id)} className="press"
+              style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", textAlign: "left", background: C.white, border: `1px solid ${C.orange}33`, borderLeft: `4px solid ${C.orange}`, borderRadius: 14, boxShadow: C.shadow, padding: "12px 14px", cursor: "pointer", fontFamily: "inherit" }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 13, fontWeight: 700, color: C.text }}>{r.name}</div>
+                <div style={{ fontSize: 11, color: C.muted, marginTop: 2 }}>
+                  {dmy(r.invoice_date)}{r.ref ? ` · ${r.ref}` : ""}
+                  {targets.length > 0 ? <> · sur <strong style={{ color: C.textSec }}>{targets.join(", ")}</strong></> : " · non rattaché"}
+                </div>
+              </div>
+              <span style={{ fontSize: 10.5, fontWeight: 700, color: pay.color, background: pay.bg, borderRadius: 6, padding: "2px 7px", flexShrink: 0 }}>{r.payment_state === "paid" ? "Imputé" : r.payment_state === "not_paid" ? "Non imputé" : pay.label}</span>
+              <div style={{ fontSize: 14, fontWeight: 800, color: C.orange, flexShrink: 0 }}>−{eur(r.amount_total)}</div>
+              <span style={{ color: C.muted, fontSize: 18, lineHeight: 1 }}>›</span>
+            </button>
+          );
+        }) : <div style={{ textAlign: "center", color: C.muted, padding: 30 }}>Aucun avoir en {year}</div>)}
+
+        {filter === "all" && orphans.length > 0 && (
+          <>
+            <div style={{ fontSize: 11, fontWeight: 800, color: C.muted, textTransform: "uppercase", letterSpacing: "0.05em", marginTop: 8 }}>
+              Avoirs non rattachés à une facture de {year}
+            </div>
+            {orphans.map(r => (
+              <div key={r.id}>
+                <RefundRow r={r} amount={null} />
+                {r.reversed_entry_id && <div style={{ fontSize: 10.5, color: C.muted, padding: "2px 10px" }}>avoir de {r.reversed_entry_id[1]}</div>}
+              </div>
+            ))}
+          </>
+        )}
       </div>
 
-      {invoices.map(m => {
-        const pay = PAY[m.payment_state] || { label: m.payment_state, color: C.muted, bg: C.bg };
-        const refs = links.get(m.id) || [];
-        const isOpen = open === m.id;
-        return (
-          <div key={m.id} style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 14, boxShadow: C.shadow, overflow: "hidden" }}>
-            <button onClick={() => setOpen(isOpen ? null : m.id)}
-              style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", padding: "12px 14px", background: "none", border: "none", cursor: "pointer", fontFamily: "inherit", textAlign: "left" }}>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: 13, fontWeight: 700, color: C.text }}>
-                  {m.name}
-                  {refs.length > 0 && <span style={{ marginLeft: 8, fontSize: 10.5, fontWeight: 800, color: C.orange, background: C.orangeSoft, borderRadius: 5, padding: "1px 6px" }}>{refs.length} avoir{refs.length > 1 ? "s" : ""}</span>}
-                </div>
-                <div style={{ fontSize: 11, color: C.muted, marginTop: 2 }}>
-                  {dmy(m.invoice_date)}{m.invoice_origin ? ` · Cde ${m.invoice_origin}` : ""}
-                </div>
-              </div>
-              <span style={{ fontSize: 10.5, fontWeight: 700, color: pay.color, background: pay.bg, borderRadius: 6, padding: "2px 7px", flexShrink: 0 }}>{pay.label}</span>
-              <div style={{ textAlign: "right", flexShrink: 0 }}>
-                <div style={{ fontSize: 14, fontWeight: 800, color: C.tealDark }}>{eur(m.amount_total)}</div>
-                {m.amount_residual > 0.01 && m.payment_state !== "not_paid" && <div style={{ fontSize: 10.5, color: C.red }}>reste {eur(m.amount_residual)}</div>}
-              </div>
-            </button>
-            {(refs.length > 0 || isOpen) && (
-              <div style={{ display: "flex", flexDirection: "column", gap: 4, padding: "0 14px 10px" }}>
-                {refs.map(l => <RefundRow key={l.refund.id} r={l.refund} amount={l.amount} />)}
-                {isOpen && (
-                  <a href={odooRecordUrl(session, "account.move", m.id)} target="_blank" rel="noopener noreferrer"
-                    style={{ fontSize: 11.5, fontWeight: 700, color: C.teal, textDecoration: "none", padding: "4px 0" }}>
-                    Ouvrir la facture dans Odoo{m.invoice_date_due ? ` · échéance ${dmy(m.invoice_date_due)}` : ""} →
-                  </a>
-                )}
-              </div>
-            )}
-          </div>
-        );
-      })}
-
-      {orphans.length > 0 && (
-        <>
-          <div style={{ fontSize: 11, fontWeight: 800, color: C.muted, textTransform: "uppercase", letterSpacing: "0.05em", marginTop: 8 }}>
-            Avoirs non rattachés à une facture de {year}
-          </div>
-          {orphans.map(r => (
-            <div key={r.id}>
-              <RefundRow r={r} amount={null} />
-              {r.reversed_entry_id && <div style={{ fontSize: 10.5, color: C.muted, padding: "2px 10px" }}>avoir de {r.reversed_entry_id[1]}</div>}
-            </div>
-          ))}
-        </>
+      {openId != null && (
+        <InvoiceDetailModal key={openId} session={session} moveId={openId} onClose={() => setOpenId(null)} onOpenMove={id => setOpenId(id)} />
       )}
     </div>
   );

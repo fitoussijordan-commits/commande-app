@@ -8,6 +8,8 @@ export const CHANGELOG: ChangelogEntry[] = [
   {
     date: "2026-11-13",
     items: [
+      "Factures : fenêtre de détail (règlements et avoirs imputés, échéance et retard, lignes, adresses, PDF et pièces jointes, accès à la commande d'origine).",
+      "Factures : les tuiles « Avoirs » et « Reste dû » filtrent la liste ; chaque avoir s'ouvre dans sa propre fenêtre.",
       "MEA ajoutée après un devis d'implantation : les références communes passent dans la MEA avec sa remise, même quand la ligne du modèle est à 0.",
       "Panier : bouton corbeille pour tout vider d'un coup, et bouton « Retirer » sur chaque MEA (articles, gratuités, remise et offre cochée retirés ensemble).",
       "MEA : les testeurs du modèle à quantité 0 sont repris dans les gratuités, à 0 — au commercial de choisir (les lignes à 0 ne partent pas sur le devis).",
