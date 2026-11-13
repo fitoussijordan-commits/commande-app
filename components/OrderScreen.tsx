@@ -3608,9 +3608,15 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
         const it = row.item;
         const have = cart[it.product.id]?.qty || 0;
         if (it.kind === "paid") required[it.product.id] = (required[it.product.id] ?? have) + it.qty;
-        if (it.qty === 0 && cart[it.product.id]) continue;
-        // Article déjà dans un devis d'implantation : il passe dans la MEA.
+        // Article déjà dans un devis d'implantation : il passe dans la MEA, au prix
+        // (remise) de la MEA — y compris sur une ligne à 0 du modèle, que le
+        // commercial remplit ensuite. Avant, la ligne restait dans l'implantation
+        // et la remise de la MEA n'était jamais appliquée.
         const fromImplant = !isImplantTemplate(template) && /implantation/i.test(cart[it.product.id]?.group || "");
+        if (it.qty === 0 && cart[it.product.id]) {
+          if (fromImplant) { onQtyChange(it.product, have, it.price, template.name, true, true); added++; }
+          continue;
+        }
         onQtyChange(it.product, have + it.qty, it.price, template.name, true, fromImplant);
         added++;
       }
