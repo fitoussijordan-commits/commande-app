@@ -924,10 +924,20 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
               ...(disc > 0 ? { discount: disc } : {}),
               ...extra,
             }];
-            const label = `${item.product.default_code ? `[${item.product.default_code}] ` : ""}${String(item.product.name || "").replace(/^\[[^\]]*\]\s*/, "")}`;
+            // Libellé de la ligne rupture : référence, EAN et nom écrits séparément.
+            // Surtout PAS « [réf] nom » tel quel : Odoo retire du libellé affiché
+            // le nom complet de l'article (identique), et il ne restait que
+            // « RUPTURE — — 1 manquant ».
+            const pname = String(item.product.name || "").replace(/^\[[^\]]*\]\s*/, "");
+            const ruptureName = [
+              `RUPTURE — ${missing} manquant${missing > 1 ? "s" : ""} (non livré${missing > 1 ? "s" : ""})`,
+              item.product.default_code ? `Réf. ${item.product.default_code}` : "",
+              item.product.barcode ? `EAN ${item.product.barcode}` : "",
+              pname,
+            ].filter(Boolean).join(" · ");
             return [
               ...(served > 0 ? [line(served)] : []),
-              ...(missing > 0 ? [line(0, { name: `RUPTURE — ${label} — ${missing} manquant${missing > 1 ? "s" : ""} (non livré${missing > 1 ? "s" : ""})` })] : []),
+              ...(missing > 0 ? [line(0, { name: ruptureName })] : []),
             ];
           }),
           // Produits offerts par une offre marketing → 0€ + type "Gratuités des offres" (auto).

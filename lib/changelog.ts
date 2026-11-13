@@ -8,6 +8,7 @@ export const CHANGELOG: ChangelogEntry[] = [
   {
     date: "2026-11-13",
     items: [
+      "Ruptures : la ligne « RUPTURE » du devis indique le manquant, la référence, l'EAN et le nom de l'article.",
       "Version de l'app affichée en bas de l'écran, avec ce journal des nouveautés.",
       "Listes déroulantes lisibles sous Windows (le type de commande s'affichait blanc sur blanc).",
       "Panier : « Type de commande » et « Offre commandée » visibles aussi quand Odoo est réglé dans une autre langue que le français.",
