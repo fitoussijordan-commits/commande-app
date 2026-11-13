@@ -46,7 +46,7 @@ export default function TopFlop({ session, onOpenClient }: {
   return (
     <div style={{ display: "flex", flexDirection: "column" as const, minHeight: 0 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
-        <div style={{ flex: 1, fontSize: 11.5, color: C.muted }}>CA HT depuis le 1er janvier vs même période N-1</div>
+        <div style={{ flex: 1, fontSize: 11.5, color: C.muted }}>CA à date N vs CA à date N-1 (comme la fiche client)</div>
         <div style={{ display: "flex", background: "rgba(255,255,255,0.6)", borderRadius: 999, padding: 3 }}>
           {([["top", `Top ${N}`], ["flop", `Flop ${N}`]] as const).map(([v, l]) => (
             <button key={v} onClick={() => { setTab(v); setOpen(false); }}

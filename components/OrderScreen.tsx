@@ -24,6 +24,7 @@ import { needsShippingFee, shippingProduct, SHIPPING_FEE_HT, FRANCO_HT } from "@
 import OrderCheck from "@/components/OrderCheck";
 import OrderDetailModal from "@/components/OrderDetailModal";
 import VersionFooter from "@/components/VersionFooter";
+import { caDateFields as caDateFieldsShared } from "@/lib/salesStats";
 import { CountUp, TubeLoader, TubeSuccess, CatalogSkeleton, ListSkeleton } from "@/components/motion";
 import * as sync from "@/lib/sync";
 import * as geo from "@/lib/geo";
@@ -1519,24 +1520,8 @@ const CLIENT_FIELDS = ["id", "name", "ref", "street", "zip", "city", "user_id", 
 // -0,11301 en base, affiché « -11,3% » par Odoo. On applique donc le même ×100.
 // Champs Odoo « CA à date N » / « CA à date N-1 » (res.partner), repérés à leur
 // libellé : le CA à date se compare au CA à date N-1, pas au CA N-1 complet.
-let _caDateFields: Promise<{ n?: string; n1?: string }> | null = null;
-function caDateFields(session: odoo.OdooSession) {
-  if (!_caDateFields) {
-    _caDateFields = odoo.callMethod(session, "res.partner", "fields_get", [], { attributes: ["string", "type"] })
-      .then((f: Record<string, any>) => {
-        const out: { n?: string; n1?: string } = {};
-        for (const [name, d] of Object.entries(f)) {
-          const l = String(d.string || "").trim();
-          if (!["monetary", "float"].includes(d.type) || !/^ca\s+[àa]\s+date/i.test(l)) continue;
-          if (/n\s*-\s*1\s*$/i.test(l)) out.n1 = out.n1 || name;
-          else if (/\bn\s*$/i.test(l)) out.n = out.n || name;
-        }
-        return out;
-      })
-      .catch(() => { _caDateFields = null; return {}; });
-  }
-  return _caDateFields;
-}
+// Champs « CA à date N / N-1 » : détection partagée avec le tableau de bord.
+const caDateFields = caDateFieldsShared;
 
 function fmtEvolution(v: unknown): string | null {
   if (typeof v !== "number" || !isFinite(v)) return null;

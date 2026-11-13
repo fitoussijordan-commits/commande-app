@@ -11,6 +11,30 @@ export interface SalesStats {
   clients: ClientStat[];
   months: { cur: number[]; prev: number[]; prevFull: number[] };   // 12 mois ; prevFull = N-1 complet
   kpi: { cur: number; prev: number; ordersCur: number; ordersPrev: number; clientsCur: number; clientsPrev: number };
+  caFromOdoo: boolean;   // CA lu dans les champs Odoo « CA à date N / N-1 »
+}
+
+// Champs Odoo « CA à date N » / « CA à date N-1 » de la fiche client, repérés
+// par libellé. Le CA par client et le CA total du tableau de bord en viennent :
+// mêmes chiffres que la fiche client. Le nombre de commandes et le graphique
+// mensuel restent calculés sur les commandes confirmées.
+let _caFields: Promise<{ n?: string; n1?: string }> | null = null;
+export function caDateFields(session: odoo.OdooSession): Promise<{ n?: string; n1?: string }> {
+  if (!_caFields) {
+    _caFields = odoo.callMethod(session, "res.partner", "fields_get", [], { attributes: ["string", "type"] })
+      .then((f: Record<string, any>) => {
+        const out: { n?: string; n1?: string } = {};
+        for (const [name, d] of Object.entries(f)) {
+          const l = String(d.string || "").trim();
+          if (!["monetary", "float"].includes(d.type) || !/^ca\s+[àa]\s+date/i.test(l)) continue;
+          if (/n\s*-\s*1\s*$/i.test(l)) out.n1 = out.n1 || name;
+          else if (/\bn\s*$/i.test(l)) out.n = out.n || name;
+        }
+        return out;
+      })
+      .catch(() => { _caFields = null; return {}; });
+  }
+  return _caFields;
 }
 
 const toOdoo = (d: Date) => d.toISOString().slice(0, 19).replace("T", " ");
@@ -47,6 +71,27 @@ export async function loadSalesStats(session: odoo.OdooSession): Promise<SalesSt
     }
     sums.set(cid, s);
   }
+  // CA par client : champs Odoo quand ils existent (calcul de la fiche client).
+  const ca = await caDateFields(session);
+  let fromOdoo = false;
+  if (ca.n && ca.n1) {
+    try {
+      const rows: any[] = await odoo.searchRead(session, "res.partner",
+        [["user_id", "=", session.uid], "|", [ca.n, "!=", 0], [ca.n1, "!=", 0]],
+        ["id", "commercial_partner_id", ca.n, ca.n1], 0);
+      // Une seule fois par société (les adresses enfants peuvent porter le même chiffre).
+      const companies = rows.filter(r => (r.commercial_partner_id?.[0] || r.id) === r.id);
+      for (const s of Array.from(sums.values())) { s.cur = 0; s.prev = 0; }
+      for (const r of companies) {
+        const s = sums.get(r.id) || { cur: 0, prev: 0, ordersCur: 0 };
+        s.cur = Number(r[ca.n]) || 0; s.prev = Number(r[ca.n1]) || 0;
+        sums.set(r.id, s);
+      }
+      kpi.cur = companies.reduce((t, r) => t + (Number(r[ca.n!]) || 0), 0);
+      kpi.prev = companies.reduce((t, r) => t + (Number(r[ca.n1!]) || 0), 0);
+      fromOdoo = true;
+    } catch (e) { if (odoo.isNetworkError(e)) throw e; /* champs illisibles : calcul sur commandes */ }
+  }
   const ids = Array.from(sums.keys());
   const clientRows = ids.length ? await odoo.searchRead(session, "res.partner", [["id", "in", ids]], sync.CLIENT_FIELDS, 0) : [];
   const clients: ClientStat[] = clientRows.map((c: any) => {
@@ -55,7 +100,7 @@ export async function loadSalesStats(session: odoo.OdooSession): Promise<SalesSt
   });
   kpi.clientsCur = clients.filter(c => c.cur > 0).length;
   kpi.clientsPrev = clients.filter(c => c.prev > 0).length;
-  const data = { year: y, clients, months, kpi };
+  const data = { year: y, clients, months, kpi, caFromOdoo: fromOdoo };
   _cache = { uid: session.uid, at: Date.now(), data };
   return data;
 }

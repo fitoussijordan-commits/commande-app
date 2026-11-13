@@ -8,6 +8,7 @@ export const CHANGELOG: ChangelogEntry[] = [
   {
     date: "2026-11-13",
     items: [
+      "Tableau de bord : CA et évolution par client calculés comme sur la fiche client (champs Odoo « CA à date N / N-1 »).",
       "Factures : fenêtre de détail (règlements et avoirs imputés, échéance et retard, lignes, adresses, PDF et pièces jointes, accès à la commande d'origine).",
       "Factures : les tuiles « Avoirs » et « Reste dû » filtrent la liste ; chaque avoir s'ouvre dans sa propre fenêtre.",
       "MEA ajoutée après un devis d'implantation : les références communes passent dans la MEA avec sa remise, même quand la ligne du modèle est à 0.",

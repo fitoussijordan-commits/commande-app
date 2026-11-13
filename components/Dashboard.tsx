@@ -126,7 +126,7 @@ export default function Dashboard({ session, onClose, onOpenClient, onToast }: {
           </button>
           <div style={{ flex: 1 }}>
             <div style={{ fontSize: 24, fontWeight: 800, color: C.text }}>Mon tableau de bord</div>
-            <div style={{ fontSize: 12.5, color: C.muted }}>Du 1er janvier au {today} {st?.year || ""}, comparé à la même période {st ? st.year - 1 : "N-1"} · commandes confirmées, CA HT</div>
+            <div style={{ fontSize: 12.5, color: C.muted }}>Du 1er janvier au {today} {st?.year || ""}, comparé à la même période {st ? st.year - 1 : "N-1"} · {st?.caFromOdoo ? "CA : champs Odoo « CA à date » (comme la fiche client) · commandes et graphique : commandes confirmées HT" : "commandes confirmées, CA HT"}</div>
           </div>
         </div>
 
