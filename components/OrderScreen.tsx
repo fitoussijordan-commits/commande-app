@@ -948,7 +948,7 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
             type_gratuit: "gratuites_des_offres",
           }]),
           // Gratuités saisies manuellement (quantité offerte + type de gratuité choisi).
-          ...giftItems.filter(g => giftActive(g, cart)).map(g => [0, 0, {
+          ...giftItems.filter(g => giftActive(g, cart) && g.qty > 0).map(g => [0, 0, {
             product_id: g.product.id,
             product_uom_qty: g.qty,
             price_unit: 0,
@@ -3532,7 +3532,8 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
         const discount = tlm.discount ? Number(line[tlm.discount]) || 0 : 0;
         // Ligne remisée à 100 % = gratuité du modèle (coffrets offerts…).
         if (discount >= 99.99) {
-          if (qty > 0) out.gifts.push({ product, qty, type: meaGiftType(tlm.freeType ? line[tlm.freeType] : null) });
+          // Quantité 0 (testeurs à choisir) : la ligne reste, à 0 — le commercial décide.
+          out.gifts.push({ product, qty, type: meaGiftType(tlm.freeType ? line[tlm.freeType] : null) });
           continue;
         }
         const tester = String(product.default_code || "").startsWith("3");
@@ -3801,7 +3802,7 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
   const familyCounts = ([["vente", "1", false], ["testeurs", "3", true], ["éch.", "5", true], ["MEA", "7", true]] as const)
     .map(([label, prefix, gifts]) => ({ label, ...refCounts(prefix, gifts) }))
     .filter(c => c.refs > 0);
-  const giftQtyById = new Map<number, number>(giftItems.map(g => [g.product.id, g.qty]));
+  const giftQtyById = new Map<number, number>(giftItems.filter(g => g.qty > 0).map(g => [g.product.id, g.qty]));
 
   return (
     <div style={{ flex: 1, display: "flex", overflow: "hidden", minHeight: 0 }}>
@@ -4285,13 +4286,13 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
                 /* Une ligne par gratuité ; le type se choisit en tête du bloc (choix
                    par ligne seulement s'il manque). */
                 <div key={i} title={!giftActive(g, cart) ? `Offre suspendue : total d'articles de « ${g.cond?.label} » non atteint` : undefined}
-                  style={{ display: "flex", alignItems: "center", gap: 6, padding: "3px 0", borderBottom: i < giftItems.length - 1 ? `1px solid ${C.green}22` : "none", flexWrap: g.type ? "nowrap" as const : "wrap" as const, opacity: giftActive(g, cart) ? 1 : 0.45 }}>
+                  style={{ display: "flex", alignItems: "center", gap: 6, padding: "3px 0", borderBottom: i < giftItems.length - 1 ? `1px solid ${C.green}22` : "none", flexWrap: g.type ? "nowrap" as const : "wrap" as const, opacity: !giftActive(g, cart) ? 0.45 : g.qty === 0 ? 0.7 : 1 }}>
                   <span title={g.product.default_code || ""} style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const, fontSize: 11.5, fontWeight: 600, color: C.text, textDecoration: giftActive(g, cart) ? "none" : "line-through" }}>
                     {g.product.name}
                     {g.product.default_code && <span style={{ marginLeft: 6, fontSize: 9.5, fontWeight: 500, fontFamily: "monospace", color: C.muted }}>{g.product.default_code}</span>}
                   </span>
                   <div style={{ display: "flex", alignItems: "center", gap: 2, flexShrink: 0 }}>
-                    <button onClick={() => setGiftItems(prev => prev.map((x, j) => j === i ? { ...x, qty: Math.max(1, x.qty - 1) } : x))}
+                    <button onClick={() => setGiftItems(prev => prev.map((x, j) => j === i ? { ...x, qty: Math.max(0, x.qty - 1) } : x))}
                       style={{ width: 34, height: 34, borderRadius: 8, background: C.redSoft, border: "none", cursor: "pointer", color: C.red, fontSize: 16, fontWeight: 700, lineHeight: 1, padding: 0 }}>−</button>
                     <span key={g.qty} className="qty-pop" style={{ minWidth: 24, textAlign: "center" as const, fontSize: 12, fontWeight: 800, color: C.text }}>{g.qty}</span>
                     <button onClick={() => setGiftItems(prev => prev.map((x, j) => j === i ? { ...x, qty: x.qty + 1 } : x))}
