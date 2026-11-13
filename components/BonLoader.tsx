@@ -79,54 +79,7 @@ export default function BonLoader({ step, fileName, withClient }: {
 
   return (
     <div style={{ display: "flex", flexDirection: "column" as const, alignItems: "center", padding: "12px 0 4px" }}>
-      <style>{`
-        @keyframes bonTubeJump {
-          0%   { transform: translateY(0) scale(1.12, 0.86); }
-          12%  { transform: translateY(0) scale(0.94, 1.08); }
-          45%  { transform: translateY(-62px) scale(1, 1) rotate(var(--tilt-a)); }
-          55%  { transform: translateY(-66px) scale(1, 1) rotate(var(--tilt-b)); }
-          88%  { transform: translateY(0) scale(0.96, 1.05); }
-          100% { transform: translateY(0) scale(1.12, 0.86); }
-        }
-        @keyframes bonTubeShadow {
-          0%, 100% { transform: scaleX(1.1); opacity: 0.28; }
-          50%      { transform: scaleX(0.55); opacity: 0.12; }
-        }
-        @keyframes bonBarShine {
-          from { transform: translateX(-80px); }
-          to   { transform: translateX(400px); }
-        }
-        @media (prefers-reduced-motion: reduce) {
-          .bon-tube, .bon-shadow, .bon-shine { animation: none !important; }
-        }
-      `}</style>
-
-      {/* Produits + ombres, décalés dans le temps pour sauter à tour de rôle */}
-      <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "center", gap: 18 }}>
-        {PRODUCTS.map(({ src, height }, i) => {
-          const n = PRODUCTS.length;
-          const delay = `-${(i * JUMP_S) / n}s`;
-          // Seul au centre : se dandine. Sur un côté : penche vers le centre.
-          const side = n === 1 ? 0 : (i - (n - 1) / 2);
-          const [a, b] = side === 0 ? ["-6deg", "4deg"] : side < 0 ? ["9deg", "3deg"] : ["-9deg", "-3deg"];
-          return (
-            <div key={src} style={{ position: "relative" as const, height: 170, width: 90, display: "flex", alignItems: "flex-end", justifyContent: "center" }}>
-              <div className="bon-shadow" style={{
-                position: "absolute" as const, bottom: 2, width: 64, height: 12, borderRadius: "50%",
-                background: "#0f172a", animation: `bonTubeShadow ${JUMP_S}s ease-in-out infinite`, animationDelay: delay,
-              }} />
-              <div className="bon-tube" style={{
-                transformOrigin: "50% 100%", marginBottom: 8,
-                animation: `bonTubeJump ${JUMP_S}s cubic-bezier(.45,.05,.55,.95) infinite`, animationDelay: delay,
-                ["--tilt-a" as any]: a, ["--tilt-b" as any]: b,
-              }}>
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src={src} alt="" style={{ height, maxWidth: 110, objectFit: "contain" as const, display: "block" }} />
-              </div>
-            </div>
-          );
-        })}
-      </div>
+      <ProductsHop />
 
       <div style={{ fontSize: 18, fontWeight: 800, color: C.text, marginTop: 14 }}>{LABELS[step]}…</div>
       <div style={{ fontSize: 13, color: C.muted, marginTop: 4, minHeight: 18 }}>
@@ -166,5 +119,62 @@ export default function BonLoader({ step, fileName, withClient }: {
         })}
       </div>
     </div>
+  );
+}
+
+// Les produits qui sautent à tour de rôle (+ keyframes de la barre). Réutilisé
+// par l'attente de création du devis (OrderSubmitLoader).
+export function ProductsHop() {
+  return (
+    <>
+        <style>{`
+          @keyframes bonTubeJump {
+            0%   { transform: translateY(0) scale(1.12, 0.86); }
+            12%  { transform: translateY(0) scale(0.94, 1.08); }
+            45%  { transform: translateY(-62px) scale(1, 1) rotate(var(--tilt-a)); }
+            55%  { transform: translateY(-66px) scale(1, 1) rotate(var(--tilt-b)); }
+            88%  { transform: translateY(0) scale(0.96, 1.05); }
+            100% { transform: translateY(0) scale(1.12, 0.86); }
+          }
+          @keyframes bonTubeShadow {
+            0%, 100% { transform: scaleX(1.1); opacity: 0.28; }
+            50%      { transform: scaleX(0.55); opacity: 0.12; }
+          }
+          @keyframes bonBarShine {
+            from { transform: translateX(-80px); }
+            to   { transform: translateX(400px); }
+          }
+          @media (prefers-reduced-motion: reduce) {
+            .bon-tube, .bon-shadow, .bon-shine { animation: none !important; }
+          }
+        `}</style>
+
+        {/* Produits + ombres, décalés dans le temps pour sauter à tour de rôle */}
+        <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "center", gap: 18 }}>
+          {PRODUCTS.map(({ src, height }, i) => {
+            const n = PRODUCTS.length;
+            const delay = `-${(i * JUMP_S) / n}s`;
+            // Seul au centre : se dandine. Sur un côté : penche vers le centre.
+            const side = n === 1 ? 0 : (i - (n - 1) / 2);
+            const [a, b] = side === 0 ? ["-6deg", "4deg"] : side < 0 ? ["9deg", "3deg"] : ["-9deg", "-3deg"];
+            return (
+              <div key={src} style={{ position: "relative" as const, height: 170, width: 90, display: "flex", alignItems: "flex-end", justifyContent: "center" }}>
+                <div className="bon-shadow" style={{
+                  position: "absolute" as const, bottom: 2, width: 64, height: 12, borderRadius: "50%",
+                  background: "#0f172a", animation: `bonTubeShadow ${JUMP_S}s ease-in-out infinite`, animationDelay: delay,
+                }} />
+                <div className="bon-tube" style={{
+                  transformOrigin: "50% 100%", marginBottom: 8,
+                  animation: `bonTubeJump ${JUMP_S}s cubic-bezier(.45,.05,.55,.95) infinite`, animationDelay: delay,
+                  ["--tilt-a" as any]: a, ["--tilt-b" as any]: b,
+                }}>
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={src} alt="" style={{ height, maxWidth: 110, objectFit: "contain" as const, display: "block" }} />
+                </div>
+              </div>
+            );
+          })}
+        </div>
+    </>
   );
 }

@@ -8,6 +8,7 @@ export const CHANGELOG: ChangelogEntry[] = [
   {
     date: "2026-11-13",
     items: [
+      "Création du devis : animation des produits qui sautent et barre de progression avec les étapes pendant l'envoi à Odoo.",
       "MEA : filtre « Actives / Toutes » (tableau de bord et suivi), actives par défaut ; seules les MEA actives sont proposées dans les RDV.",
       "Suivi MEA : « Offre prévue » et notes de nouveau saisissables (gardées sur l'appareil tant que le modèle Odoo « Suivi MEA » n'existe pas).",
       "Tableau de bord : CA et évolution par client calculés comme sur la fiche client (champs Odoo « CA à date N / N-1 »).",

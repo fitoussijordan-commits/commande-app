@@ -24,6 +24,7 @@ import { needsShippingFee, shippingProduct, SHIPPING_FEE_HT, FRANCO_HT } from "@
 import OrderCheck from "@/components/OrderCheck";
 import OrderDetailModal from "@/components/OrderDetailModal";
 import VersionFooter from "@/components/VersionFooter";
+import OrderSubmitLoader, { type SubmitStep } from "@/components/OrderSubmitLoader";
 import { caDateFields as caDateFieldsShared } from "@/lib/salesStats";
 import { CountUp, TubeLoader, TubeSuccess, CatalogSkeleton, ListSkeleton } from "@/components/motion";
 import * as sync from "@/lib/sync";
@@ -465,6 +466,7 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
   const [freeItems, setFreeItems] = useState<FreeItem[]>([]);
   const [showRules, setShowRules] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [submitStep, setSubmitStep] = useState<SubmitStep>("prep");   // étape affichée pendant la création
   const [done, setDone] = useState<{ mainId: number | null; freeId: number | null; mainName?: string; freeName?: string; offline?: boolean; ruptures?: number } | null>(null);
   const [note, setNote] = useState("");
   // Brouillon détecté pour le client qu'on vient de sélectionner (jamais un autre client — pas de fuite visuelle)
@@ -824,6 +826,7 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
   };
 
   const handleValidate = async () => {
+    setSubmitStep("prep");
     setSubmitting(true);
     try {
       // Client bloqué (compta, redressement) : PAS d'étiquette « Validé » — c'est le service
@@ -975,6 +978,7 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
       const cartTotal = Object.values(cart).reduce((s, it) => s + it.qty * it.unitPrice, 0);
 
       // 1) Devis principal
+      setSubmitStep("devis");
       let mainId: number;
       try {
         try {
@@ -1018,6 +1022,7 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
       // 1 bis) Commande directe logistique : confirmation automatique + note de la
       // commande recopiée sur le bon de préparation (la logistique ne lit que celle-là).
       if (directLogistics) {
+        setSubmitStep("logistique");
         const t = await sync.transmitToLogistics(session, mainId, orderNote, toOdooDatetime(plan.expedition));
         if (t.error) onToast(`Devis #${mainId} créé, mais ${t.error}`, "error");
         else onToast(`Commande confirmée et transmise${t.pickings.length ? ` — ${t.pickings.join(", ")}` : ""}`, "success");
@@ -1031,6 +1036,7 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
       // arrive ici, on ne remet JAMAIS mainPayload en file (sinon doublon au rejeu).
       let freeId: number | null = null;
       if (freePayload) {
+        setSubmitStep("gratuit");
         freePayload.note = `Articles offerts — lié au devis #${mainId}`;
         try {
           freeId = await odoo.create(session, "sale.order", freePayload);
@@ -1044,6 +1050,7 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
         }
       }
 
+      setSubmitStep("final");
       removeDraftForClient(client.id);
       refreshPendingDrafts();
       setAppliedPromos({});
@@ -1479,6 +1486,12 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
           }} />
       )}
       </div>
+
+      {/* Création du devis : produits qui sautent + barre de progression */}
+      {submitting && client && (
+        <OrderSubmitLoader step={submitStep} clientName={client.name}
+          steps={["prep", "devis", ...(directLogistics ? ["logistique" as const] : []), ...(freeItems.length > 0 ? ["gratuit" as const] : []), "final"]} />
+      )}
 
       {showAppointment && client && (
         <AppointmentModal session={session} client={client} onClose={() => setShowAppointment(false)} onToast={onToast} />
