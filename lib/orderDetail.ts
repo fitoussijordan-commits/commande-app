@@ -71,7 +71,11 @@ function guessTrackingUrl(carrier: string | null, ref: string): string | null {
   if (/gls/.test(c)) return `https://gls-group.com/FR/fr/suivi-colis?match=${r}`;
   if (/\bups\b/.test(c)) return `https://www.ups.com/track?tracknum=${r}`;
   if (/dhl/.test(c)) return `https://www.dhl.com/fr-fr/home/suivi.html?tracking-id=${r}`;
-  if (/fedex|tnt/.test(c)) return `https://www.fedex.com/fedextrack/?trknbr=${r}`;
+  // TNT : bon de transport de 16 chiffres en France (tnt.fr), 9 à l'international (tnt.com).
+  if (/\btnt\b/.test(c)) return /^\d{9}$/.test(ref.trim())
+    ? `https://www.tnt.com/express/fr_fr/site/outils-expedition/suivi.html?searchType=con&cons=${r}`
+    : `https://www.tnt.fr/public/suivi_colis/recherche/visubontransport.do?bonTransport=${r}`;
+  if (/fedex/.test(c)) return `https://www.fedex.com/fedextrack/?trknbr=${r}`;
   if (/geodis/.test(c)) return `https://geodis.com/fr/suivi?tracking=${r}`;
   if (/schenker/.test(c)) return `https://www.dbschenker.com/app/tracking-public/?refNumber=${r}`;
   return null;
@@ -220,7 +224,9 @@ export async function loadOrderDetail(session: odoo.OdooSession, orderId: number
         done: p.state === "done",
         date: p.state === "done" ? (p.date_done || null) : (p.scheduled_date || null),
         carrier, trackingRef: ref,
-        trackingUrl: (p.carrier_tracking_url ? String(p.carrier_tracking_url) : null) || (ref ? guessTrackingUrl(carrier, ref) : null),
+        // TNT : le lien fourni par Odoo ne mène pas au suivi, on construit le nôtre.
+        trackingUrl: ref && /\btnt\b/i.test(carrier || "") ? guessTrackingUrl(carrier, ref)
+          : (p.carrier_tracking_url ? String(p.carrier_tracking_url) : null) || (ref ? guessTrackingUrl(carrier, ref) : null),
       };
     }),
   };
