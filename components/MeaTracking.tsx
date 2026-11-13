@@ -7,7 +7,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { TubeLoader } from "@/components/motion";
 import * as odoo from "@/lib/odoo";
 import { linkedPartnerId } from "@/lib/calendar";
-import { loadMeaData, savePlan, planKey, type MeaData, type Plan } from "@/lib/meaTracking";
+import { loadMeaData, savePlan, planKey, localPlans, saveLocalPlan, type MeaData, type Plan } from "@/lib/meaTracking";
 import AppointmentModal from "@/components/AppointmentModal";
 import { getMineOnly, setMineOnly } from "@/lib/clients";
 
@@ -39,13 +39,6 @@ async function loadNextVisits(session: odoo.OdooSession): Promise<Map<number, Da
   }
   return out;
 }
-
-// Sans le modèle Studio « Suivi MEA », les prévisions (offre prévue + note)
-// sont gardées sur l'appareil : utilisables tout de suite, mais ni partagées
-// ni sauvegardées dans Odoo.
-const LS_PLANS = "mea_plans_local";
-function localPlans(): Record<string, Plan> { try { return JSON.parse(localStorage.getItem(LS_PLANS) || "{}"); } catch { return {}; } }
-function saveLocalPlan(k: string, p: Plan) { try { localStorage.setItem(LS_PLANS, JSON.stringify({ ...localPlans(), [k]: p })); } catch {} }
 
 export default function MeaDashboard({ session, onClose, onOpenClient, onToast }: {
   session: odoo.OdooSession;

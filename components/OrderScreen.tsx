@@ -24,6 +24,7 @@ import { needsShippingFee, shippingProduct, SHIPPING_FEE_HT, FRANCO_HT } from "@
 import OrderCheck from "@/components/OrderCheck";
 import OrderDetailModal from "@/components/OrderDetailModal";
 import VersionFooter from "@/components/VersionFooter";
+import RdvPrepModal from "@/components/RdvPrepModal";
 import OrderSubmitLoader, { type SubmitStep } from "@/components/OrderSubmitLoader";
 import { caDateFields as caDateFieldsShared } from "@/lib/salesStats";
 import { CountUp, TubeLoader, TubeSuccess, CatalogSkeleton, ListSkeleton } from "@/components/motion";
@@ -466,6 +467,7 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
   const [freeItems, setFreeItems] = useState<FreeItem[]>([]);
   const [showRules, setShowRules] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [showPrep, setShowPrep] = useState(false);   // préparation de RDV du client
   const [submitStep, setSubmitStep] = useState<SubmitStep>("prep");   // étape affichée pendant la création
   const [done, setDone] = useState<{ mainId: number | null; freeId: number | null; mainName?: string; freeName?: string; offline?: boolean; ruptures?: number } | null>(null);
   const [note, setNote] = useState("");
@@ -1428,6 +1430,7 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
           session={session}
           client={client}
           hasDraft={!!loadDraftForClient(client.id)}
+          onPrep={() => setShowPrep(true)}
           onOrder={enterOrderMode}
           onHistory={() => setStep("history")}
           onAppointment={() => setShowAppointment(true)}
@@ -1491,6 +1494,10 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
       {submitting && client && (
         <OrderSubmitLoader step={submitStep} clientName={client.name}
           steps={["prep", "devis", ...(directLogistics ? ["logistique" as const] : []), ...(freeItems.length > 0 ? ["gratuit" as const] : []), "final"]} />
+      )}
+
+      {showPrep && client && (
+        <RdvPrepModal session={session} client={client} onClose={() => setShowPrep(false)} onToast={onToast} />
       )}
 
       {showAppointment && client && (
@@ -2662,8 +2669,9 @@ function ClientStep({ session, onSelect, onImportBon, onOpenPlanning, onToast, d
 // ═══════════════════════════════════════════════════════════════════════════
 // HUB CLIENT — écran d'accueil une fois le client sélectionné
 // ═══════════════════════════════════════════════════════════════════════════
-function ClientHub({ session, client, hasDraft, onOrder, onHistory, onAppointment, onNote, onNoteRec, onPerime, onAssistant, onImportBon }: {
+function ClientHub({ session, client, hasDraft, onPrep, onOrder, onHistory, onAppointment, onNote, onNoteRec, onPerime, onAssistant, onImportBon }: {
   session: odoo.OdooSession; client: any; hasDraft: boolean;
+  onPrep: () => void;
   onOrder: () => void; onHistory: () => void; onAppointment: () => void; onNote: () => void; onNoteRec: () => void;
   onPerime: () => void;
   onAssistant: () => void;
@@ -2733,6 +2741,7 @@ function ClientHub({ session, client, hasDraft, onOrder, onHistory, onAppointmen
   // Refonte : une seule carte accentuée (l'action principale), les autres en blanc.
   const cards = [
     { key: "order", icon: "cart", title: "Prise de commande", subtitle: hasDraft ? "Brouillon en attente" : "Nouveau devis", primary: true, badge: hasDraft, onClick: onOrder },
+    { key: "prep", icon: "list", title: "Préparer le RDV", subtitle: "CA, offres du cycle, propositions", primary: false, badge: false, onClick: onPrep },
     { key: "bon", icon: "file", title: "Importer un bon", subtitle: "PDF ou photo du client", primary: false, badge: false, onClick: onImportBon },
     { key: "history", icon: "clock", title: "Historique", subtitle: "Commandes passées", primary: false, badge: false, onClick: onHistory },
     { key: "rdv", icon: "calendar", title: "Prendre un RDV", subtitle: "Agenda Odoo", primary: false, badge: false, onClick: onAppointment },

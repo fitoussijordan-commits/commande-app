@@ -36,7 +36,7 @@ const campaignOf = (name: string) => {
 };
 export const planKey = (campaign: string, clientId: number) => `${campaign}|${clientId}`;
 
-async function findTrackingModel(session: odoo.OdooSession): Promise<TrackingModel | null> {
+export async function findTrackingModel(session: odoo.OdooSession): Promise<TrackingModel | null> {
   try {
     const models = await odoo.searchRead(session, "ir.model", [["model", "=like", "x_%"], ["name", "ilike", "suivi"]], ["model", "name"], 20);
     const m = models.find((r: any) => /mea/i.test(`${r.name} ${r.model}`));
@@ -57,7 +57,9 @@ async function findTrackingModel(session: odoo.OdooSession): Promise<TrackingMod
 
 // mine : clients dont l'utilisateur est le Vendeur (sinon tous les clients,
 // limités aux 2 000 plus gros CA N-1).
-export async function loadMeaData(session: odoo.OdooSession, mine = true): Promise<MeaData> {
+// Campagnes MEA (offres regroupées par début de nom), chacune marquée active ou non.
+export interface CampaignSet { campaigns: MeaCampaign[]; offersField: string; offerRows: any[]; offerCampaign: Map<number, string> }
+export async function loadCampaigns(session: odoo.OdooSession): Promise<CampaignSet> {
   const meta = await orderMeta(session);
   const rel = meta.offersRelation, offersField = meta.offersField;
   if (!rel || !offersField) throw new Error("Champ « Offres commandées » introuvable sur les commandes");
@@ -111,6 +113,12 @@ export async function loadMeaData(session: odoo.OdooSession, mine = true): Promi
   const campaigns = [...all.filter(c => c.active), ...all.filter(c => !c.active)];
   const offerCampaign = new Map<number, string>();
   campaigns.forEach(c => c.offers.forEach(o => offerCampaign.set(o.id, c.key)));
+
+  return { campaigns, offersField, offerRows, offerCampaign };
+}
+
+export async function loadMeaData(session: odoo.OdooSession, mine = true): Promise<MeaData> {
+  const { campaigns, offersField, offerRows, offerCampaign } = await loadCampaigns(session);
 
   // Clients du commercial (sociétés), hors fournisseurs.
   const clients = await odoo.searchRead(session, "res.partner",
@@ -174,4 +182,26 @@ export async function savePlan(session: odoo.OdooSession, t: TrackingModel, camp
   if (t.user) vals[t.user] = session.uid;
   if (plan.id) { await odoo.write(session, t.model, [plan.id], vals); return plan.id; }
   return await odoo.create(session, t.model, vals);
+}
+
+// Sans le modèle Studio « Suivi MEA », les prévisions (offre prévue + note) sont
+// gardées sur l'appareil : utilisables tout de suite, ni partagées ni dans Odoo.
+const LS_PLANS = "mea_plans_local";
+export function localPlans(): Record<string, Plan> { try { return JSON.parse(localStorage.getItem(LS_PLANS) || "{}"); } catch { return {}; } }
+export function saveLocalPlan(k: string, p: Plan) { try { localStorage.setItem(LS_PLANS, JSON.stringify({ ...localPlans(), [k]: p })); } catch {} }
+
+// Prévisions d'UN client (toutes campagnes) : modèle Studio, sinon appareil.
+export async function clientPlans(session: odoo.OdooSession, clientId: number): Promise<{ tracking: TrackingModel | null; plans: Map<string, Plan> }> {
+  const tracking = await findTrackingModel(session);
+  const plans = new Map<string, Plan>();
+  if (tracking) {
+    const fields = ["id", tracking.partner, tracking.campaign!, tracking.offer, tracking.note].filter(Boolean) as string[];
+    const rows = await odoo.searchRead(session, tracking.model, [[tracking.partner, "=", clientId]], fields, 0).catch(() => []);
+    for (const r of rows) plans.set(planKey(String(r[tracking.campaign!] || ""), clientId), {
+      id: r.id, offerId: tracking.offer ? (r[tracking.offer]?.[0] || null) : null, note: tracking.note ? String(r[tracking.note] || "") : "",
+    });
+  } else {
+    for (const [k, v] of Object.entries(localPlans())) if (k.endsWith(`|${clientId}`)) plans.set(k, v);
+  }
+  return { tracking, plans };
 }
