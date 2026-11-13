@@ -710,15 +710,7 @@ export async function createRebutPicking(
         location_id: srcId,
         location_dest_id: opts.locationId,
       };
-      let moveId: number;
-      try {
-        moveId = await odoo.create(session, "stock.move", moveVals);
-      } catch (e) {
-        if (odoo.isNetworkError(e)) throw e;
-        // Champ absent sur cette version : on garde au moins le libellé technique.
-        delete moveVals.description_picking;
-        moveId = await odoo.create(session, "stock.move", moveVals);
-      }
+      const moveId = await createTolerant(session, "stock.move", moveVals);
       lineByMove.set(moveId, l);
     }
 
@@ -735,6 +727,29 @@ export async function createRebutPicking(
   } catch (e: any) {
     return { error: `transfert : ${e?.message || "erreur inconnue"}` };
   }
+}
+
+// Création qui s'adapte à la version d'Odoo : un champ disparu (ex. `name` sur
+// stock.move, supprimé en Odoo 18+ ; `product_uom` renommé `product_uom_id`)
+// fait échouer TOUTE la création avec « Invalid field 'x' in 'modèle' ». On
+// retire (ou renomme) le champ cité et on recommence.
+const RENAMED: Record<string, string> = { product_uom: "product_uom_id" };
+async function createTolerant(session: odoo.OdooSession, model: string, vals: any): Promise<number> {
+  const v = { ...vals };
+  for (let attempt = 0; attempt < 5; attempt++) {
+    try {
+      return await odoo.create(session, model, v);
+    } catch (e: any) {
+      if (odoo.isNetworkError(e)) throw e;
+      const m = /Invalid field ['"]?([\w.]+)['"]? (?:in|on) ['"]?[\w.]+/i.exec(String(e?.message || ""));
+      const f = m?.[1];
+      if (!f || !(f in v)) throw e;
+      const to = RENAMED[f];
+      if (to && !(to in v)) v[to] = v[f];
+      delete v[f];
+    }
+  }
+  return odoo.create(session, model, v);
 }
 
 // Reprises déjà créées, retrouvées par la référence PERIM- portée par le BC.
@@ -819,7 +834,7 @@ async function confirmAndValidate(
     // d'opération : on les crée alors nous-mêmes.
     if (!mls.length) {
       for (const [moveId, l] of Array.from(lineByMove.entries())) {
-        await odoo.create(session, "stock.move.line", {
+        await createTolerant(session, "stock.move.line", {
           move_id: moveId, picking_id: pickingId,
           product_id: l.product.id,
           ...(await lotVals(session, l)),
