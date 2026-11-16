@@ -3468,6 +3468,62 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
     });
   };
   const [applyingMea, setApplyingMea] = useState<number | null>(null);
+  // Contenu d'une MEA (flèche ▾) : lignes du modèle chargées à la demande.
+  const [meaOpen, setMeaOpen] = useState<number | null>(null);
+  const [meaLines, setMeaLines] = useState<Record<number, any[] | "loading" | "error">>({});
+  const toggleMeaContent = async (t: any) => {
+    if (meaOpen === t.id) { setMeaOpen(null); return; }
+    setMeaOpen(t.id);
+    if (Array.isArray(meaLines[t.id])) return;
+    setMeaLines(m => ({ ...m, [t.id]: "loading" }));
+    const ids: number[] = t.sale_order_template_line_ids || [];
+    try {
+      const tlm = await templateLineMeta(session);
+      let lines: any[];
+      try {
+        lines = await odoo.searchRead(session, "sale.order.template.line", [["id", "in", ids]],
+          ["id", "product_id", "name", "product_uom_qty", "display_type", "sequence", ...(tlm.discount ? [tlm.discount] : []), ...(tlm.freeType ? [tlm.freeType] : [])], 0, "sequence, id");
+      } catch (e) {
+        if (!odoo.isNetworkError(e)) throw e;
+        lines = (await sync.getCachedMeaLines(ids)).sort((x: any, y: any) => (x.sequence || 0) - (y.sequence || 0) || x.id - y.id);
+      }
+      setMeaLines(m => ({ ...m, [t.id]: lines.map((l: any) => ({
+        section: l.display_type === "line_section" || l.display_type === "line_note" ? l.display_type : null,
+        name: l.product_id ? String(l.product_id[1]) : String(l.name || ""),
+        qty: Number(l.product_uom_qty) || 0,
+        discount: tlm.discount ? Number(l[tlm.discount]) || 0 : 0,
+        freeType: tlm.freeType && l[tlm.freeType] ? (Array.isArray(l[tlm.freeType]) ? l[tlm.freeType][1] : String(l[tlm.freeType])) : "",
+      })) }));
+    } catch { setMeaLines(m => ({ ...m, [t.id]: "error" })); }
+  };
+  const meaContent = (id: number) => {
+    const lines = meaLines[id];
+    if (!lines || lines === "loading") return <div style={{ padding: "8px 2px", fontSize: 12, color: C.muted }}>Chargement du contenu…</div>;
+    if (lines === "error") return <div style={{ padding: "8px 2px", fontSize: 12, color: C.red }}>Contenu indisponible</div>;
+    return (
+      <div className="reveal" style={{ display: "flex", flexDirection: "column" as const, gap: 2, padding: "6px 0 2px" }}>
+        {lines.map((l: any, i: number) => l.section ? (
+          <div key={i} style={{ fontSize: 10.5, fontWeight: 800, color: C.tealDark, textTransform: "uppercase" as const, letterSpacing: "0.04em", padding: "6px 0 2px" }}>{l.name}</div>
+        ) : (
+          <div key={i} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, padding: "3px 0", borderBottom: `1px dashed ${C.border}` }}>
+            <span style={{ width: 34, flexShrink: 0, textAlign: "right" as const, fontWeight: 800, color: l.qty ? C.text : C.muted }}>{l.qty ? `×${l.qty}` : "—"}</span>
+            <span style={{ flex: 1, minWidth: 0, color: C.textSec, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }} title={l.name}>{l.name}</span>
+            {l.discount >= 99.99 ? <span style={{ flexShrink: 0, fontSize: 10, fontWeight: 800, color: C.green, background: C.greenSoft, borderRadius: 999, padding: "1px 7px" }}>Offert</span>
+              : l.discount > 0 ? <span style={{ flexShrink: 0, fontSize: 10, fontWeight: 800, color: C.orange, background: C.orangeSoft, borderRadius: 999, padding: "1px 7px" }}>−{l.discount} %</span> : null}
+            {l.freeType && l.discount < 99.99 && <span style={{ flexShrink: 0, fontSize: 10, color: C.muted }}>{l.freeType}</span>}
+          </div>
+        ))}
+        {lines.length === 0 && <div style={{ fontSize: 12, color: C.muted }}>Modèle vide</div>}
+      </div>
+    );
+  };
+  const chevron = (t: any) => (
+    <button onClick={() => toggleMeaContent(t)} title={meaOpen === t.id ? "Masquer le contenu" : "Voir le contenu de l'offre"} aria-label="Voir le contenu"
+      style={{ flexShrink: 0, width: 32, height: 32, borderRadius: 8, border: `1px solid ${C.border}`, background: meaOpen === t.id ? C.tealSoft : C.white, color: C.tealDark, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", padding: 0 }}>
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round"
+        style={{ transform: meaOpen === t.id ? "rotate(180deg)" : "none", transition: "transform 0.2s" }}><path d="M6 9l6 6 6-6" /></svg>
+    </button>
+  );
 
   // ── Favoris : produits déjà commandés par le client, triés par quantité ───
   const FAV_CAT_ID = "__fav__";
@@ -4045,13 +4101,17 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
                   const isApplying = applyingMea === t.id;
                   const lineCount = t.sale_order_template_line_ids?.length || 0;
                   return (
-                    <div key={t.id} style={{ display: "flex", alignItems: "center", gap: 12, padding: "8px 12px", borderTop: i ? `1px solid ${C.border}` : "none", background: isApplying ? C.tealSoft : C.white }}>
+                    <div key={t.id} style={{ borderTop: i ? `1px solid ${C.border}` : "none", background: isApplying ? C.tealSoft : C.white, padding: "8px 12px" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                      {chevron(t)}
                       <div style={{ flex: 1, minWidth: 0, fontSize: 13, fontWeight: 700, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }} title={t.name}>{t.name}</div>
                       <span style={{ flexShrink: 0, fontSize: 11, color: C.muted, width: 74, textAlign: "right" as const }}>{lineCount} produit{lineCount > 1 ? "s" : ""}</span>
                       <button onClick={() => applyMeaTemplate(t)} disabled={isApplying}
                         style={{ flexShrink: 0, height: 34, padding: "0 12px", background: isApplying ? C.bg : C.teal, color: isApplying ? C.muted : "#fff", border: `1px solid ${isApplying ? C.border : C.teal}`, borderRadius: 8, fontSize: 12, fontWeight: 700, cursor: isApplying ? "default" : "pointer", fontFamily: "inherit", whiteSpace: "nowrap" as const }}>
                         {isApplying ? "…" : "+ Ajouter"}
                       </button>
+                    </div>
+                    {meaOpen === t.id && <div style={{ paddingLeft: 44 }}>{meaContent(t.id)}</div>}
                     </div>
                   );
                 })}
@@ -4062,12 +4122,14 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
                   const isApplying = applyingMea === t.id;
                   const lineCount = t.sale_order_template_line_ids?.length || 0;
                   return (
-                    <div key={t.id} style={{ minHeight: 90, background: C.white, borderRadius: 10, border: `1px solid ${isApplying ? C.teal : C.border}`, boxShadow: C.shadow, display: "flex", alignItems: "center", gap: 14, padding: "12px 16px", transition: "border-color 0.15s" }}>
+                    <div key={t.id} style={{ minHeight: 90, background: C.white, borderRadius: 10, border: `1px solid ${isApplying || meaOpen === t.id ? C.teal : C.border}`, boxShadow: C.shadow, display: "flex", flexWrap: "wrap" as const, alignItems: "center", gap: 14, padding: "12px 16px", transition: "border-color 0.15s",
+                      ...(meaOpen === t.id ? { gridColumn: "1 / -1" } : {}) }}>
                       {/* Infos */}
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <div style={{ fontSize: 11, color: C.muted, marginBottom: 3 }}>{lineCount} produit{lineCount > 1 ? "s" : ""}</div>
                         <div style={{ fontSize: 13, fontWeight: 700, color: C.text, lineHeight: 1.35, overflowWrap: "anywhere" as const }}>{t.name}</div>
                       </div>
+                      {chevron(t)}
                       {/* Bouton */}
                       <button
                         onClick={() => applyMeaTemplate(t)}
@@ -4075,6 +4137,7 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
                         style={{ flexShrink: 0, padding: "8px 14px", background: isApplying ? C.bg : C.teal, color: isApplying ? C.muted : "#fff", border: `1px solid ${isApplying ? C.border : C.teal}`, borderRadius: 8, fontSize: 12, fontWeight: 700, cursor: isApplying ? "default" : "pointer", fontFamily: "inherit", whiteSpace: "nowrap" as const }}>
                         {isApplying ? "…" : "+ Ajouter"}
                       </button>
+                      {meaOpen === t.id && <div style={{ flexBasis: "100%" }}>{meaContent(t.id)}</div>}
                     </div>
                   );
                 })}
