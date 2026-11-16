@@ -1177,7 +1177,7 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
                         <span style={{ flex: 1, minWidth: 0 }}>
                           <span style={{ display: "block", fontSize: 12.5, fontWeight: 800, color: C.text }}>
                             {/* Ouvre la commande en grand dans l'app : produits, livraison, échanges avec le service client */}
-                            <button onClick={e => { e.preventDefault(); e.stopPropagation(); setBigOrder(o); }}
+                            <button onClick={e => { e.preventDefault(); e.stopPropagation(); setShowPending(false); setBigOrder(o); }}
                               style={{ background: "none", border: "none", padding: 0, cursor: "pointer", fontFamily: "inherit", fontSize: 12.5, fontWeight: 800, color: C.teal, textDecoration: "underline" }}>{o.name} ⤢</button>
                           </span>
                           <span style={{ display: "block", fontSize: 11, color: C.muted }}>

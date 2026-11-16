@@ -8,6 +8,7 @@ export const CHANGELOG: ChangelogEntry[] = [
   {
     date: "2026-11-13",
     items: [
+      "Commandes en attente : la liste se referme quand on ouvre une commande en grand.",
       "Panier : la flèche pour ouvrir / fermer le récap répond au premier appui (les clics en bord de bouton étaient perdus).",
       "Commandes en attente : le numéro ouvre la commande en grand (produits, livraison, lots, remises) avec les échanges du chatter ; réponse au service client en note interne, jamais envoyée au client.",
       "Historique : les échanges (chatter) apparaissent aussi dans le détail de chaque commande.",
