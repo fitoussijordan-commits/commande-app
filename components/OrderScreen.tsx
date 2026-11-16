@@ -1034,6 +1034,35 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
         if (j) onToast(j, "error");
       }
 
+      // 1 ter) Commandes jointes : lien visible des DEUX côtés dans Odoo, quel que
+      // soit le circuit (avant, hors logistique directe, seul le chatter de la
+      // nouvelle commande les citait — et rien n'apparaissait sur les jointes).
+      if (joined.length) {
+        const mainName = (await odoo.searchRead(session, "sale.order", [["id", "=", mainId]], ["name"], 1).catch(() => []))[0]?.name || `#${mainId}`;
+        const jm = await orderMeta(session).catch(() => null);
+        const problems: string[] = [];
+        // Champ « Commandes jointes » : la nouvelle commande sur chaque jointe.
+        if (jm?.joinedField) {
+          await odoo.write(session, "sale.order", joined.map(o => o.id), { [jm.joinedField]: [[4, mainId]] })
+            .catch((e: any) => problems.push(`lien non écrit (${e?.message || e})`));
+        }
+        // Note interne sur chaque commande jointe, et rappel sur la nouvelle.
+        const others = (o: any) => [mainName, ...joined.filter(x => x.id !== o.id).map(x => x.name)].join(", ");
+        for (const o of joined) {
+          await odoo.callMethod(session, "sale.order", "message_post", [[o.id]], {
+            body: `Jointe à la commande <strong>${mainName}</strong> (${client.name}) — à expédier ensemble avec ${others(o)}.`,
+            message_type: "comment", subtype_xmlid: "mail.mt_note",
+          }).catch((e: any) => problems.push(`${o.name} : note non ajoutée (${e?.message || e})`));
+        }
+        await odoo.callMethod(session, "sale.order", "message_post", [[mainId]], {
+          body: `Commandes jointes : <strong>${joined.map(o => o.name).join(", ")}</strong> — à expédier ensemble.`,
+          message_type: "comment", subtype_xmlid: "mail.mt_note",
+        }).catch(() => {});
+        if (problems.length) onToast(`Commandes jointes : ${problems.join(" ; ")}`, "error");
+        else onToast(`${joined.length} commande${joined.length > 1 ? "s" : ""} jointe${joined.length > 1 ? "s" : ""} à ${mainName} : ${joined.map(o => o.name).join(", ")}${jm?.joinedField ? "" : " (note interne ; champ « Commandes jointes » absent)"}`, "success");
+        setJoinIds([]);
+      }
+
       // 2) BC gratuit — le devis principal EXISTE déjà dans Odoo : quoi qu'il
       // arrive ici, on ne remet JAMAIS mainPayload en file (sinon doublon au rejeu).
       let freeId: number | null = null;
