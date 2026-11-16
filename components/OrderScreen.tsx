@@ -2881,6 +2881,11 @@ function ClientHistory({ session, client }: { session: odoo.OdooSession; client:
 
   // Palmarès + MEA : chargés à la demande (lignes de commandes confirmées de l'année).
   const [ranking, setRanking] = useState<any[]>([]);
+  // Palmarès : période libre (comparée à la même période N-1) et tri.
+  const ymdLocal = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  const yearRange = (yy: number) => ({ from: `${yy}-01-01`, to: yy === new Date().getFullYear() ? ymdLocal(new Date()) : `${yy}-12-31` });
+  const [rkRange, setRkRange] = useState(() => yearRange(new Date().getFullYear()));
+  const [rkSort, setRkSort] = useState<"qty" | "n1" | "drop" | "rise">("qty");
   const [meaOrders, setMeaOrders] = useState<any[]>([]);
   // Devis d'implantation : séparés des MEA, devis non confirmés compris.
   const [implantOrders, setImplantOrders] = useState<any[]>([]);
@@ -2956,23 +2961,28 @@ function ClientHistory({ session, client }: { session: odoo.OdooSession; client:
           setMeaOrders(mea);
         }
 
-        // Palmarès : agrège les lignes de toutes ces commandes.
-        if (mode === "ranking" && yearOrders.length) {
-          const ids = yearOrders.map((o: any) => o.id);
-          const lines = await odoo.searchRead(session, "sale.order.line",
-            [["order_id", "in", ids], ["product_id", "!=", false], ["display_type", "=", false]],
-            ["product_id", "product_uom_qty", "price_subtotal"], 2000);
+        // Palmarès : quantités vendues sur la période choisie, comparées à la
+        // même période N-1 (articles achetés en N-1 seulement compris : ce sont
+        // les plus grosses baisses).
+        if (mode === "ranking") {
+          const shift = (d: string) => `${Number(d.slice(0, 4)) - 1}${d.slice(4)}`;
+          const period = async (from: string, to: string) => odoo.searchRead(session, "sale.order.line",
+            [["order_id.partner_id", "child_of", family], ["order_id.state", "in", ["sale", "done"]],
+             ["order_id.date_order", ">=", `${from} 00:00:00`], ["order_id.date_order", "<=", `${to} 23:59:59`],
+             ["product_id", "!=", false], ["display_type", "=", false]],
+            ["product_id", "product_uom_qty", "price_subtotal", "order_id"], 0);
+          const [cur, prev] = await Promise.all([period(rkRange.from, rkRange.to), period(shift(rkRange.from), shift(rkRange.to))]);
           if (cancelled) return;
-          const agg = new Map<number, { name: string; qty: number; times: number; total: number }>();
-          for (const l of lines) {
-            const pid = l.product_id?.[0]; if (!pid) continue;
-            const cur = agg.get(pid) || { name: l.product_id[1] || "", qty: 0, times: 0, total: 0 };
-            cur.qty += l.product_uom_qty || 0; cur.times += 1; cur.total += l.price_subtotal || 0;
-            agg.set(pid, cur);
-          }
-          setRanking(Array.from(agg.values()).sort((a, b) => b.qty - a.qty));
-        } else if (mode === "ranking") {
-          setRanking([]);
+          const agg = new Map<number, { name: string; qty: number; times: number; total: number; qtyN1: number; totalN1: number; orders: Set<number> }>();
+          const add = (l: any, n1: boolean) => {
+            const pid = l.product_id?.[0]; if (!pid) return;
+            const c = agg.get(pid) || { name: l.product_id[1] || "", qty: 0, times: 0, total: 0, qtyN1: 0, totalN1: 0, orders: new Set<number>() };
+            if (n1) { c.qtyN1 += l.product_uom_qty || 0; c.totalN1 += l.price_subtotal || 0; }
+            else { c.qty += l.product_uom_qty || 0; c.total += l.price_subtotal || 0; c.orders.add(l.order_id?.[0]); c.times = c.orders.size; }
+            agg.set(pid, c);
+          };
+          cur.forEach((l: any) => add(l, false)); prev.forEach((l: any) => add(l, true));
+          setRanking(Array.from(agg.values()));
         }
 
         // Gratuités consommées sur l'année : lignes portant un type_gratuit.
@@ -3007,7 +3017,7 @@ function ClientHistory({ session, client }: { session: odoo.OdooSession; client:
       setAnalyLoading(false);
     })();
     return () => { cancelled = true; };
-  }, [mode, year, session, client.id]);
+  }, [mode, year, session, client.id, rkRange.from, rkRange.to]);
 
   const openOrder = (o: any) => setSelectedOrder(o);
 
@@ -3067,7 +3077,7 @@ function ClientHistory({ session, client }: { session: odoo.OdooSession; client:
         {mode !== "orders" && (
           <div style={{ display: "flex", gap: 6, marginBottom: 16 }}>
             {YEARS.map(y => (
-              <button key={y} onClick={() => setYear(y)}
+              <button key={y} onClick={() => { setYear(y); setRkRange(yearRange(y)); }}
                 style={{ padding: "6px 16px", borderRadius: 999, border: `1.5px solid ${year === y ? C.teal : C.border}`, cursor: "pointer", fontFamily: "inherit", fontSize: 13, fontWeight: 700,
                   background: year === y ? C.teal : C.white, color: year === y ? "#fff" : C.textSec }}>
                 {y}
@@ -3080,27 +3090,62 @@ function ClientHistory({ session, client }: { session: odoo.OdooSession; client:
         {mode === "invoices" && <InvoiceHistory session={session} client={client} year={year} />}
 
         {/* ── Onglet PALMARÈS ── */}
-        {mode === "ranking" && (
-          analyLoading ? <TubeLoader label="Calcul du palmarès…" />
-          : ranking.length === 0 ? <div style={{ textAlign: "center" as const, color: C.muted, padding: 40 }}>Aucun produit commandé en {year}</div>
-          : (
-            <div className="stagger" style={{ display: "flex", flexDirection: "column" as const, gap: 8 }}>
-              {ranking.map((r, i) => (
-                <div key={i} style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 14px", background: C.white, border: `1px solid ${C.border}`, borderRadius: 12, boxShadow: C.shadow }}>
-                  <div style={{ width: 26, height: 26, borderRadius: 8, background: i < 3 ? C.tealSoft : C.bg, color: i < 3 ? C.tealDark : C.muted, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 13, fontWeight: 800, flexShrink: 0 }}>{i + 1}</div>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: 13, fontWeight: 600, color: C.text }}>{r.name}</div>
-                    <div style={{ fontSize: 11, color: C.muted, marginTop: 1 }}>{r.times} commande{r.times > 1 ? "s" : ""}</div>
-                  </div>
-                  <div style={{ textAlign: "right" as const, flexShrink: 0 }}>
-                    <div style={{ fontSize: 15, fontWeight: 800, color: C.tealDark }}>{Math.round(r.qty)}</div>
-                    <div style={{ fontSize: 10, color: C.muted }}>unités</div>
-                  </div>
-                </div>
-              ))}
+        {mode === "ranking" && (() => {
+          const sorted = [...ranking].filter(r => r.qty > 0 || r.qtyN1 > 0).sort((a, b) =>
+            rkSort === "qty" ? b.qty - a.qty || b.qtyN1 - a.qtyN1
+            : rkSort === "n1" ? b.qtyN1 - a.qtyN1
+            : rkSort === "drop" ? (a.qty - a.qtyN1) - (b.qty - b.qtyN1)
+            : (b.qty - b.qtyN1) - (a.qty - a.qtyN1));
+          const totQ = ranking.reduce((t, r) => t + r.qty, 0), totN1 = ranking.reduce((t, r) => t + r.qtyN1, 0);
+          const fmtD = (d: string) => d.split("-").reverse().join("/");
+          return (<>
+            {/* Période + tri */}
+            <div style={{ display: "flex", flexWrap: "wrap" as const, alignItems: "center", gap: 8, marginBottom: 12, fontSize: 12.5, color: C.textSec }}>
+              <span style={{ fontWeight: 700 }}>Du</span>
+              <input type="date" value={rkRange.from} onChange={e => e.target.value && setRkRange(r => ({ ...r, from: e.target.value }))}
+                style={{ height: 32, padding: "0 8px", borderRadius: 8, border: `1px solid ${C.border}`, fontFamily: "inherit", fontSize: 12.5 }} />
+              <span style={{ fontWeight: 700 }}>au</span>
+              <input type="date" value={rkRange.to} onChange={e => e.target.value && setRkRange(r => ({ ...r, to: e.target.value }))}
+                style={{ height: 32, padding: "0 8px", borderRadius: 8, border: `1px solid ${C.border}`, fontFamily: "inherit", fontSize: 12.5 }} />
+              <select value={rkSort} onChange={e => setRkSort(e.target.value as any)}
+                style={{ marginLeft: "auto", height: 32, padding: "0 8px", borderRadius: 8, border: `1px solid ${C.border}`, fontFamily: "inherit", fontSize: 12.5, background: C.white }}>
+                <option value="qty">Tri : quantités période</option>
+                <option value="n1">Tri : quantités N-1</option>
+                <option value="drop">Tri : plus grosses baisses</option>
+                <option value="rise">Tri : plus grosses hausses</option>
+              </select>
             </div>
-          )
-        )}
+            {!analyLoading && ranking.length > 0 && (
+              <div style={{ fontSize: 12, color: C.muted, marginBottom: 10 }}>
+                {Math.round(totQ)} unités du {fmtD(rkRange.from)} au {fmtD(rkRange.to)} · {Math.round(totN1)} sur la même période N-1
+                <span style={{ fontWeight: 800, color: totQ >= totN1 ? C.green : C.red }}> ({totQ >= totN1 ? "+" : ""}{Math.round(totQ - totN1)})</span>
+              </div>
+            )}
+            {analyLoading ? <TubeLoader label="Calcul du palmarès…" />
+            : sorted.length === 0 ? <div style={{ textAlign: "center" as const, color: C.muted, padding: 40 }}>Aucun produit commandé sur la période ni sur la même période N-1</div>
+            : (
+              <div className="stagger" style={{ display: "flex", flexDirection: "column" as const, gap: 8 }}>
+                <div style={{ display: "flex", gap: 12, padding: "0 14px", fontSize: 10.5, fontWeight: 700, color: C.muted, textTransform: "uppercase" as const }}>
+                  <span style={{ flex: 1 }}>Produit</span><span style={{ width: 54, textAlign: "right" as const }}>Période</span><span style={{ width: 54, textAlign: "right" as const }}>N-1</span><span style={{ width: 54, textAlign: "right" as const }}>Écart</span>
+                </div>
+                {sorted.map((r, i) => {
+                  const diff = r.qty - r.qtyN1;
+                  return (
+                    <div key={i} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 14px", background: C.white, border: `1px solid ${C.border}`, borderLeft: `4px solid ${diff < 0 ? C.red : diff > 0 ? C.green : C.border}`, borderRadius: 12, boxShadow: C.shadow }}>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 13, fontWeight: 600, color: C.text }}>{r.name}</div>
+                        <div style={{ fontSize: 11, color: C.muted, marginTop: 1 }}>{r.times ? `${r.times} commande${r.times > 1 ? "s" : ""}` : "aucune commande sur la période"}</div>
+                      </div>
+                      <div style={{ width: 54, textAlign: "right" as const, fontSize: 15, fontWeight: 800, color: C.tealDark }}>{Math.round(r.qty)}</div>
+                      <div style={{ width: 54, textAlign: "right" as const, fontSize: 13.5, fontWeight: 700, color: C.textSec }}>{Math.round(r.qtyN1)}</div>
+                      <div style={{ width: 54, textAlign: "right" as const, fontSize: 13.5, fontWeight: 800, color: diff < 0 ? C.red : diff > 0 ? C.green : C.muted }}>{diff > 0 ? "+" : ""}{Math.round(diff)}</div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </>);
+        })()}
 
         {/* ── Onglet MEA ── */}
         {mode === "mea" && (

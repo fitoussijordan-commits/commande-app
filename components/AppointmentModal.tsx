@@ -277,6 +277,28 @@ export default function AppointmentModal({ session, client: clientProp, event, a
     setSaving(false);
   };
 
+  // Note du RDV recopiée dans les « Notes DC » de la fiche client (datée, signée,
+  // avec la date du RDV) : le suivi client se lit au même endroit. En édition,
+  // seulement si la note a changé. Jamais bloquant pour le RDV lui-même.
+  const copyNoteToClient = async (start: Date) => {
+    const text = note.trim();
+    const cid = client?.id || (event?.res_model === "res.partner" ? event?.res_id : null);
+    if (!text || !cid || (isEdit && text === initNote.trim())) return;
+    const esc = (t: string) => t.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    const now = new Date();
+    const stamp = `${now.toLocaleDateString("fr-FR")} ${now.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}`;
+    const rdvType = rdvTypes.find(t => t.id === rdvTypeId)?.name;
+    const when = start.toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long" });
+    const html = `<p><strong>${stamp} — ${esc(session.name || "")} · RDV du ${esc(when)}${rdvType ? ` (${esc(rdvType)})` : ""}</strong><br/>`
+      + `${esc(text).replace(/\n/g, "<br/>")}</p>`;
+    try {
+      await sync.prependHtmlField(session, "res.partner", Number(cid), sync.CLIENT_NOTES_FIELD, html);
+    } catch (e: any) {
+      if (odoo.isNetworkError(e)) await sync.queueClientNote(Number(cid), client?.name || "client", html).catch(() => {});
+      else onToast(`RDV enregistré, mais la note n'a pas pu être ajoutée aux Notes DC : ${e?.message || e}`, "error");
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
@@ -359,6 +381,7 @@ export default function AppointmentModal({ session, client: clientProp, event, a
           await sync.queueAppointmentEdit(event.id, title.trim(), { ...baseValues, ...clientLink });
           onToast("Modification enregistrée hors ligne — sera envoyée au retour du réseau", "info");
         }
+        await copyNoteToClient(start);
         onClose();
         setSaving(false);
         return;
@@ -391,6 +414,7 @@ export default function AppointmentModal({ session, client: clientProp, event, a
         await sync.queueAppointment(client?.name || title.trim(), { ...baseValues, ...clientLink });
         onToast("RDV enregistré hors ligne — sera créé au retour du réseau", "info");
       }
+      await copyNoteToClient(start);
       onClose();
     } catch (e: any) {
       setError(e.message || (isEdit ? "Erreur lors de la modification" : "Erreur lors de la création du RDV"));
@@ -579,7 +603,7 @@ export default function AppointmentModal({ session, client: clientProp, event, a
           </Field>
         )}
 
-        <Field label="Note (optionnel)">
+        <Field label={client?.id ? "Note (optionnel) — recopiée dans les Notes DC du client" : "Note (optionnel)"}>
           <textarea value={note} onChange={e => setNote(e.target.value)} rows={2} style={{ ...inputStyle, resize: "vertical" as const, fontFamily: "inherit" }} />
         </Field>
 
