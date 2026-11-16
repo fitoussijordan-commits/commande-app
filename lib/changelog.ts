@@ -8,6 +8,7 @@ export const CHANGELOG: ChangelogEntry[] = [
   {
     date: "2026-11-13",
     items: [
+      "MEA et devis d'implantation : le bouton « Liste / Cartes » change aussi leur affichage (une ligne par offre).",
       "Fiche client → « Préparer le RDV » : CA à date N / N-1, offres du cycle faites ou à proposer (offre prévue + note), quantités proposées par produit d'après les achats N-1, plus grosses baisses du client.",
       "Fiche client : tuile « Assistant » retirée.",
       "BDC Excel : photo de chaque produit et logo officiel Dr. Hauschka (repris des BDC de séminaire), titre et en-tête bien cadrés.",

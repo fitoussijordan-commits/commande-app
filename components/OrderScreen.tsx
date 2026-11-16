@@ -3978,6 +3978,25 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
                 <div>{activeCatId === DEVIS_CAT_ID ? "Aucun devis d'implantation" : "Aucune MEA trouvée"}</div>
               </div>
             ) : (
+              dense ? (
+              /* Vue liste : une ligne par offre (même bouton Liste / Cartes que le catalogue) */
+              <div className="stagger" style={{ background: C.white, borderRadius: 14, border: `1px solid ${C.border}`, overflow: "hidden" }}>
+                {shownTemplates.map((t, i) => {
+                  const isApplying = applyingMea === t.id;
+                  const lineCount = t.sale_order_template_line_ids?.length || 0;
+                  return (
+                    <div key={t.id} style={{ display: "flex", alignItems: "center", gap: 12, padding: "8px 12px", borderTop: i ? `1px solid ${C.border}` : "none", background: isApplying ? C.tealSoft : C.white }}>
+                      <div style={{ flex: 1, minWidth: 0, fontSize: 13, fontWeight: 700, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }} title={t.name}>{t.name}</div>
+                      <span style={{ flexShrink: 0, fontSize: 11, color: C.muted, width: 74, textAlign: "right" as const }}>{lineCount} produit{lineCount > 1 ? "s" : ""}</span>
+                      <button onClick={() => applyMeaTemplate(t)} disabled={isApplying}
+                        style={{ flexShrink: 0, height: 34, padding: "0 12px", background: isApplying ? C.bg : C.teal, color: isApplying ? C.muted : "#fff", border: `1px solid ${isApplying ? C.border : C.teal}`, borderRadius: 8, fontSize: 12, fontWeight: 700, cursor: isApplying ? "default" : "pointer", fontFamily: "inherit", whiteSpace: "nowrap" as const }}>
+                        {isApplying ? "…" : "+ Ajouter"}
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+              ) : (
               <div className="stagger" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))", gap: 10 }}>
                 {shownTemplates.map((t) => {
                   const isApplying = applyingMea === t.id;
@@ -4000,6 +4019,7 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
                   );
                 })}
               </div>
+              )
             )
           ) : activeCatId === FAV_CAT_ID && favLoading ? (
             <CatalogSkeleton dense={dense} count={8} />
