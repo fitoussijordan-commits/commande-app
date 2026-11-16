@@ -8,6 +8,8 @@ export const CHANGELOG: ChangelogEntry[] = [
   {
     date: "2026-11-13",
     items: [
+      "Commandes en attente : le numéro ouvre la commande en grand (produits, livraison, lots, remises) avec les échanges du chatter ; réponse au service client en note interne, jamais envoyée au client.",
+      "Historique : les échanges (chatter) apparaissent aussi dans le détail de chaque commande.",
       "MEA et devis d'implantation : flèche ▾ pour voir le contenu de l'offre (articles, quantités, remises, offerts) avant de l'ajouter.",
       "Palmarès : filtre « Tous / En baisse / En hausse » pour n'afficher que les écarts négatifs ou positifs.",
       "Palmarès : période au choix (du … au …), quantités N-1 sur la même période, écart, et tri par quantités, N-1, plus grosses baisses ou hausses.",

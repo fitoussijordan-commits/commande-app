@@ -555,6 +555,7 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
   // Devis du client saisis mais pas encore confirmés (non transmis à la logistique),
   // hors reprises de périmés : le commercial peut les joindre à sa commande.
   const [pendingOrders, setPendingOrders] = useState<any[]>([]);
+  const [bigOrder, setBigOrder] = useState<any | null>(null);   // commande en attente ouverte en grand
   const [joinIds, setJoinIds] = useState<number[]>([]);
   const [showPending, setShowPending] = useState(false);
   // Contenu d'une commande en attente, déplié dans la liste (sans passer par Odoo).
@@ -1175,8 +1176,9 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
                           style={{ width: 20, height: 20, accentColor: C.teal, flexShrink: 0 }} />
                         <span style={{ flex: 1, minWidth: 0 }}>
                           <span style={{ display: "block", fontSize: 12.5, fontWeight: 800, color: C.text }}>
-                            <a href={odooRecordUrl(session, "sale.order", o.id)} target="_blank" rel="noopener noreferrer" onClick={e => e.stopPropagation()}
-                              style={{ color: C.teal, textDecoration: "underline" }}>{o.name} ↗</a>
+                            {/* Ouvre la commande en grand dans l'app : produits, livraison, échanges avec le service client */}
+                            <button onClick={e => { e.preventDefault(); e.stopPropagation(); setBigOrder(o); }}
+                              style={{ background: "none", border: "none", padding: 0, cursor: "pointer", fontFamily: "inherit", fontSize: 12.5, fontWeight: 800, color: C.teal, textDecoration: "underline" }}>{o.name} ⤢</button>
                           </span>
                           <span style={{ display: "block", fontSize: 11, color: C.muted }}>
                             {String(o.date_order || "").slice(0, 10).split("-").reverse().join("/")}
@@ -1489,6 +1491,12 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
       {submitting && client && (
         <OrderSubmitLoader step={submitStep} clientName={client.name}
           steps={["prep", "devis", ...(directLogistics ? ["logistique" as const] : []), ...(freeItems.length > 0 ? ["gratuit" as const] : []), "final"]} />
+      )}
+
+      {bigOrder && (
+        <OrderDetailModal session={session} order={bigOrder}
+          stateLabel={{ label: bigOrder.state === "draft" ? "Devis" : bigOrder.state === "sent" ? "Envoyé" : bigOrder.state === "sale" ? "Confirmée" : String(bigOrder.state || "En attente"), color: C.orange, bg: C.orangeSoft }}
+          onClose={() => setBigOrder(null)} />
       )}
 
       {showPrep && client && (

@@ -49,6 +49,26 @@ export default function OrderDetailModal({ session, order, stateLabel, onClose: 
   const [closing, onClose] = useExit(onCloseProp);
   const [detail, setDetail] = useState<OrderDetail | null>(null);
   const [error, setError] = useState("");
+  // Échanges de la commande (chatter Odoo) : le service client y discute avec le commercial.
+  const [msgs, setMsgs] = useState<any[] | null>(null);
+  const [reply, setReply] = useState("");
+  const [posting, setPosting] = useState(false);
+  const loadMsgs = () => odoo.searchRead(session, "mail.message",
+      [["model", "=", "sale.order"], ["res_id", "=", order.id], ["message_type", "in", ["comment", "email"]]],
+      ["id", "body", "author_id", "date", "message_type", "subtype_id", "attachment_ids"], 100, "date asc, id asc")
+    .then(setMsgs).catch(() => setMsgs([]));
+  useEffect(() => { void loadMsgs(); }, [session, order.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  const post = async () => {
+    const text = reply.trim(); if (!text) return;
+    setPosting(true);
+    try {
+      const html = text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/\n/g, "<br/>");
+      // Note INTERNE (mt_note) : visible du service client, jamais envoyée au client.
+      await odoo.callMethod(session, "sale.order", "message_post", [[order.id]], { body: html, message_type: "comment", subtype_xmlid: "mail.mt_note" });
+      setReply(""); await loadMsgs();
+    } catch (e: any) { alert(odoo.isNetworkError(e) ? "Hors ligne : message non envoyé" : `Envoi refusé : ${e?.message || e}`); }
+    setPosting(false);
+  };
 
   useEffect(() => {
     let alive = true;
@@ -145,6 +165,41 @@ export default function OrderDetailModal({ session, order, stateLabel, onClose: 
             <div style={{ fontSize: 11, fontWeight: 800, color: C.muted, textTransform: "uppercase", letterSpacing: "0.06em", margin: "0 2px 8px" }}>Articles</div>
             <div className="stagger" style={{ display: "flex", flexDirection: "column", gap: 6 }}>
               {detail.lines.map(l => <LineRow key={l.id} l={l} />)}
+            </div>
+
+            {/* ── Échanges (chatter de la commande) ── */}
+            <div style={{ fontSize: 11, fontWeight: 800, color: C.muted, textTransform: "uppercase", letterSpacing: "0.06em", margin: "18px 2px 8px" }}>
+              Échanges sur la commande {msgs ? `(${msgs.length})` : ""}
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              {!msgs && <Sk h={48} r={12} />}
+              {msgs && msgs.length === 0 && <div style={{ fontSize: 12.5, color: C.muted }}>Aucun message pour l'instant.</div>}
+              {msgs && msgs.map(m => {
+                const mine = Array.isArray(m.author_id) && /./.test(m.author_id[1]) && String(m.author_id[1]).toLowerCase() === String(session.name || "").toLowerCase();
+                const note = Array.isArray(m.subtype_id) && /note/i.test(String(m.subtype_id[1]));
+                const text = String(m.body || "").replace(/<br\s*\/?>/gi, "\n").replace(/<\/p>/gi, "\n").replace(/<[^>]+>/g, "").replace(/&nbsp;/g, " ").replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").trim();
+                if (!text && !(m.attachment_ids || []).length) return null;
+                return (
+                  <div key={m.id} style={{ alignSelf: mine ? "flex-end" : "flex-start", maxWidth: "85%", background: mine ? C.tealSoft : C.white, border: `1px solid ${mine ? C.tealMid : C.border}`, borderRadius: 12, padding: "8px 11px" }}>
+                    <div style={{ fontSize: 11, fontWeight: 800, color: mine ? C.tealDark : C.textSec, display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+                      {Array.isArray(m.author_id) ? m.author_id[1] : "Odoo"}
+                      <span style={{ fontWeight: 500, color: C.muted }}>{m.date ? new Date(String(m.date).replace(" ", "T") + "Z").toLocaleString("fr-FR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }) : ""}</span>
+                      {note && <span style={{ fontSize: 9.5, fontWeight: 800, color: C.orange, background: C.orangeSoft, borderRadius: 999, padding: "0 6px" }}>note interne</span>}
+                      {m.message_type === "email" && <span style={{ fontSize: 9.5, fontWeight: 800, color: C.blue, background: C.blueSoft, borderRadius: 999, padding: "0 6px" }}>e-mail</span>}
+                    </div>
+                    {text && <div style={{ fontSize: 13, color: C.text, whiteSpace: "pre-wrap", marginTop: 3, lineHeight: 1.45 }}>{text}</div>}
+                    {(m.attachment_ids || []).length > 0 && <div style={{ fontSize: 11, color: C.muted, marginTop: 3 }}>📎 {(m.attachment_ids || []).length} pièce{(m.attachment_ids || []).length > 1 ? "s" : ""} jointe{(m.attachment_ids || []).length > 1 ? "s" : ""} (dans Odoo)</div>}
+                  </div>
+                );
+              })}
+              <div style={{ display: "flex", gap: 8, alignItems: "flex-end", marginTop: 4 }}>
+                <textarea value={reply} onChange={e => setReply(e.target.value)} rows={2} placeholder="Répondre au service client (note interne, pas envoyée au client)…"
+                  style={{ flex: 1, minWidth: 0, padding: "9px 11px", borderRadius: 10, border: `1.5px solid ${C.border}`, fontSize: 13, fontFamily: "inherit", resize: "vertical", outline: "none" }} />
+                <button onClick={post} disabled={posting || !reply.trim()}
+                  style={{ height: 40, padding: "0 14px", borderRadius: 10, border: "none", background: reply.trim() ? C.teal : C.border, color: "#fff", fontSize: 13, fontWeight: 800, cursor: reply.trim() ? "pointer" : "default", fontFamily: "inherit" }}>
+                  {posting ? "…" : "Envoyer"}
+                </button>
+              </div>
             </div>
 
             {detail.pickings.some(p => p.isReturn) && (
