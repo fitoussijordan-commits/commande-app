@@ -858,7 +858,8 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
       if (joined.length) {
         orderNote = `${orderNote}${orderNote ? "\n" : ""}Commandes jointes : ${joined.map(o => o.name).join(", ")}`;
         const m = await orderMeta(session).catch(() => null);
-        if (m?.joinedField) joinVals = { [m.joinedField]: [[6, 0, joined.map(o => o.id)]] };
+        // Champ texte (x_commandes_jointes) : numéros des commandes ; many2many : ids.
+        if (m?.joinedField) joinVals = { [m.joinedField]: m.joinedKind === "text" ? joined.map(o => o.name).join(", ") : [[6, 0, joined.map(o => o.id)]] };
       }
 
       // Type de commande / Offres commandées : champs repérés dans Odoo (orderMeta).
@@ -1042,7 +1043,16 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
         const jm = await orderMeta(session).catch(() => null);
         const problems: string[] = [];
         // Champ « Commandes jointes » : la nouvelle commande sur chaque jointe.
-        if (jm?.joinedField) {
+        if (jm?.joinedField && jm.joinedKind === "text") {
+          // Chaque jointe reçoit les numéros des autres commandes du groupe (ajoutés à ce qu'elle avait déjà).
+          const cur = await odoo.searchRead(session, "sale.order", [["id", "in", joined.map(o => o.id)]], ["id", jm.joinedField], 0).catch(() => [] as any[]);
+          for (const o of joined) {
+            const had = String(cur.find((r: any) => r.id === o.id)?.[jm.joinedField] || "").split(/[,;\s]+/).filter(Boolean);
+            const all = Array.from(new Set([...had, mainName, ...joined.filter(x => x.id !== o.id).map(x => x.name)]));
+            await odoo.write(session, "sale.order", [o.id], { [jm.joinedField]: all.join(", ") })
+              .catch((e: any) => problems.push(`${o.name} : champ non écrit (${e?.message || e})`));
+          }
+        } else if (jm?.joinedField) {
           await odoo.write(session, "sale.order", joined.map(o => o.id), { [jm.joinedField]: [[4, mainId]] })
             .catch((e: any) => problems.push(`lien non écrit (${e?.message || e})`));
         }

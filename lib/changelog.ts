@@ -8,6 +8,7 @@ export const CHANGELOG: ChangelogEntry[] = [
   {
     date: "2026-11-13",
     items: [
+      "Commandes jointes : le champ Odoo « Commandes jointes » est rempli avec les numéros (S7xxxx, …) sur la nouvelle commande et sur chaque commande jointe.",
       "Commandes à joindre : le lien est maintenant écrit des deux côtés dans Odoo (champ « Commandes jointes » et note interne sur chaque commande), avec un message de confirmation.",
       "Commandes en attente : la liste se referme quand on ouvre une commande en grand.",
       "Panier : la flèche pour ouvrir / fermer le récap répond au premier appui (les clics en bord de bouton étaient perdus).",

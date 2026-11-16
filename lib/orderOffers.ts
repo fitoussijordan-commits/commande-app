@@ -18,7 +18,8 @@ export interface OrderMeta {
   typeKind?: "selection" | "many2one";
   implantValues: (string | number)[];   // valeurs du type correspondant à une implantation
   typeOptions: { value: string | number; label: string }[];   // choix proposés à la saisie
-  joinedField?: string;                 // many2many « Commandes jointes » (vers sale.order)
+  joinedField?: string;                 // « Commandes jointes » (x_commandes_jointes : texte ; ou many2many vers sale.order)
+  joinedKind?: "text" | "m2m";
   internalNoteField?: string;           // « Note interne » de la commande (sinon : note dans le chatter)
 }
 
@@ -49,8 +50,9 @@ export async function orderMeta(session: odoo.OdooSession): Promise<OrderMeta> {
     if (!meta.offersField && /offres?\s+command/i.test(label) && (f.type === "many2many" || f.type === "one2many")) {
       meta.offersField = name; meta.offersRelation = f.relation;
     }
-    if (!meta.joinedField && /commandes?\s+jointes?/i.test(label) && f.type === "many2many" && f.relation === "sale.order") {
-      meta.joinedField = name;
+    if (!meta.joinedField && (name === "x_commandes_jointes" || /commandes?\s+jointes?/i.test(label))
+        && ((f.type === "many2many" && f.relation === "sale.order") || ["char", "text"].includes(f.type))) {
+      meta.joinedField = name; meta.joinedKind = f.type === "many2many" ? "m2m" : "text";
     }
     if (!meta.internalNoteField && /note\s+interne/i.test(label) && ["text", "html", "char"].includes(f.type)) {
       meta.internalNoteField = name;
