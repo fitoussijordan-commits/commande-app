@@ -4589,7 +4589,7 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
 
         {/* Bloc récap sombre — note + total + validation */}
         <div style={{ padding: "0 12px 12px" }}>
-          <div style={{ background: "#0f172a", borderRadius: 18, padding: recapOpen ? "14px 14px 16px" : "10px 12px 12px", boxShadow: "0 12px 28px rgba(15,23,42,0.35)", transition: "padding 0.2s ease" }}>
+          <div style={{ background: "#0f172a", borderRadius: 18, padding: recapOpen ? "14px 14px 16px" : "10px 12px 12px", boxShadow: "0 12px 28px rgba(15,23,42,0.35)" }}>
             {/* Résumé cliquable : ouvre / replie le détail */}
             <button onClick={toggleRecap} title={recapOpen ? "Replier" : "Expédition, type, offres, note"}
               style={{ width: "100%", display: "flex", alignItems: "center", gap: 6, padding: "4px 2px", marginBottom: recapOpen ? 10 : 8, background: "none", border: "none", cursor: "pointer", fontFamily: "inherit", color: "rgba(255,255,255,0.7)", fontSize: 11.5, fontWeight: 700, textAlign: "left" as const, minWidth: 0 }}>

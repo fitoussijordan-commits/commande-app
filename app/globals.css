@@ -40,10 +40,13 @@ button {
   transition: transform 0.14s var(--ease-out), background-color 0.18s ease,
     border-color 0.18s ease, color 0.18s ease, box-shadow 0.18s ease, opacity 0.18s ease;
 }
-button:not(:disabled):active { transform: scale(0.97); }
+/* Pas de scale : sur un bouton large, rétrécir déplace ses bords, le doigt ou
+   la souris finit hors du bouton au relâcher et le clic est perdu (flèche du
+   récap du panier). Un léger assombrissement + 1 px suffit. */
+button:not(:disabled):active { filter: brightness(0.93); transform: translateY(1px); }
 /* Zones cliquables qui ne sont pas des <button> (cartes, vignettes). */
 .press { transition: transform 0.14s var(--ease-out); }
-.press:active { transform: scale(0.97); }
+.press:active { filter: brightness(0.95); transform: translateY(1px); }
 
 @keyframes mFadeIn { from { opacity: 0; } }
 @keyframes mFadeOut { to { opacity: 0; } }
