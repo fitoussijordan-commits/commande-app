@@ -8,6 +8,7 @@ export const CHANGELOG: ChangelogEntry[] = [
   {
     date: "2026-11-13",
     items: [
+      "Palmarès : filtre « Tous / En baisse / En hausse » pour n'afficher que les écarts négatifs ou positifs.",
       "Palmarès : période au choix (du … au …), quantités N-1 sur la même période, écart, et tri par quantités, N-1, plus grosses baisses ou hausses.",
       "RDV : la note du rendez-vous est recopiée dans les Notes DC de la fiche client (datée, avec la date et le type du RDV).",
       "MEA et devis d'implantation : le bouton « Liste / Cartes » change aussi leur affichage (une ligne par offre).",

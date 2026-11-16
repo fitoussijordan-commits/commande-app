@@ -2886,6 +2886,7 @@ function ClientHistory({ session, client }: { session: odoo.OdooSession; client:
   const yearRange = (yy: number) => ({ from: `${yy}-01-01`, to: yy === new Date().getFullYear() ? ymdLocal(new Date()) : `${yy}-12-31` });
   const [rkRange, setRkRange] = useState(() => yearRange(new Date().getFullYear()));
   const [rkSort, setRkSort] = useState<"qty" | "n1" | "drop" | "rise">("qty");
+  const [rkFilter, setRkFilter] = useState<"all" | "neg" | "pos">("all");   // tous / en baisse / en hausse
   const [meaOrders, setMeaOrders] = useState<any[]>([]);
   // Devis d'implantation : séparés des MEA, devis non confirmés compris.
   const [implantOrders, setImplantOrders] = useState<any[]>([]);
@@ -3091,7 +3092,8 @@ function ClientHistory({ session, client }: { session: odoo.OdooSession; client:
 
         {/* ── Onglet PALMARÈS ── */}
         {mode === "ranking" && (() => {
-          const sorted = [...ranking].filter(r => r.qty > 0 || r.qtyN1 > 0).sort((a, b) =>
+          const sorted = [...ranking].filter(r => (r.qty > 0 || r.qtyN1 > 0)
+            && (rkFilter === "all" || (rkFilter === "neg" ? r.qty < r.qtyN1 : r.qty > r.qtyN1))).sort((a, b) =>
             rkSort === "qty" ? b.qty - a.qty || b.qtyN1 - a.qtyN1
             : rkSort === "n1" ? b.qtyN1 - a.qtyN1
             : rkSort === "drop" ? (a.qty - a.qtyN1) - (b.qty - b.qtyN1)
@@ -3107,6 +3109,19 @@ function ClientHistory({ session, client }: { session: odoo.OdooSession; client:
               <span style={{ fontWeight: 700 }}>au</span>
               <input type="date" value={rkRange.to} onChange={e => e.target.value && setRkRange(r => ({ ...r, to: e.target.value }))}
                 style={{ height: 32, padding: "0 8px", borderRadius: 8, border: `1px solid ${C.border}`, fontFamily: "inherit", fontSize: 12.5 }} />
+              {/* Filtre : écarts négatifs / positifs */}
+              <div style={{ display: "flex", gap: 4 }}>
+                {([["all", "Tous", C.tealDark], ["neg", "En baisse", C.red], ["pos", "En hausse", C.green]] as const).map(([v, l, col]) => {
+                  const n = v === "all" ? ranking.filter(r => r.qty > 0 || r.qtyN1 > 0).length : ranking.filter(r => v === "neg" ? r.qty < r.qtyN1 : r.qty > r.qtyN1).length;
+                  const on = rkFilter === v;
+                  return (
+                    <button key={v} onClick={() => { setRkFilter(v); if (v === "neg") setRkSort("drop"); else if (v === "pos") setRkSort("rise"); }}
+                      style={{ height: 32, padding: "0 10px", borderRadius: 999, border: `1.5px solid ${on ? col : C.border}`, background: on ? col : C.white, color: on ? "#fff" : col, fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>
+                      {l} ({n})
+                    </button>
+                  );
+                })}
+              </div>
               <select value={rkSort} onChange={e => setRkSort(e.target.value as any)}
                 style={{ marginLeft: "auto", height: 32, padding: "0 8px", borderRadius: 8, border: `1px solid ${C.border}`, fontFamily: "inherit", fontSize: 12.5, background: C.white }}>
                 <option value="qty">Tri : quantités période</option>
