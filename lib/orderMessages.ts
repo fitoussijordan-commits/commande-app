@@ -1,6 +1,7 @@
 // lib/orderMessages.ts
-// Messages en attente sur les commandes du commercial (chatter Odoo) : le
-// service client écrit sur une commande, le commercial le voit dès l'accueil.
+// Messages en attente sur les commandes des clients du commercial (chatter
+// Odoo) : tout message d'un autre (service client, collègue) sur une commande
+// d'un de SES clients apparaît sur l'accueil, cité (@) ou non.
 // Un fil est « en attente » tant que le dernier message n'est pas du
 // commercial. Il disparaît quand il est traité : le commercial répond (depuis
 // la fiche commande), ou le marque « Traité » (mémorisé sur l'appareil).
@@ -34,17 +35,16 @@ async function myPartner(session: odoo.OdooSession): Promise<number | null> {
 export async function loadPendingThreads(session: odoo.OdooSession, days = 30): Promise<PendingThread[]> {
   const me = await myPartner(session);
   const since = new Date(Date.now() - days * 86400_000).toISOString().slice(0, 19).replace("T", " ");
-  // Commandes du commercial (vendeur de la commande ou du client), récentes.
+  // Règle : TOUT message récent (d'un autre que moi) sur une commande dont le
+  // client est le mien (vendeur de la fiche client) — cité ou non.
+  const recent: any[] = await odoo.searchRead(session, "mail.message",
+    [["model", "=", "sale.order"], ["message_type", "in", ["comment", "email"]], ["date", ">=", since]],
+    ["res_id"], 3000, "date desc");
+  const ids = Array.from(new Set(recent.map(m => m.res_id).filter(Boolean)));
+  if (!ids.length) return [];
   const orders: any[] = await odoo.searchRead(session, "sale.order",
-    ["|", ["user_id", "=", session.uid], ["partner_id.commercial_partner_id.user_id", "=", session.uid],
-     ["state", "!=", "cancel"], ["write_date", ">=", since]],
-    ["id", "name", "date_order", "state", "amount_total", "partner_id"], 500, "write_date desc");
-  // Messages où le commercial est cité (@), sur N'IMPORTE quelle commande.
-  const mentions: any[] = me == null ? [] : await odoo.searchRead(session, "mail.message",
-    [["model", "=", "sale.order"], ["partner_ids", "in", [me]], ["date", ">=", since]], ["res_id"], 300).catch(() => []);
-  const extraIds = Array.from(new Set(mentions.map(m => m.res_id))).filter(id => !orders.some(o => o.id === id));
-  if (extraIds.length) orders.push(...await odoo.searchRead(session, "sale.order", [["id", "in", extraIds]],
-    ["id", "name", "date_order", "state", "amount_total", "partner_id"], extraIds.length).catch(() => []));
+    [["id", "in", ids], ["partner_id.commercial_partner_id.user_id", "=", session.uid], ["state", "!=", "cancel"]],
+    ["id", "name", "date_order", "state", "amount_total", "partner_id"], ids.length);
   if (!orders.length) return [];
   const byId = new Map<number, any>(orders.map(o => [o.id, o]));
   const msgs: any[] = await odoo.searchRead(session, "mail.message",

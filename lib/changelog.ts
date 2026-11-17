@@ -8,6 +8,7 @@ export const CHANGELOG: ChangelogEntry[] = [
   {
     date: "2026-11-13",
     items: [
+      "Messages sur mes commandes : tout message (service client, collègue) sur une commande d'un de vos clients s'affiche, que vous soyez cité ou non.",
       "Échanges d'une commande : taper @ propose les collègues ; la personne choisie est citée (lien) et notifiée dans Odoo.",
       "Accueil : « Commandes portail à valider » (site WALA, non validées DC, non livrées — vos commandes seulement). « ✓ Valider DC » ajoute l'étiquette Validé DC ; « + Compléter » ouvre le catalogue pour ajouter des articles à la commande, qui est ensuite validée DC.",
       "Accueil : « Messages sur mes commandes » sous l'agenda ; la commande s'ouvre en plein écran pour répondre (elle restait coincée dans la carte).",
