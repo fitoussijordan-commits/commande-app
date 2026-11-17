@@ -1,7 +1,7 @@
 "use client";
 // Accueil : commandes portail (WALA) à valider par le DC — les siennes seulement.
-// Valider = étiquette « Validé DC » ; Compléter = ajouter des articles à la
-// commande depuis le catalogue (puis validée DC) ; un tap ouvre le détail.
+// Valider = étiquette « Validé DC » ; Modifier = la commande est chargée dans
+// le panier (quantités, retraits, ajouts) puis réécrite et validée DC.
 import { useCallback, useEffect, useState } from "react";
 import * as odoo from "@/lib/odoo";
 import { loadPortalOrders, validatePortalOrder, type PortalOrder } from "@/lib/portalOrders";
@@ -69,7 +69,7 @@ export default function PortalOrders({ session, onToast, onComplete }: {
               </button>
               <button onClick={() => onComplete(o)}
                 style={{ flex: 1, height: 32, borderRadius: 8, border: `1.5px solid ${C.violet}`, background: C.violetSoft, color: C.violet, fontSize: 12.5, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>
-                + Compléter
+                ✎ Modifier
               </button>
             </div>
           </div>

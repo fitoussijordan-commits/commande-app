@@ -538,6 +538,37 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
     if (order) beginOrder(c);
   };
 
+  // Modifier une commande portail non validée : ses lignes sont chargées dans le
+  // panier (quantités, prix et remise d'origine conservés), on modifie / retire /
+  // ajoute, puis la validation RÉÉCRIT la commande (voir handleValidate).
+  const startPortalEdit = async (o: any) => {
+    const pid = Array.isArray(o.partner_id) ? o.partner_id[0] : 0;
+    try {
+      const lines: any[] = await odoo.searchRead(session, "sale.order.line", [["order_id", "=", o.id], ["display_type", "=", false], ["product_id", "!=", false]],
+        ["id", "product_id", "product_uom_qty", "price_unit", "discount", "sequence"], 0, "sequence, id");
+      const keep = lines.filter(l => !/frais\s+de\s+port|livraison/i.test(String(l.product_id[1])));
+      const pids = Array.from(new Set(keep.map(l => l.product_id[0])));
+      const prods: any[] = pids.length ? await odoo.searchRead(session, "product.product", [["id", "in", pids]],
+        ["id", "name", "default_code", "barcode", "lst_price", "product_tmpl_id", "virtual_available", ...await optionalProductFields(session)], 0) : [];
+      const pmap = new Map<number, any>(prods.map(p => [p.id, p]));
+      await openPartner(pid, true);
+      setEditOrder({ id: o.id, name: o.name, partnerId: pid, state: o.state, lines: keep.map(l => ({ id: l.id, productId: l.product_id[0] })) });
+      const cartFromOrder: Record<number, CartItem> = {};
+      keep.forEach((l, i) => {
+        const product = pmap.get(l.product_id[0]); if (!product) return;
+        const cur = cartFromOrder[product.id];
+        const disc = Number(l.discount) || 0, pu = Number(l.price_unit) || 0;
+        if (cur) { cur.qty += Number(l.product_uom_qty) || 0; return; }   // même article sur 2 lignes : regroupé
+        cartFromOrder[product.id] = { product, qty: Number(l.product_uom_qty) || 0, unitPrice: Math.round(pu * (1 - disc / 100) * 100) / 100,
+          priceLocked: true, bonBrut: pu, bonRemise: disc || undefined, seq: i + 1 };
+      });
+      setCart(cartFromOrder);
+      onToast(`${o.name} chargée : modifie, retire ou ajoute des articles, puis valide`, "info");
+    } catch (e: any) {
+      onToast(odoo.isNetworkError(e) ? "Hors ligne : commande portail indisponible" : `Lecture impossible : ${e?.message || e}`, "error");
+    }
+  };
+
   // Import d'un bon : depuis la fiche client (client connu) ou depuis l'accueil /
   // la recherche client (client retrouvé d'après le bon, puis confirmé).
   const [bonOrigin, setBonOrigin] = useState<"hub" | "home" | "client">("hub");
@@ -560,7 +591,7 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
   const [bigOrder, setBigOrder] = useState<any | null>(null);
   // Commande portail à compléter : les articles du panier sont AJOUTÉS à cette
   // commande (au lieu d'en créer une), puis elle reçoit l'étiquette « Validé DC ».
-  const [editOrder, setEditOrder] = useState<{ id: number; name: string; partnerId: number } | null>(null);   // commande en attente ouverte en grand
+  const [editOrder, setEditOrder] = useState<{ id: number; name: string; partnerId: number; state?: string; lines?: { id: number; productId: number }[] } | null>(null);   // commande en attente ouverte en grand
   const [joinIds, setJoinIds] = useState<number[]>([]);
   const [showPending, setShowPending] = useState(false);
   // Contenu d'une commande en attente, déplié dans la liste (sans passer par Odoo).
@@ -887,7 +918,8 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
 
       // Franco : sous 250 € HT net → 10 € HT de frais de livraison.
       const netHt = cartNet(cart, loyalty.computeLineDiscounts(appliedPromos, promoCart(cart)), eventDiscount, groupDiscounts);
-      const feeProduct = needsShippingFee(netHt) ? await shippingProduct(session) : null;
+      // Commande portail modifiée : ses frais de port d'origine restent, pas de second forfait.
+      const feeProduct = needsShippingFee(netHt) && !(editOrder && editOrder.partnerId === client.id) ? await shippingProduct(session) : null;
       if (needsShippingFee(netHt) && !feeProduct) {
         onToast("Article « Frais de port » introuvable dans Odoo — frais de livraison à ajouter à la main", "error");
       }
@@ -977,12 +1009,26 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
         setSubmitStep("devis");
         const tag = await getValidatedTagId(session);
         try {
+          // Réécriture : chaque ligne existante est mise à jour avec la ligne du
+          // panier du même article ; celles retirées du panier sont supprimées
+          // (devis) ou passées à 0 (commande confirmée, suppression interdite).
+          const free = [...(editOrder.lines || [])];
+          const cmds: any[] = (mainPayload.order_line as any[]).map(c => {
+            const vals = c[2] || {};
+            if (c[0] !== 0 || !vals.product_id) return c;
+            const i = free.findIndex(l => l.productId === vals.product_id);
+            if (i < 0) return c;
+            const [l] = free.splice(i, 1);
+            return [1, l.id, vals];
+          });
+          const draft = editOrder.state === "draft" || editOrder.state === "sent";
+          for (const l of free) cmds.push(draft ? [2, l.id] : [1, l.id, { product_uom_qty: 0 }]);
           await odoo.write(session, "sale.order", [editOrder.id], {
-            order_line: mainPayload.order_line,
+            order_line: cmds,
             ...(tag && !clientBlocked ? { tag_ids: [[4, tag]] } : {}),
           });
           await odoo.callMethod(session, "sale.order", "message_post", [[editOrder.id]], {
-            body: `Commande portail complétée depuis l'app par ${session.name}${tag && !clientBlocked ? " et validée DC" : ""}.${orderNote ? `<br/>${orderNote.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/\n/g, "<br/>")}` : ""}`,
+            body: `Commande portail modifiée depuis l'app par ${session.name}${tag && !clientBlocked ? " et validée DC" : ""}.${orderNote ? `<br/>${orderNote.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/\n/g, "<br/>")}` : ""}`,
             message_type: "comment", subtype_xmlid: "mail.mt_note",
           }).catch(() => {});
         } catch (e: any) {
@@ -1387,10 +1433,10 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
       {/* Complément d'une commande portail : rappel permanent + annulation */}
       {editOrder && client?.id === editOrder.partnerId && step === "catalog" && (
         <div className="reveal" style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 16px", background: "#f5f3ff", borderBottom: "1px solid #ddd6fe", color: "#6d28d9", fontSize: 13, fontWeight: 700, flexShrink: 0 }}>
-          <span style={{ flex: 1 }}>Complément de la commande portail <strong>{editOrder.name}</strong> : les articles du panier seront ajoutés à cette commande, puis elle sera validée DC.</span>
-          <button onClick={() => setEditOrder(null)}
+          <span style={{ flex: 1 }}>Modification de la commande portail <strong>{editOrder.name}</strong> : ses articles sont dans le panier — modifie les quantités, retire ou ajoute, puis valide : la commande est mise à jour et validée DC.</span>
+          <button onClick={() => { setEditOrder(null); setCart({}); }}
             style={{ height: 30, padding: "0 12px", borderRadius: 8, border: "1px solid #c4b5fd", background: "#fff", color: "#6d28d9", fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>
-            Créer plutôt une nouvelle commande
+            Abandonner la modification
           </button>
         </div>
       )}
@@ -1507,11 +1553,7 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
         onOpenPlanning={(d) => { setPlanningDate(d); setStep("home"); }} onToast={onToast}
         drafts={pendingDrafts} onResumeDraft={resumeDraftFromPanel}
         onOpenPartner={id => void openPartner(id, false)} onOrderPartner={id => void openPartner(id, true)}
-        onCompletePortal={o => {
-          const pid = Array.isArray(o.partner_id) ? o.partner_id[0] : 0;
-          setEditOrder({ id: o.id, name: o.name, partnerId: pid });
-          void openPartner(pid, true);
-        }} />}
+        onCompletePortal={o => { void startPortalEdit(o); }} />}
 
       {step === "hub" && client && (
         <ClientHub
@@ -4203,7 +4245,8 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
                   const isApplying = applyingMea === t.id;
                   const lineCount = t.sale_order_template_line_ids?.length || 0;
                   return (
-                    <div key={t.id} style={{ borderTop: i ? `1px solid ${C.border}` : "none", background: isApplying ? C.tealSoft : C.white, padding: "8px 12px" }}>
+                    // Ligne épaisse entre deux MEA (campagnes) différentes, fine entre leurs variantes.
+                    <div key={t.id} style={{ borderTop: !i ? "none" : campaignKey(String(t.name || "")) !== campaignKey(String(shownTemplates[i - 1]?.name || "")) ? `4px solid ${C.tealMid}` : `1px solid ${C.border}`, background: isApplying ? C.tealSoft : C.white, padding: "8px 12px" }}>
                     <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
                       {chevron(t)}
                       <div style={{ flex: 1, minWidth: 0, fontSize: 13, fontWeight: 700, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }} title={t.name}>{t.name}</div>
