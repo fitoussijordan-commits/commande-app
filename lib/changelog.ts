@@ -8,6 +8,7 @@ export const CHANGELOG: ChangelogEntry[] = [
   {
     date: "2026-11-13",
     items: [
+      "Commandes portail : « Valider DC » refusé pour un client Bloqué compta / en redressement (validation par le service client), comme pour les commandes saisies.",
       "MEA en liste : ligne épaisse entre deux MEA différentes (les variantes d'une même MEA restent groupées).",
       "Commandes portail : « ✎ Modifier » charge la commande dans le panier — quantités modifiables, articles retirés ou ajoutés — puis la commande est mise à jour dans Odoo et validée DC.",
       "Messages sur mes commandes : tout message (service client, collègue) sur une commande d'un de vos clients s'affiche, que vous soyez cité ou non.",

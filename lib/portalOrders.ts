@@ -5,6 +5,7 @@
 //   statut de livraison = non livré
 // limité aux commandes dont le commercial connecté est le vendeur.
 import * as odoo from "@/lib/odoo";
+import { loadBlockingTags, clientBlockingTags } from "@/lib/clientFlags";
 
 export interface PortalOrder { id: number; name: string; date_order: string; state: string; amount_total: number; amount_untaxed: number; partner_id: any; website?: string }
 
@@ -35,6 +36,18 @@ export async function validatedTagId(session: odoo.OdooSession): Promise<number 
 
 // Validation du DC : ajoute l'étiquette « Validé DC » (les autres sont conservées).
 export async function validatePortalOrder(session: odoo.OdooSession, orderId: number, note?: string): Promise<void> {
+  // Même règle que la prise de commande : client « Bloqué compta » ou en
+  // redressement → PAS d'étiquette Validé DC, c'est le service client qui valide.
+  const [o] = await odoo.searchRead(session, "sale.order", [["id", "=", orderId]], ["partner_id"], 1);
+  const pid = Array.isArray(o?.partner_id) ? o.partner_id[0] : null;
+  if (pid) {
+    const [p] = await odoo.searchRead(session, "res.partner", [["id", "=", pid]], ["category_id", "commercial_partner_id"], 1);
+    const cid = Array.isArray(p?.commercial_partner_id) ? p.commercial_partner_id[0] : null;
+    const company = cid && cid !== pid ? (await odoo.searchRead(session, "res.partner", [["id", "=", cid]], ["category_id"], 1))[0] : null;
+    const blocking = await loadBlockingTags(session);
+    const hit = [...clientBlockingTags(p, blocking), ...(company ? clientBlockingTags(company, blocking) : [])];
+    if (hit.length) throw new Error(`client « ${hit[0].name} » : la commande doit être validée par le service client`);
+  }
   const tag = await validatedTagId(session);
   if (!tag) throw new Error("Étiquette « Validé DC » introuvable dans Odoo");
   await odoo.write(session, "sale.order", [orderId], { tag_ids: [[4, tag]] });
