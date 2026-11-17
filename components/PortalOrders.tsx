@@ -81,7 +81,7 @@ export default function PortalOrders({ session, onToast, onComplete }: {
         </button>
       )}
       {open && (
-        <OrderDetailModal session={session} order={open}
+        <OrderDetailModal session={session} order={open} onEdit={onComplete}
           stateLabel={{ label: "Portail · à valider", color: C.violet, bg: C.violetSoft }}
           onClose={() => setOpen(null)} />
       )}

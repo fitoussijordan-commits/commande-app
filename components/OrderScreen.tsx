@@ -541,7 +541,9 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
   // Modifier une commande portail non validée : ses lignes sont chargées dans le
   // panier (quantités, prix et remise d'origine conservés), on modifie / retire /
   // ajoute, puis la validation RÉÉCRIT la commande (voir handleValidate).
-  const startPortalEdit = async (o: any) => {
+  // validate : commande portail → étiquette Validé DC à l'enregistrement ;
+  // commande ouverte depuis un message → simple modification, sans étiquette.
+  const startPortalEdit = async (o: any, validate = true) => {
     const pid = Array.isArray(o.partner_id) ? o.partner_id[0] : 0;
     try {
       const lines: any[] = await odoo.searchRead(session, "sale.order.line", [["order_id", "=", o.id], ["display_type", "=", false], ["product_id", "!=", false]],
@@ -552,7 +554,7 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
         ["id", "name", "default_code", "barcode", "lst_price", "product_tmpl_id", "virtual_available", ...await optionalProductFields(session)], 0) : [];
       const pmap = new Map<number, any>(prods.map(p => [p.id, p]));
       await openPartner(pid, true);
-      setEditOrder({ id: o.id, name: o.name, partnerId: pid, state: o.state, lines: keep.map(l => ({ id: l.id, productId: l.product_id[0] })) });
+      setEditOrder({ id: o.id, name: o.name, partnerId: pid, state: o.state, lines: keep.map(l => ({ id: l.id, productId: l.product_id[0] })), validate });
       const cartFromOrder: Record<number, CartItem> = {};
       keep.forEach((l, i) => {
         const product = pmap.get(l.product_id[0]); if (!product) return;
@@ -591,7 +593,7 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
   const [bigOrder, setBigOrder] = useState<any | null>(null);
   // Commande portail à compléter : les articles du panier sont AJOUTÉS à cette
   // commande (au lieu d'en créer une), puis elle reçoit l'étiquette « Validé DC ».
-  const [editOrder, setEditOrder] = useState<{ id: number; name: string; partnerId: number; state?: string; lines?: { id: number; productId: number }[] } | null>(null);   // commande en attente ouverte en grand
+  const [editOrder, setEditOrder] = useState<{ id: number; name: string; partnerId: number; state?: string; lines?: { id: number; productId: number }[]; validate?: boolean } | null>(null);   // commande en attente ouverte en grand
   const [joinIds, setJoinIds] = useState<number[]>([]);
   const [showPending, setShowPending] = useState(false);
   // Contenu d'une commande en attente, déplié dans la liste (sans passer par Odoo).
@@ -1007,7 +1009,7 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
       // Complément d'une commande portail : lignes ajoutées à la commande existante.
       if (editOrder && editOrder.partnerId === client.id) {
         setSubmitStep("devis");
-        const tag = await getValidatedTagId(session);
+        const tag = editOrder.validate === false ? null : await getValidatedTagId(session);
         try {
           // Réécriture : chaque ligne existante est mise à jour avec la ligne du
           // panier du même article ; celles retirées du panier sont supprimées
@@ -1028,7 +1030,7 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
             ...(tag && !clientBlocked ? { tag_ids: [[4, tag]] } : {}),
           });
           await odoo.callMethod(session, "sale.order", "message_post", [[editOrder.id]], {
-            body: `Commande portail modifiée depuis l'app par ${session.name}${tag && !clientBlocked ? " et validée DC" : ""}.${orderNote ? `<br/>${orderNote.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/\n/g, "<br/>")}` : ""}`,
+            body: `Commande ${editOrder.validate === false ? "" : "portail "}modifiée depuis l'app par ${session.name}${tag && !clientBlocked ? " et validée DC" : ""}.${orderNote ? `<br/>${orderNote.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/\n/g, "<br/>")}` : ""}`,
             message_type: "comment", subtype_xmlid: "mail.mt_note",
           }).catch(() => {});
         } catch (e: any) {
@@ -1433,7 +1435,7 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
       {/* Complément d'une commande portail : rappel permanent + annulation */}
       {editOrder && client?.id === editOrder.partnerId && step === "catalog" && (
         <div className="reveal" style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 16px", background: "#f5f3ff", borderBottom: "1px solid #ddd6fe", color: "#6d28d9", fontSize: 13, fontWeight: 700, flexShrink: 0 }}>
-          <span style={{ flex: 1 }}>Modification de la commande portail <strong>{editOrder.name}</strong> : ses articles sont dans le panier — modifie les quantités, retire ou ajoute, puis valide : la commande est mise à jour et validée DC.</span>
+          <span style={{ flex: 1 }}>Modification de la commande {editOrder.validate === false ? "" : "portail "}<strong>{editOrder.name}</strong> : ses articles sont dans le panier — modifie les quantités, retire ou ajoute, puis valide : la commande est mise à jour{editOrder.validate === false ? "" : " et validée DC"}.</span>
           <button onClick={() => { setEditOrder(null); setCart({}); }}
             style={{ height: 30, padding: "0 12px", borderRadius: 8, border: "1px solid #c4b5fd", background: "#fff", color: "#6d28d9", fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>
             Abandonner la modification
@@ -1553,7 +1555,8 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
         onOpenPlanning={(d) => { setPlanningDate(d); setStep("home"); }} onToast={onToast}
         drafts={pendingDrafts} onResumeDraft={resumeDraftFromPanel}
         onOpenPartner={id => void openPartner(id, false)} onOrderPartner={id => void openPartner(id, true)}
-        onCompletePortal={o => { void startPortalEdit(o); }} />}
+        onCompletePortal={o => { void startPortalEdit(o); }}
+        onEditOrder={o => { void startPortalEdit(o, false); }} />}
 
       {step === "hub" && client && (
         <ClientHub
@@ -2549,11 +2552,12 @@ function Row({ icon, label }: { icon: string; label: string }) {
 // ═══════════════════════════════════════════════════════════════════════════
 // ÉTAPE 1 — Sélection client
 // ═══════════════════════════════════════════════════════════════════════════
-function ClientStep({ session, onSelect, onImportBon, onOpenPlanning, onToast, drafts, onResumeDraft, onOpenPartner, onOrderPartner, onCompletePortal }: {
+function ClientStep({ session, onSelect, onImportBon, onOpenPlanning, onToast, drafts, onResumeDraft, onOpenPartner, onOrderPartner, onCompletePortal, onEditOrder }: {
   session: odoo.OdooSession; onSelect: (c: any) => void; onImportBon: () => void; onOpenPlanning: (d: Date) => void;
   drafts: { clientId: string; draft: Draft }[]; onResumeDraft: (d: Draft) => void;
   onOpenPartner: (id: number) => void; onOrderPartner: (id: number) => void;
   onCompletePortal: (o: any) => void;
+  onEditOrder: (o: any) => void;
   onToast: (msg: string, type?: "success" | "error" | "info") => void;
 }) {
   const [q, setQ] = useState("");
@@ -2759,7 +2763,7 @@ function ClientStep({ session, onSelect, onImportBon, onOpenPlanning, onToast, d
           <div style={{ display: "flex", flexDirection: "column" as const, gap: 18, minWidth: 0 }}>
             <AgendaGlass session={session} onOpenPlanning={onOpenPlanning} onOpenClient={onOpenPartner} onOrder={onOrderPartner} />
             {/* Messages du service client sur mes commandes (chatter), en attente de réponse — sous l'agenda */}
-            <OrderMessages session={session} />
+            <OrderMessages session={session} onEdit={onEditOrder} />
             {/* Commandes portail (WALA) à valider — les miennes seulement */}
             <PortalOrders session={session} onToast={onToast} onComplete={onCompletePortal} />
           </div>

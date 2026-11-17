@@ -18,7 +18,7 @@ const when = (d: string) => {
     : t.toLocaleDateString("fr-FR", { day: "2-digit", month: "2-digit" });
 };
 
-export default function OrderMessages({ session }: { session: odoo.OdooSession }) {
+export default function OrderMessages({ session, onEdit }: { session: odoo.OdooSession; onEdit?: (order: any) => void }) {
   const [threads, setThreads] = useState<PendingThread[] | null>(null);
   const [error, setError] = useState(false);
   const [open, setOpen] = useState<PendingThread | null>(null);
@@ -73,7 +73,7 @@ export default function OrderMessages({ session }: { session: odoo.OdooSession }
         </button>
       )}
       {open && (
-        <OrderDetailModal session={session} order={open.order}
+        <OrderDetailModal session={session} order={open.order} chatFirst onEdit={onEdit}
           stateLabel={{ label: STATE[open.order.state] || open.order.state, color: C.orange, bg: C.orangeSoft }}
           onClose={() => { setOpen(null); load(); }} />
       )}

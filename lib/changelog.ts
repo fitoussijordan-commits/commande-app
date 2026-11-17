@@ -8,6 +8,7 @@ export const CHANGELOG: ChangelogEntry[] = [
   {
     date: "2026-11-13",
     items: [
+      "Messages sur mes commandes : la commande s'ouvre avec les échanges en haut (le détail en dessous) ; bouton « ✎ Modifier » pour la charger dans le panier et la modifier / compléter.",
       "Préparer le RDV : « Top positif » (plus grosses hausses par produit) à côté des plus grosses baisses.",
       "Commandes portail : « Valider DC » refusé pour un client Bloqué compta / en redressement (validation par le service client), comme pour les commandes saisies.",
       "MEA en liste : un bloc coloré par MEA avec son titre, et ses variantes (Essentiel, Standard, Premium…) à l'intérieur.",

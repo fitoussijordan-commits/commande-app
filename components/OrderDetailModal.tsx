@@ -41,8 +41,10 @@ const I = {
   gift: "M20 12v9H4v-9M2 7h20v5H2zM12 22V7M12 7H7.5a2.5 2.5 0 1 1 0-5C11 2 12 7 12 7zM12 7h4.5a2.5 2.5 0 1 0 0-5C13 2 12 7 12 7z",
 };
 
-export default function OrderDetailModal({ session, order, stateLabel, onClose: onCloseProp }: {
+export default function OrderDetailModal({ session, order, stateLabel, onClose: onCloseProp, chatFirst, onEdit }: {
   session: odoo.OdooSession;
+  chatFirst?: boolean;                    // échanges en premier (message à traiter)
+  onEdit?: (order: any) => void;          // ouvrir la commande dans le panier pour la modifier / compléter
   order: { id: number; name: string; date_order?: string; state: string; amount_total?: number };
   stateLabel: { label: string; color: string; bg: string };
   onClose: () => void;
@@ -130,90 +132,8 @@ export default function OrderDetailModal({ session, order, stateLabel, onClose: 
   const outPickings = detail?.pickings.filter(p => !p.isReturn) || [];
   const carrier = outPickings.find(p => p.carrier)?.carrier || detail?.carrier || null;
 
-  // Portail vers <body> : ouverte depuis une carte « verre » (backdrop-filter),
-  // la fenêtre restait enfermée dans la carte au lieu de couvrir l'écran.
-  if (typeof document === "undefined") return null;
-  return createPortal((
-    <div className={closing ? "ov closing" : "ov"} onClick={onClose}
-      style={{ position: "fixed", inset: 0, background: "rgba(15,23,42,0.45)", zIndex: 200, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
-      <div onClick={e => e.stopPropagation()}
-        style={{ width: "100%", maxWidth: 720, maxHeight: "90vh", display: "flex", flexDirection: "column", background: C.white, borderRadius: 22, boxShadow: C.shadowXl, fontFamily: "'DM Sans', sans-serif", overflow: "hidden" }}>
-
-        {/* ── En-tête ── */}
-        <div style={{ background: "linear-gradient(135deg, #0d9488, #0f766e)", color: "#fff", padding: "18px 22px 16px", flexShrink: 0 }}>
-          <div style={{ display: "flex", alignItems: "flex-start", gap: 12 }}>
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontSize: 11, fontWeight: 700, opacity: 0.8, textTransform: "uppercase", letterSpacing: "0.06em" }}>Commande</div>
-              <div style={{ fontSize: 22, fontWeight: 800, marginTop: 2 }}>{order.name}</div>
-              <div style={{ fontSize: 12.5, opacity: 0.9, marginTop: 4, display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8 }}>
-                <span>{order.date_order ? odooDate(order.date_order).toLocaleDateString("fr-FR", { day: "numeric", month: "long", year: "numeric" }) : "—"}</span>
-                <span style={{ background: "rgba(255,255,255,0.2)", borderRadius: 999, padding: "2px 9px", fontWeight: 700, fontSize: 11.5 }}>{stateLabel.label}</span>
-                {detail?.ref && <span>Réf. client : <strong>{detail.ref}</strong></span>}
-              </div>
-            </div>
-            <a href={odooRecordUrl(session, "sale.order", order.id)} target="_blank" rel="noopener noreferrer" title="Ouvrir dans Odoo"
-              style={{ height: 32, padding: "0 11px", borderRadius: 9, background: "rgba(255,255,255,0.16)", color: "#fff", textDecoration: "none", fontSize: 12, fontWeight: 700, display: "flex", alignItems: "center", gap: 5, flexShrink: 0 }}>
-              Odoo <Icon d={I.ext} size={13} />
-            </a>
-            <button onClick={onClose} aria-label="Fermer"
-              style={{ width: 32, height: 32, borderRadius: 9, background: "rgba(255,255,255,0.16)", border: "none", color: "#fff", cursor: "pointer", fontSize: 15, flexShrink: 0 }}>✕</button>
-          </div>
-
-          {/* Avancement de la livraison */}
-          {stats && stats.delivered != null && stats.qty > 0 && (
-            <div style={{ marginTop: 14 }}>
-              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, fontWeight: 700, marginBottom: 6 }}>
-                <span>{stats.delivered >= stats.qty ? "Entièrement livrée" : stats.delivered > 0 ? "Livrée en partie" : "Pas encore livrée"}</span>
-                <span>{qtyFmt(stats.delivered)} / {qtyFmt(stats.qty)} unités · {stats.refs} réf.</span>
-              </div>
-              <div style={{ height: 7, borderRadius: 999, background: "rgba(255,255,255,0.22)", overflow: "hidden" }}>
-                <div className="grow-x" style={{ width: `${Math.min(100, (stats.delivered / stats.qty) * 100)}%`, height: "100%", borderRadius: 999, background: stats.delivered >= stats.qty ? "#5eead4" : "#fde68a" }} />
-              </div>
-            </div>
-          )}
-        </div>
-
-        <div style={{ flex: 1, overflowY: "auto", padding: "16px 20px 6px", background: C.bg }}>
-          {error && <div style={{ textAlign: "center", color: C.muted, padding: 30, fontSize: 13 }}>{error}</div>}
-          {!error && !detail && <>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 10, marginBottom: 12 }}>
-              <Sk h={110} r={14} /><Sk h={110} r={14} />
-            </div>
-            <TubeLoader size={52} label="Chargement de la commande…" />
-          </>}
-
-          {detail && <>
-            {/* ── Livraison + transport ── */}
-            <div className="stagger" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 10, marginBottom: 14 }}>
-              <Card icon={I.pin} title="Adresse de livraison">
-                {detail.shipping ? <>
-                  <div style={{ fontSize: 13.5, fontWeight: 800, color: C.text }}>{detail.shipping.name}</div>
-                  {detail.shipping.lines.map((l, i) => <div key={i} style={{ fontSize: 12.5, color: C.textSec, lineHeight: 1.5 }}>{l}</div>)}
-                  {!detail.invoiceSameAsShipping && <div style={{ fontSize: 11, color: C.muted, marginTop: 4 }}>Facturée à une autre adresse</div>}
-                </> : <div style={{ fontSize: 12.5, color: C.muted }}>Non renseignée</div>}
-              </Card>
-              <Card icon={I.truck} title="Transport">
-                <div style={{ fontSize: 13.5, fontWeight: 800, color: C.text }}>{carrier || "Transporteur non renseigné"}</div>
-                {outPickings.length === 0 && <div style={{ fontSize: 12.5, color: C.muted, marginTop: 2 }}>Aucun bon de livraison</div>}
-                <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 6 }}>
-                  {outPickings.map(p => <PickingRow key={p.id} p={p} showCarrier={!!p.carrier && p.carrier !== carrier} />)}
-                </div>
-              </Card>
-            </div>
-
-            {/* ── Articles ── */}
-            <div style={{ fontSize: 11, fontWeight: 800, color: C.muted, textTransform: "uppercase", letterSpacing: "0.06em", margin: "0 2px 8px" }}>Articles</div>
-            <div className="stagger" style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-              {detail.lines.map(l => <LineRow key={l.id} l={l} />)}
-            </div>
-
-            {detail.pickings.some(p => p.isReturn) && (
-              <div style={{ marginTop: 12, fontSize: 12, color: C.orange, fontWeight: 700 }}>
-                Retour : {detail.pickings.filter(p => p.isReturn).map(p => `${p.name} (${(PICK_STATE[p.state] || { label: p.state }).label.toLowerCase()})`).join(", ")}
-              </div>
-            )}
-          </>}
-
+  // Échanges (chatter) : en haut quand on vient d'un message à traiter, sinon en bas.
+  const chatterBlock = (<>
           {/* ── Échanges (chatter de la commande) ── */}
           <div style={{ fontSize: 11, fontWeight: 800, color: C.muted, textTransform: "uppercase", letterSpacing: "0.06em", margin: "18px 2px 8px" }}>
             Échanges sur la commande {msgs ? `(${msgs.length})` : ""}
@@ -265,6 +185,100 @@ export default function OrderDetailModal({ session, order, stateLabel, onClose: 
             </div>
           </div>
 
+  </>);
+
+  // Portail vers <body> : ouverte depuis une carte « verre » (backdrop-filter),
+  // la fenêtre restait enfermée dans la carte au lieu de couvrir l'écran.
+  if (typeof document === "undefined") return null;
+  return createPortal((
+    <div className={closing ? "ov closing" : "ov"} onClick={onClose}
+      style={{ position: "fixed", inset: 0, background: "rgba(15,23,42,0.45)", zIndex: 200, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+      <div onClick={e => e.stopPropagation()}
+        style={{ width: "100%", maxWidth: 720, maxHeight: "90vh", display: "flex", flexDirection: "column", background: C.white, borderRadius: 22, boxShadow: C.shadowXl, fontFamily: "'DM Sans', sans-serif", overflow: "hidden" }}>
+
+        {/* ── En-tête ── */}
+        <div style={{ background: "linear-gradient(135deg, #0d9488, #0f766e)", color: "#fff", padding: "18px 22px 16px", flexShrink: 0 }}>
+          <div style={{ display: "flex", alignItems: "flex-start", gap: 12 }}>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 11, fontWeight: 700, opacity: 0.8, textTransform: "uppercase", letterSpacing: "0.06em" }}>Commande</div>
+              <div style={{ fontSize: 22, fontWeight: 800, marginTop: 2 }}>{order.name}</div>
+              <div style={{ fontSize: 12.5, opacity: 0.9, marginTop: 4, display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8 }}>
+                <span>{order.date_order ? odooDate(order.date_order).toLocaleDateString("fr-FR", { day: "numeric", month: "long", year: "numeric" }) : "—"}</span>
+                <span style={{ background: "rgba(255,255,255,0.2)", borderRadius: 999, padding: "2px 9px", fontWeight: 700, fontSize: 11.5 }}>{stateLabel.label}</span>
+                {detail?.ref && <span>Réf. client : <strong>{detail.ref}</strong></span>}
+              </div>
+            </div>
+            {onEdit && order.state !== "cancel" && order.state !== "done" && (
+              <button onClick={() => { onEdit(order); onCloseProp(); }} title="Charger la commande dans le panier pour la modifier ou la compléter"
+                style={{ height: 32, padding: "0 12px", borderRadius: 9, background: "#fff", color: C.tealDark, border: "none", cursor: "pointer", fontFamily: "inherit", fontSize: 12.5, fontWeight: 800, flexShrink: 0 }}>
+                ✎ Modifier
+              </button>
+            )}
+            <a href={odooRecordUrl(session, "sale.order", order.id)} target="_blank" rel="noopener noreferrer" title="Ouvrir dans Odoo"
+              style={{ height: 32, padding: "0 11px", borderRadius: 9, background: "rgba(255,255,255,0.16)", color: "#fff", textDecoration: "none", fontSize: 12, fontWeight: 700, display: "flex", alignItems: "center", gap: 5, flexShrink: 0 }}>
+              Odoo <Icon d={I.ext} size={13} />
+            </a>
+            <button onClick={onClose} aria-label="Fermer"
+              style={{ width: 32, height: 32, borderRadius: 9, background: "rgba(255,255,255,0.16)", border: "none", color: "#fff", cursor: "pointer", fontSize: 15, flexShrink: 0 }}>✕</button>
+          </div>
+
+          {/* Avancement de la livraison */}
+          {stats && stats.delivered != null && stats.qty > 0 && (
+            <div style={{ marginTop: 14 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, fontWeight: 700, marginBottom: 6 }}>
+                <span>{stats.delivered >= stats.qty ? "Entièrement livrée" : stats.delivered > 0 ? "Livrée en partie" : "Pas encore livrée"}</span>
+                <span>{qtyFmt(stats.delivered)} / {qtyFmt(stats.qty)} unités · {stats.refs} réf.</span>
+              </div>
+              <div style={{ height: 7, borderRadius: 999, background: "rgba(255,255,255,0.22)", overflow: "hidden" }}>
+                <div className="grow-x" style={{ width: `${Math.min(100, (stats.delivered / stats.qty) * 100)}%`, height: "100%", borderRadius: 999, background: stats.delivered >= stats.qty ? "#5eead4" : "#fde68a" }} />
+              </div>
+            </div>
+          )}
+        </div>
+
+        <div style={{ flex: 1, overflowY: "auto", padding: "16px 20px 6px", background: C.bg }}>
+          {chatFirst && <div style={{ marginTop: -18, marginBottom: 18 }}>{chatterBlock}</div>}
+          {error && <div style={{ textAlign: "center", color: C.muted, padding: 30, fontSize: 13 }}>{error}</div>}
+          {!error && !detail && <>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 10, marginBottom: 12 }}>
+              <Sk h={110} r={14} /><Sk h={110} r={14} />
+            </div>
+            <TubeLoader size={52} label="Chargement de la commande…" />
+          </>}
+
+          {detail && <>
+            {/* ── Livraison + transport ── */}
+            <div className="stagger" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 10, marginBottom: 14 }}>
+              <Card icon={I.pin} title="Adresse de livraison">
+                {detail.shipping ? <>
+                  <div style={{ fontSize: 13.5, fontWeight: 800, color: C.text }}>{detail.shipping.name}</div>
+                  {detail.shipping.lines.map((l, i) => <div key={i} style={{ fontSize: 12.5, color: C.textSec, lineHeight: 1.5 }}>{l}</div>)}
+                  {!detail.invoiceSameAsShipping && <div style={{ fontSize: 11, color: C.muted, marginTop: 4 }}>Facturée à une autre adresse</div>}
+                </> : <div style={{ fontSize: 12.5, color: C.muted }}>Non renseignée</div>}
+              </Card>
+              <Card icon={I.truck} title="Transport">
+                <div style={{ fontSize: 13.5, fontWeight: 800, color: C.text }}>{carrier || "Transporteur non renseigné"}</div>
+                {outPickings.length === 0 && <div style={{ fontSize: 12.5, color: C.muted, marginTop: 2 }}>Aucun bon de livraison</div>}
+                <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 6 }}>
+                  {outPickings.map(p => <PickingRow key={p.id} p={p} showCarrier={!!p.carrier && p.carrier !== carrier} />)}
+                </div>
+              </Card>
+            </div>
+
+            {/* ── Articles ── */}
+            <div style={{ fontSize: 11, fontWeight: 800, color: C.muted, textTransform: "uppercase", letterSpacing: "0.06em", margin: "0 2px 8px" }}>Articles</div>
+            <div className="stagger" style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              {detail.lines.map(l => <LineRow key={l.id} l={l} />)}
+            </div>
+
+            {detail.pickings.some(p => p.isReturn) && (
+              <div style={{ marginTop: 12, fontSize: 12, color: C.orange, fontWeight: 700 }}>
+                Retour : {detail.pickings.filter(p => p.isReturn).map(p => `${p.name} (${(PICK_STATE[p.state] || { label: p.state }).label.toLowerCase()})`).join(", ")}
+              </div>
+            )}
+          </>}
+
+          {!chatFirst && chatterBlock}
         </div>
 
         {/* ── Totaux ── */}
