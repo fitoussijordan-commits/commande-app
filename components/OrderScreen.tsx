@@ -24,6 +24,7 @@ import OrderCheck from "@/components/OrderCheck";
 import OrderDetailModal from "@/components/OrderDetailModal";
 import VersionFooter from "@/components/VersionFooter";
 import RdvPrepModal from "@/components/RdvPrepModal";
+import OrderMessages from "@/components/OrderMessages";
 import OrderSubmitLoader, { type SubmitStep } from "@/components/OrderSubmitLoader";
 import { caDateFields as caDateFieldsShared } from "@/lib/salesStats";
 import { CountUp, TubeLoader, TubeSuccess, CatalogSkeleton, ListSkeleton } from "@/components/motion";
@@ -2667,6 +2668,8 @@ function ClientStep({ session, onSelect, onImportBon, onOpenPlanning, onToast, d
         <div className="stagger" style={{ width: "100%", maxWidth: 1040, marginTop: 2, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(400px, 1fr))", gap: 18, alignItems: "start" }}>
           <AgendaGlass session={session} onOpenPlanning={onOpenPlanning} onOpenClient={onOpenPartner} onOrder={onOrderPartner} />
           <div style={{ display: "flex", flexDirection: "column" as const, gap: 18, minWidth: 0 }}>
+            {/* Messages du service client sur mes commandes (chatter), en attente de réponse */}
+            <OrderMessages session={session} />
             {/* Reprendre : brouillons en cours + derniers clients ouverts, en un tap */}
             {(drafts.length > 0 || recents.length > 0) && (
               <div style={{ ...GLASS, padding: 18 }}>
