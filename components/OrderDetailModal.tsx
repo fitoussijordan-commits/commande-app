@@ -2,7 +2,7 @@
 // Détail d'une commande (historique client) : livraison, transport et suivi,
 // quantités livrées, lots, remises, totaux HT / TVA / TTC.
 import { createPortal } from "react-dom";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import * as odoo from "@/lib/odoo";
 import { loadOrderDetail, type OrderDetail, type DetailLine, type DetailPicking } from "@/lib/orderDetail";
 import { odooRecordUrl } from "@/lib/perimes";
@@ -53,6 +53,33 @@ export default function OrderDetailModal({ session, order, stateLabel, onClose: 
   // Échanges de la commande (chatter Odoo) : le service client y discute avec le commercial.
   const [msgs, setMsgs] = useState<any[] | null>(null);
   const [reply, setReply] = useState("");
+  // Mentions @ : collègues (utilisateurs internes) proposés pendant la frappe ;
+  // la personne choisie est notifiée par Odoo (partner_ids du message).
+  const [people, setPeople] = useState<{ partnerId: number; name: string }[] | null>(null);
+  const [mentions, setMentions] = useState<{ partnerId: number; name: string }[]>([]);
+  const [mq, setMq] = useState<string | null>(null);   // texte tapé après « @ », null = pas de suggestion
+  const replyRef = useRef<HTMLTextAreaElement | null>(null);
+  const loadPeople = () => {
+    if (people) return;
+    odoo.searchRead(session, "res.users", [["share", "=", false], ["active", "=", true]], ["name", "partner_id"], 300, "name")
+      .then((u: any[]) => setPeople(u.filter(x => Array.isArray(x.partner_id)).map(x => ({ partnerId: x.partner_id[0], name: String(x.name) }))))
+      .catch(() => setPeople([]));
+  };
+  const onReplyChange = (v: string, caret: number) => {
+    setReply(v);
+    const m = /(^|\s)@([^\s@]{0,25}(?: [^\s@]{0,25})?)$/.exec(v.slice(0, caret));
+    if (m) { loadPeople(); setMq(m[2]); } else setMq(null);
+  };
+  const fold = (t: string) => t.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+  const suggestions = mq == null || !people ? [] : people.filter(p => fold(p.name).includes(fold(mq))).slice(0, 6);
+  const pickMention = (p: { partnerId: number; name: string }) => {
+    const el = replyRef.current; const caret = el ? el.selectionStart : reply.length;
+    const before = reply.slice(0, caret).replace(/@([^\s@]{0,25}(?: [^\s@]{0,25})?)$/, `@${p.name} `);
+    const next = before + reply.slice(caret);
+    setReply(next); setMq(null);
+    setMentions(ms => ms.some(x => x.partnerId === p.partnerId) ? ms : [...ms, p]);
+    setTimeout(() => { el?.focus(); el?.setSelectionRange(before.length, before.length); }, 0);
+  };
   const [posting, setPosting] = useState(false);
   const loadMsgs = () => odoo.searchRead(session, "mail.message",
       [["model", "=", "sale.order"], ["res_id", "=", order.id], ["message_type", "in", ["comment", "email"]]],
@@ -63,10 +90,19 @@ export default function OrderDetailModal({ session, order, stateLabel, onClose: 
     const text = reply.trim(); if (!text) return;
     setPosting(true);
     try {
-      const html = text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/\n/g, "<br/>");
+      let html = text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/\n/g, "<br/>");
+      // Mentions encore présentes dans le texte : lien vers la personne + notification.
+      const used = mentions.filter(m => text.includes(`@${m.name}`));
+      for (const m of used) {
+        const esc = m.name.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+        html = html.split(`@${esc}`).join(`<a href="#" class="o_mail_redirect" data-oe-id="${m.partnerId}" data-oe-model="res.partner" target="_blank">@${esc}</a>`);
+      }
       // Note INTERNE (mt_note) : visible du service client, jamais envoyée au client.
-      await odoo.callMethod(session, "sale.order", "message_post", [[order.id]], { body: html, message_type: "comment", subtype_xmlid: "mail.mt_note" });
-      setReply(""); await loadMsgs();
+      await odoo.callMethod(session, "sale.order", "message_post", [[order.id]], {
+        body: html, message_type: "comment", subtype_xmlid: "mail.mt_note",
+        ...(used.length ? { partner_ids: used.map(m => m.partnerId) } : {}),
+      });
+      setReply(""); setMentions([]); setMq(null); await loadMsgs();
     } catch (e: any) { alert(odoo.isNetworkError(e) ? "Hors ligne : message non envoyé" : `Envoi refusé : ${e?.message || e}`); }
     setPosting(false);
   };
@@ -203,8 +239,24 @@ export default function OrderDetailModal({ session, order, stateLabel, onClose: 
                 </div>
               );
             })}
+            {/* Suggestions @ : un tap insère la personne et la notifie */}
+            {mq != null && (
+              <div className="reveal" style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 10, boxShadow: "0 8px 20px rgba(15,23,42,0.12)", overflow: "hidden" }}>
+                {!people && <div style={{ padding: "8px 12px", fontSize: 12, color: C.muted }}>Chargement des collègues…</div>}
+                {people && suggestions.length === 0 && <div style={{ padding: "8px 12px", fontSize: 12, color: C.muted }}>Personne ne correspond à « {mq} »</div>}
+                {suggestions.map(p => (
+                  <button key={p.partnerId} onMouseDown={e => { e.preventDefault(); pickMention(p); }}
+                    style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", textAlign: "left", padding: "8px 12px", background: "none", border: "none", borderTop: `1px solid ${C.border}`, cursor: "pointer", fontFamily: "inherit", fontSize: 13, color: C.text }}>
+                    <span style={{ width: 24, height: 24, borderRadius: "50%", background: C.tealSoft, color: C.tealDark, fontSize: 11, fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>{p.name.charAt(0).toUpperCase()}</span>
+                    {p.name}
+                  </button>
+                ))}
+              </div>
+            )}
             <div style={{ display: "flex", gap: 8, alignItems: "flex-end", marginTop: 4 }}>
-              <textarea value={reply} onChange={e => setReply(e.target.value)} rows={2} placeholder="Répondre au service client (note interne, pas envoyée au client)…"
+              <textarea ref={replyRef} value={reply} onChange={e => onReplyChange(e.target.value, e.target.selectionStart)} rows={2}
+                onKeyDown={e => { if (mq != null && suggestions.length && (e.key === "Enter" || e.key === "Tab")) { e.preventDefault(); pickMention(suggestions[0]); } else if (e.key === "Escape") setMq(null); }}
+                placeholder="Répondre au service client (note interne) — @ pour citer un collègue…"
                 style={{ flex: 1, minWidth: 0, padding: "9px 11px", borderRadius: 10, border: `1.5px solid ${C.border}`, fontSize: 13, fontFamily: "inherit", resize: "vertical", outline: "none" }} />
               <button onClick={post} disabled={posting || !reply.trim()}
                 style={{ height: 40, padding: "0 14px", borderRadius: 10, border: "none", background: reply.trim() ? C.teal : C.border, color: "#fff", fontSize: 13, fontWeight: 800, cursor: reply.trim() ? "pointer" : "default", fontFamily: "inherit" }}>
