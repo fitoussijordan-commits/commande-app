@@ -4239,28 +4239,58 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
               </div>
             ) : (
               dense ? (
-              /* Vue liste : une ligne par offre (même bouton Liste / Cartes que le catalogue) */
-              <div className="stagger" style={{ background: C.white, borderRadius: 14, border: `1px solid ${C.border}`, overflow: "hidden" }}>
-                {shownTemplates.map((t, i) => {
-                  const isApplying = applyingMea === t.id;
-                  const lineCount = t.sale_order_template_line_ids?.length || 0;
-                  return (
-                    // Ligne épaisse entre deux MEA (campagnes) différentes, fine entre leurs variantes.
-                    <div key={t.id} style={{ borderTop: !i ? "none" : campaignKey(String(t.name || "")) !== campaignKey(String(shownTemplates[i - 1]?.name || "")) ? `4px solid ${C.tealMid}` : `1px solid ${C.border}`, background: isApplying ? C.tealSoft : C.white, padding: "8px 12px" }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                      {chevron(t)}
-                      <div style={{ flex: 1, minWidth: 0, fontSize: 13, fontWeight: 700, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }} title={t.name}>{t.name}</div>
-                      <span style={{ flexShrink: 0, fontSize: 11, color: C.muted, width: 74, textAlign: "right" as const }}>{lineCount} produit{lineCount > 1 ? "s" : ""}</span>
-                      <button onClick={() => applyMeaTemplate(t)} disabled={isApplying}
-                        style={{ flexShrink: 0, height: 34, padding: "0 12px", background: isApplying ? C.bg : C.teal, color: isApplying ? C.muted : "#fff", border: `1px solid ${isApplying ? C.border : C.teal}`, borderRadius: 8, fontSize: 12, fontWeight: 700, cursor: isApplying ? "default" : "pointer", fontFamily: "inherit", whiteSpace: "nowrap" as const }}>
-                        {isApplying ? "…" : "+ Ajouter"}
-                      </button>
-                    </div>
-                    {meaOpen === t.id && <div style={{ paddingLeft: 44 }}>{meaContent(t.id)}</div>}
-                    </div>
-                  );
-                })}
-              </div>
+              /* Vue liste groupée : un bloc par MEA (couleur, titre), ses variantes dedans */
+              (() => {
+                // Groupe = nom avant le premier « - » (« MEA Cures 2026 - Standard… » → « MEA Cures 2026 »).
+                const groupOf = (n: string) => { const i = n.indexOf(" - "); return (i > 0 ? n.slice(0, i) : n).trim(); };
+                const variantOf = (n: string) => { const i = n.indexOf(" - "); return i > 0 ? n.slice(i + 3).trim() : n; };
+                const groups: { key: string; items: any[] }[] = [];
+                for (const t of shownTemplates) {
+                  const k = groupOf(String(t.name || ""));
+                  const g = groups.find(x => x.key === k);
+                  if (g) g.items.push(t); else groups.push({ key: k, items: [t] });
+                }
+                const HUES = [172, 24, 262, 340, 205, 142, 45, 290];
+                return (
+                  <div className="stagger" style={{ display: "flex", flexDirection: "column" as const, gap: 14 }}>
+                    {groups.map((g, gi) => {
+                      const h = HUES[gi % HUES.length];
+                      const accent = `hsl(${h} 65% 38%)`, soft = `hsl(${h} 70% 96%)`, mid = `hsl(${h} 55% 85%)`;
+                      return (
+                        <div key={g.key} style={{ background: C.white, borderRadius: 16, border: `1px solid ${mid}`, overflow: "hidden", boxShadow: C.shadow }}>
+                          {/* En-tête du groupe */}
+                          <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", background: soft, borderBottom: `1px solid ${mid}` }}>
+                            <span style={{ width: 10, height: 10, borderRadius: "50%", background: accent, flexShrink: 0 }} />
+                            <span style={{ flex: 1, minWidth: 0, fontSize: 14, fontWeight: 800, color: accent, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>{g.key}</span>
+                            <span style={{ flexShrink: 0, fontSize: 11, fontWeight: 700, color: accent, background: "#fff", border: `1px solid ${mid}`, borderRadius: 999, padding: "2px 9px" }}>
+                              {g.items.length} variante{g.items.length > 1 ? "s" : ""}
+                            </span>
+                          </div>
+                          {/* Variantes */}
+                          {g.items.map((t, i) => {
+                            const isApplying = applyingMea === t.id;
+                            const lineCount = t.sale_order_template_line_ids?.length || 0;
+                            return (
+                              <div key={t.id} style={{ borderTop: i ? `1px solid ${C.border}` : "none", borderLeft: `4px solid ${meaOpen === t.id || isApplying ? accent : "transparent"}`, background: isApplying ? soft : C.white, padding: "8px 12px 8px 10px" }}>
+                                <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                                  {chevron(t)}
+                                  <div style={{ flex: 1, minWidth: 0, fontSize: 13, fontWeight: 700, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }} title={t.name}>{variantOf(String(t.name || ""))}</div>
+                                  <span style={{ flexShrink: 0, fontSize: 11, color: C.muted, width: 74, textAlign: "right" as const }}>{lineCount} produit{lineCount > 1 ? "s" : ""}</span>
+                                  <button onClick={() => applyMeaTemplate(t)} disabled={isApplying}
+                                    style={{ flexShrink: 0, height: 34, padding: "0 12px", background: isApplying ? C.bg : accent, color: isApplying ? C.muted : "#fff", border: "none", borderRadius: 8, fontSize: 12, fontWeight: 700, cursor: isApplying ? "default" : "pointer", fontFamily: "inherit", whiteSpace: "nowrap" as const }}>
+                                    {isApplying ? "…" : "+ Ajouter"}
+                                  </button>
+                                </div>
+                                {meaOpen === t.id && <div style={{ paddingLeft: 44 }}>{meaContent(t.id)}</div>}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      );
+                    })}
+                  </div>
+                );
+              })()
               ) : (
               <div className="stagger" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))", gap: 10 }}>
                 {shownTemplates.map((t) => {
