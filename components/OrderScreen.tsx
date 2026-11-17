@@ -25,6 +25,7 @@ import OrderDetailModal from "@/components/OrderDetailModal";
 import VersionFooter from "@/components/VersionFooter";
 import RdvPrepModal from "@/components/RdvPrepModal";
 import OrderMessages from "@/components/OrderMessages";
+import PortalOrders from "@/components/PortalOrders";
 import OrderSubmitLoader, { type SubmitStep } from "@/components/OrderSubmitLoader";
 import { caDateFields as caDateFieldsShared } from "@/lib/salesStats";
 import { CountUp, TubeLoader, TubeSuccess, CatalogSkeleton, ListSkeleton } from "@/components/motion";
@@ -556,7 +557,10 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
   // Devis du client saisis mais pas encore confirmés (non transmis à la logistique),
   // hors reprises de périmés : le commercial peut les joindre à sa commande.
   const [pendingOrders, setPendingOrders] = useState<any[]>([]);
-  const [bigOrder, setBigOrder] = useState<any | null>(null);   // commande en attente ouverte en grand
+  const [bigOrder, setBigOrder] = useState<any | null>(null);
+  // Commande portail à compléter : les articles du panier sont AJOUTÉS à cette
+  // commande (au lieu d'en créer une), puis elle reçoit l'étiquette « Validé DC ».
+  const [editOrder, setEditOrder] = useState<{ id: number; name: string; partnerId: number } | null>(null);   // commande en attente ouverte en grand
   const [joinIds, setJoinIds] = useState<number[]>([]);
   const [showPending, setShowPending] = useState(false);
   // Contenu d'une commande en attente, déplié dans la liste (sans passer par Odoo).
@@ -968,6 +972,34 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
         ],
       };
 
+      // Complément d'une commande portail : lignes ajoutées à la commande existante.
+      if (editOrder && editOrder.partnerId === client.id) {
+        setSubmitStep("devis");
+        const tag = await getValidatedTagId(session);
+        try {
+          await odoo.write(session, "sale.order", [editOrder.id], {
+            order_line: mainPayload.order_line,
+            ...(tag && !clientBlocked ? { tag_ids: [[4, tag]] } : {}),
+          });
+          await odoo.callMethod(session, "sale.order", "message_post", [[editOrder.id]], {
+            body: `Commande portail complétée depuis l'app par ${session.name}${tag && !clientBlocked ? " et validée DC" : ""}.${orderNote ? `<br/>${orderNote.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/\n/g, "<br/>")}` : ""}`,
+            message_type: "comment", subtype_xmlid: "mail.mt_note",
+          }).catch(() => {});
+        } catch (e: any) {
+          onToast(odoo.isNetworkError(e) ? "Hors ligne : la commande portail n'a pas pu être complétée" : `Odoo a refusé l'ajout : ${e?.message || e}`, "error");
+          setSubmitting(false);
+          return;
+        }
+        setSubmitStep("final");
+        removeDraftForClient(client.id);
+        refreshPendingDrafts();
+        setAppliedPromos({});
+        setDone({ mainId: editOrder.id, freeId: null, mainName: editOrder.name, ruptures: ruptures.length });
+        setEditOrder(null);
+        setSubmitting(false);
+        return;
+      }
+
       const freePayload: any | null = freeItems.length > 0 ? {
         partner_id: client.id, state: "draft",
         note: `Articles offerts — lié au devis principal`,
@@ -1352,6 +1384,16 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
            jamais un autre client : pas de fuite d'info si on est en face d'un client. ── */}
       {/* Client « Bloqué compta » / « Redressement judiciaire » : la commande se
           saisit, mais le service client valide. */}
+      {/* Complément d'une commande portail : rappel permanent + annulation */}
+      {editOrder && client?.id === editOrder.partnerId && step === "catalog" && (
+        <div className="reveal" style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 16px", background: "#f5f3ff", borderBottom: "1px solid #ddd6fe", color: "#6d28d9", fontSize: 13, fontWeight: 700, flexShrink: 0 }}>
+          <span style={{ flex: 1 }}>Complément de la commande portail <strong>{editOrder.name}</strong> : les articles du panier seront ajoutés à cette commande, puis elle sera validée DC.</span>
+          <button onClick={() => setEditOrder(null)}
+            style={{ height: 30, padding: "0 12px", borderRadius: 8, border: "1px solid #c4b5fd", background: "#fff", color: "#6d28d9", fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>
+            Créer plutôt une nouvelle commande
+          </button>
+        </div>
+      )}
       {clientBlocked && (step === "hub" || step === "catalog" || step === "bon") && (
         <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 20px", background: "#fef2f2", borderBottom: "1px solid #fecaca", color: "#b91c1c", fontSize: 13.5, fontWeight: 700, flexShrink: 0 }}>
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
@@ -1464,7 +1506,12 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
       {step === "client" && <ClientStep session={session} onSelect={selectClient} onImportBon={() => pickBonFile("client")}
         onOpenPlanning={(d) => { setPlanningDate(d); setStep("home"); }} onToast={onToast}
         drafts={pendingDrafts} onResumeDraft={resumeDraftFromPanel}
-        onOpenPartner={id => void openPartner(id, false)} onOrderPartner={id => void openPartner(id, true)} />}
+        onOpenPartner={id => void openPartner(id, false)} onOrderPartner={id => void openPartner(id, true)}
+        onCompletePortal={o => {
+          const pid = Array.isArray(o.partner_id) ? o.partner_id[0] : 0;
+          setEditOrder({ id: o.id, name: o.name, partnerId: pid });
+          void openPartner(pid, true);
+        }} />}
 
       {step === "hub" && client && (
         <ClientHub
@@ -2460,10 +2507,11 @@ function Row({ icon, label }: { icon: string; label: string }) {
 // ═══════════════════════════════════════════════════════════════════════════
 // ÉTAPE 1 — Sélection client
 // ═══════════════════════════════════════════════════════════════════════════
-function ClientStep({ session, onSelect, onImportBon, onOpenPlanning, onToast, drafts, onResumeDraft, onOpenPartner, onOrderPartner }: {
+function ClientStep({ session, onSelect, onImportBon, onOpenPlanning, onToast, drafts, onResumeDraft, onOpenPartner, onOrderPartner, onCompletePortal }: {
   session: odoo.OdooSession; onSelect: (c: any) => void; onImportBon: () => void; onOpenPlanning: (d: Date) => void;
   drafts: { clientId: string; draft: Draft }[]; onResumeDraft: (d: Draft) => void;
   onOpenPartner: (id: number) => void; onOrderPartner: (id: number) => void;
+  onCompletePortal: (o: any) => void;
   onToast: (msg: string, type?: "success" | "error" | "info") => void;
 }) {
   const [q, setQ] = useState("");
@@ -2670,6 +2718,8 @@ function ClientStep({ session, onSelect, onImportBon, onOpenPlanning, onToast, d
             <AgendaGlass session={session} onOpenPlanning={onOpenPlanning} onOpenClient={onOpenPartner} onOrder={onOrderPartner} />
             {/* Messages du service client sur mes commandes (chatter), en attente de réponse — sous l'agenda */}
             <OrderMessages session={session} />
+            {/* Commandes portail (WALA) à valider — les miennes seulement */}
+            <PortalOrders session={session} onToast={onToast} onComplete={onCompletePortal} />
           </div>
           <div style={{ display: "flex", flexDirection: "column" as const, gap: 18, minWidth: 0 }}>
             {/* Reprendre : brouillons en cours + derniers clients ouverts, en un tap */}
