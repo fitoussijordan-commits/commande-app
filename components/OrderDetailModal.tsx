@@ -1,6 +1,7 @@
 "use client";
 // Détail d'une commande (historique client) : livraison, transport et suivi,
 // quantités livrées, lots, remises, totaux HT / TVA / TTC.
+import { createPortal } from "react-dom";
 import { useEffect, useMemo, useState } from "react";
 import * as odoo from "@/lib/odoo";
 import { loadOrderDetail, type OrderDetail, type DetailLine, type DetailPicking } from "@/lib/orderDetail";
@@ -93,7 +94,10 @@ export default function OrderDetailModal({ session, order, stateLabel, onClose: 
   const outPickings = detail?.pickings.filter(p => !p.isReturn) || [];
   const carrier = outPickings.find(p => p.carrier)?.carrier || detail?.carrier || null;
 
-  return (
+  // Portail vers <body> : ouverte depuis une carte « verre » (backdrop-filter),
+  // la fenêtre restait enfermée dans la carte au lieu de couvrir l'écran.
+  if (typeof document === "undefined") return null;
+  return createPortal((
     <div className={closing ? "ov closing" : "ov"} onClick={onClose}
       style={{ position: "fixed", inset: 0, background: "rgba(15,23,42,0.45)", zIndex: 200, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
       <div onClick={e => e.stopPropagation()}
@@ -167,47 +171,48 @@ export default function OrderDetailModal({ session, order, stateLabel, onClose: 
               {detail.lines.map(l => <LineRow key={l.id} l={l} />)}
             </div>
 
-            {/* ── Échanges (chatter de la commande) ── */}
-            <div style={{ fontSize: 11, fontWeight: 800, color: C.muted, textTransform: "uppercase", letterSpacing: "0.06em", margin: "18px 2px 8px" }}>
-              Échanges sur la commande {msgs ? `(${msgs.length})` : ""}
-            </div>
-            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-              {!msgs && <Sk h={48} r={12} />}
-              {msgs && msgs.length === 0 && <div style={{ fontSize: 12.5, color: C.muted }}>Aucun message pour l'instant.</div>}
-              {msgs && msgs.map(m => {
-                const mine = Array.isArray(m.author_id) && /./.test(m.author_id[1]) && String(m.author_id[1]).toLowerCase() === String(session.name || "").toLowerCase();
-                const note = Array.isArray(m.subtype_id) && /note/i.test(String(m.subtype_id[1]));
-                const text = String(m.body || "").replace(/<br\s*\/?>/gi, "\n").replace(/<\/p>/gi, "\n").replace(/<[^>]+>/g, "").replace(/&nbsp;/g, " ").replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").trim();
-                if (!text && !(m.attachment_ids || []).length) return null;
-                return (
-                  <div key={m.id} style={{ alignSelf: mine ? "flex-end" : "flex-start", maxWidth: "85%", background: mine ? C.tealSoft : C.white, border: `1px solid ${mine ? C.tealMid : C.border}`, borderRadius: 12, padding: "8px 11px" }}>
-                    <div style={{ fontSize: 11, fontWeight: 800, color: mine ? C.tealDark : C.textSec, display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
-                      {Array.isArray(m.author_id) ? m.author_id[1] : "Odoo"}
-                      <span style={{ fontWeight: 500, color: C.muted }}>{m.date ? new Date(String(m.date).replace(" ", "T") + "Z").toLocaleString("fr-FR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }) : ""}</span>
-                      {note && <span style={{ fontSize: 9.5, fontWeight: 800, color: C.orange, background: C.orangeSoft, borderRadius: 999, padding: "0 6px" }}>note interne</span>}
-                      {m.message_type === "email" && <span style={{ fontSize: 9.5, fontWeight: 800, color: C.blue, background: C.blueSoft, borderRadius: 999, padding: "0 6px" }}>e-mail</span>}
-                    </div>
-                    {text && <div style={{ fontSize: 13, color: C.text, whiteSpace: "pre-wrap", marginTop: 3, lineHeight: 1.45 }}>{text}</div>}
-                    {(m.attachment_ids || []).length > 0 && <div style={{ fontSize: 11, color: C.muted, marginTop: 3 }}>📎 {(m.attachment_ids || []).length} pièce{(m.attachment_ids || []).length > 1 ? "s" : ""} jointe{(m.attachment_ids || []).length > 1 ? "s" : ""} (dans Odoo)</div>}
-                  </div>
-                );
-              })}
-              <div style={{ display: "flex", gap: 8, alignItems: "flex-end", marginTop: 4 }}>
-                <textarea value={reply} onChange={e => setReply(e.target.value)} rows={2} placeholder="Répondre au service client (note interne, pas envoyée au client)…"
-                  style={{ flex: 1, minWidth: 0, padding: "9px 11px", borderRadius: 10, border: `1.5px solid ${C.border}`, fontSize: 13, fontFamily: "inherit", resize: "vertical", outline: "none" }} />
-                <button onClick={post} disabled={posting || !reply.trim()}
-                  style={{ height: 40, padding: "0 14px", borderRadius: 10, border: "none", background: reply.trim() ? C.teal : C.border, color: "#fff", fontSize: 13, fontWeight: 800, cursor: reply.trim() ? "pointer" : "default", fontFamily: "inherit" }}>
-                  {posting ? "…" : "Envoyer"}
-                </button>
-              </div>
-            </div>
-
             {detail.pickings.some(p => p.isReturn) && (
               <div style={{ marginTop: 12, fontSize: 12, color: C.orange, fontWeight: 700 }}>
                 Retour : {detail.pickings.filter(p => p.isReturn).map(p => `${p.name} (${(PICK_STATE[p.state] || { label: p.state }).label.toLowerCase()})`).join(", ")}
               </div>
             )}
           </>}
+
+          {/* ── Échanges (chatter de la commande) ── */}
+          <div style={{ fontSize: 11, fontWeight: 800, color: C.muted, textTransform: "uppercase", letterSpacing: "0.06em", margin: "18px 2px 8px" }}>
+            Échanges sur la commande {msgs ? `(${msgs.length})` : ""}
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {!msgs && <Sk h={48} r={12} />}
+            {msgs && msgs.length === 0 && <div style={{ fontSize: 12.5, color: C.muted }}>Aucun message pour l'instant.</div>}
+            {msgs && msgs.map(m => {
+              const mine = Array.isArray(m.author_id) && /./.test(m.author_id[1]) && String(m.author_id[1]).toLowerCase() === String(session.name || "").toLowerCase();
+              const note = Array.isArray(m.subtype_id) && /note/i.test(String(m.subtype_id[1]));
+              const text = String(m.body || "").replace(/<br\s*\/?>/gi, "\n").replace(/<\/p>/gi, "\n").replace(/<[^>]+>/g, "").replace(/&nbsp;/g, " ").replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").trim();
+              if (!text && !(m.attachment_ids || []).length) return null;
+              return (
+                <div key={m.id} style={{ alignSelf: mine ? "flex-end" : "flex-start", maxWidth: "85%", background: mine ? C.tealSoft : C.white, border: `1px solid ${mine ? C.tealMid : C.border}`, borderRadius: 12, padding: "8px 11px" }}>
+                  <div style={{ fontSize: 11, fontWeight: 800, color: mine ? C.tealDark : C.textSec, display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+                    {Array.isArray(m.author_id) ? m.author_id[1] : "Odoo"}
+                    <span style={{ fontWeight: 500, color: C.muted }}>{m.date ? new Date(String(m.date).replace(" ", "T") + "Z").toLocaleString("fr-FR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }) : ""}</span>
+                    {note && <span style={{ fontSize: 9.5, fontWeight: 800, color: C.orange, background: C.orangeSoft, borderRadius: 999, padding: "0 6px" }}>note interne</span>}
+                    {m.message_type === "email" && <span style={{ fontSize: 9.5, fontWeight: 800, color: C.blue, background: C.blueSoft, borderRadius: 999, padding: "0 6px" }}>e-mail</span>}
+                  </div>
+                  {text && <div style={{ fontSize: 13, color: C.text, whiteSpace: "pre-wrap", marginTop: 3, lineHeight: 1.45 }}>{text}</div>}
+                  {(m.attachment_ids || []).length > 0 && <div style={{ fontSize: 11, color: C.muted, marginTop: 3 }}>📎 {(m.attachment_ids || []).length} pièce{(m.attachment_ids || []).length > 1 ? "s" : ""} jointe{(m.attachment_ids || []).length > 1 ? "s" : ""} (dans Odoo)</div>}
+                </div>
+              );
+            })}
+            <div style={{ display: "flex", gap: 8, alignItems: "flex-end", marginTop: 4 }}>
+              <textarea value={reply} onChange={e => setReply(e.target.value)} rows={2} placeholder="Répondre au service client (note interne, pas envoyée au client)…"
+                style={{ flex: 1, minWidth: 0, padding: "9px 11px", borderRadius: 10, border: `1.5px solid ${C.border}`, fontSize: 13, fontFamily: "inherit", resize: "vertical", outline: "none" }} />
+              <button onClick={post} disabled={posting || !reply.trim()}
+                style={{ height: 40, padding: "0 14px", borderRadius: 10, border: "none", background: reply.trim() ? C.teal : C.border, color: "#fff", fontSize: 13, fontWeight: 800, cursor: reply.trim() ? "pointer" : "default", fontFamily: "inherit" }}>
+                {posting ? "…" : "Envoyer"}
+              </button>
+            </div>
+          </div>
+
         </div>
 
         {/* ── Totaux ── */}
@@ -228,8 +233,8 @@ export default function OrderDetailModal({ session, order, stateLabel, onClose: 
           )}
         </div>
       </div>
-    </div>
-  );
+    </div>),
+    document.body);
 }
 
 function Card({ icon, title, children }: { icon: string; title: string; children: React.ReactNode }) {

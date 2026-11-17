@@ -8,6 +8,7 @@ export const CHANGELOG: ChangelogEntry[] = [
   {
     date: "2026-11-13",
     items: [
+      "Accueil : « Messages sur mes commandes » sous l'agenda ; la commande s'ouvre en plein écran pour répondre (elle restait coincée dans la carte).",
       "Accueil : « Messages sur mes commandes » — messages du service client en attente sur vos commandes ; un tap ouvre la commande pour répondre, et le message disparaît une fois traité (réponse ou bouton « Traité »). Les messages où vous êtes cité (@) apparaissent en premier, même sur une commande d'un collègue.",
       "Commandes jointes : le champ Odoo « Commandes jointes » est rempli avec les numéros (S7xxxx, …) sur la nouvelle commande et sur chaque commande jointe.",
       "Commandes à joindre : le lien est maintenant écrit des deux côtés dans Odoo (champ « Commandes jointes » et note interne sur chaque commande), avec un message de confirmation.",

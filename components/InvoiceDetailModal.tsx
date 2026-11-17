@@ -2,6 +2,7 @@
 // Détail d'une facture ou d'un avoir (historique client) : montants, échéance,
 // paiements et avoirs imputés, lignes, adresses, PDF et pièces jointes,
 // commande d'origine — sans aller dans Odoo.
+import { createPortal } from "react-dom";
 import { useEffect, useState } from "react";
 import * as odoo from "@/lib/odoo";
 import { loadInvoiceDetail, openAttachment, type InvoiceDetail, type InvAttachment } from "@/lib/invoiceDetail";
@@ -79,7 +80,10 @@ export default function InvoiceDetailModal({ session, moveId, onClose: onClosePr
   const paidPct = d && d.total > 0 ? Math.min(100, ((d.total - d.residual) / d.total) * 100) : 0;
   const pdf = d?.attachments.find(a => a.mimetype === "application/pdf");
 
-  return (
+  // Portail vers <body> : ouverte depuis une carte « verre » (backdrop-filter),
+  // la fenêtre restait enfermée dans la carte au lieu de couvrir l'écran.
+  if (typeof document === "undefined") return null;
+  return createPortal((
     <>
     <div className={closing ? "ov closing" : "ov"} onClick={onClose}
       style={{ position: "fixed", inset: 0, background: "rgba(15,23,42,0.45)", zIndex: 210, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
@@ -274,8 +278,8 @@ export default function InvoiceDetailModal({ session, moveId, onClose: onClosePr
       <OrderDetailModal session={session} order={{ id: d.originOrderId, name: d.origin || "", state: "sale" }}
         stateLabel={{ label: "Commande", color: C.green, bg: C.greenSoft }} onClose={() => setShowOrder(false)} />
     )}
-    </>
-  );
+    </>),
+    document.body);
 }
 
 function Card({ icon, title, children }: { icon: string; title: string; children: React.ReactNode }) {

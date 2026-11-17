@@ -2666,10 +2666,12 @@ function ClientStep({ session, onSelect, onImportBon, onOpenPlanning, onToast, d
 
       {showWidgets && (
         <div className="stagger" style={{ width: "100%", maxWidth: 1040, marginTop: 2, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(400px, 1fr))", gap: 18, alignItems: "start" }}>
-          <AgendaGlass session={session} onOpenPlanning={onOpenPlanning} onOpenClient={onOpenPartner} onOrder={onOrderPartner} />
           <div style={{ display: "flex", flexDirection: "column" as const, gap: 18, minWidth: 0 }}>
-            {/* Messages du service client sur mes commandes (chatter), en attente de réponse */}
+            <AgendaGlass session={session} onOpenPlanning={onOpenPlanning} onOpenClient={onOpenPartner} onOrder={onOrderPartner} />
+            {/* Messages du service client sur mes commandes (chatter), en attente de réponse — sous l'agenda */}
             <OrderMessages session={session} />
+          </div>
+          <div style={{ display: "flex", flexDirection: "column" as const, gap: 18, minWidth: 0 }}>
             {/* Reprendre : brouillons en cours + derniers clients ouverts, en un tap */}
             {(drafts.length > 0 || recents.length > 0) && (
               <div style={{ ...GLASS, padding: 18 }}>
