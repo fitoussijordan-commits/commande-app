@@ -8,6 +8,7 @@ export const CHANGELOG: ChangelogEntry[] = [
   {
     date: "2026-11-13",
     items: [
+      "Préparer le RDV : « Top positif » (plus grosses hausses par produit) à côté des plus grosses baisses.",
       "Commandes portail : « Valider DC » refusé pour un client Bloqué compta / en redressement (validation par le service client), comme pour les commandes saisies.",
       "MEA en liste : un bloc coloré par MEA avec son titre, et ses variantes (Essentiel, Standard, Premium…) à l'intérieur.",
       "Commandes portail : « ✎ Modifier » charge la commande dans le panier — quantités modifiables, articles retirés ou ajoutés — puis la commande est mise à jour dans Odoo et validée DC.",

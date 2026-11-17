@@ -204,22 +204,12 @@ export default function RdvPrepModal({ session, client, onClose: onCloseProp, on
             })}
           </div>
 
-          {/* Baisses */}
-          <SectionTitle>Plus grosses baisses ({new Date().getFullYear()} à date vs même période {new Date().getFullYear() - 1})</SectionTitle>
-          {data.drops.length === 0 ? <div style={{ color: C.green, fontSize: 13, padding: 10, fontWeight: 700 }}>Aucune baisse notable ✓</div> : (
-            <div className="stagger" style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 14, overflow: "hidden" }}>
-              {data.drops.map((d, i) => (
-                <div key={d.product.id} style={{ display: "flex", alignItems: "center", gap: 12, padding: "9px 14px", borderTop: i ? `1px solid ${C.border}` : "none" }}>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: 13, fontWeight: 700, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{d.name}</div>
-                    <div style={{ fontSize: 10.5, color: C.muted, fontFamily: "ui-monospace, monospace" }}>{d.code}</div>
-                  </div>
-                  <div style={{ fontSize: 12.5, color: C.textSec, textAlign: "right", whiteSpace: "nowrap" }}>{q(d.n1)} → <strong style={{ color: C.red }}>{q(d.n)}</strong> u.</div>
-                  <div style={{ width: 90, textAlign: "right", fontSize: 12.5, fontWeight: 800, color: C.red, whiteSpace: "nowrap" }}>{eur(d.amountN - d.amountN1)}</div>
-                </div>
-              ))}
-            </div>
-          )}
+          {/* Baisses et hausses côte à côte */}
+          <SectionTitle>Évolution par produit ({new Date().getFullYear()} à date vs même période {new Date().getFullYear() - 1})</SectionTitle>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: 12 }}>
+            <TrendList title="Plus grosses baisses" color={C.red} soft={C.redSoft} rows={data.drops} empty="Aucune baisse notable ✓" />
+            <TrendList title="Top positif — plus grosses hausses" color={C.green} soft={C.greenSoft} rows={data.rises} empty="Aucune hausse sur la période" />
+          </div>
         </>}
       </div>
     </div>
@@ -238,4 +228,26 @@ function Kpi({ label, value, color, small }: { label: string; value: React.React
 }
 function SectionTitle({ children }: { children: React.ReactNode }) {
   return <div style={{ fontSize: 12, fontWeight: 800, color: C.muted, textTransform: "uppercase", letterSpacing: "0.06em", margin: "0 2px 10px" }}>{children}</div>;
+}
+
+function TrendList({ title, color, soft, rows, empty }: { title: string; color: string; soft: string; rows: { product: any; code: string; name: string; n1: number; n: number; amountN: number; amountN1: number }[]; empty: string }) {
+  return (
+    <div style={{ background: C.white, border: `1px solid ${C.border}`, borderTop: `4px solid ${color}`, borderRadius: 14, overflow: "hidden" }}>
+      <div style={{ padding: "9px 14px", background: soft, fontSize: 12.5, fontWeight: 800, color }}>{title} ({rows.length})</div>
+      {rows.length === 0 ? <div style={{ padding: 12, fontSize: 13, color: C.muted }}>{empty}</div> : (
+        <div className="stagger">
+          {rows.map((d, i) => (
+            <div key={d.product.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 14px", borderTop: i ? `1px solid ${C.border}` : "none" }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 13, fontWeight: 700, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{d.name}</div>
+                <div style={{ fontSize: 10.5, color: C.muted, fontFamily: "ui-monospace, monospace" }}>{d.code}</div>
+              </div>
+              <div style={{ fontSize: 12.5, color: C.textSec, textAlign: "right", whiteSpace: "nowrap" }}>{q(d.n1)} → <strong style={{ color }}>{q(d.n)}</strong> u.</div>
+              <div style={{ width: 80, textAlign: "right", fontSize: 12.5, fontWeight: 800, color, whiteSpace: "nowrap" }}>{d.amountN - d.amountN1 > 0 ? "+" : ""}{eur(d.amountN - d.amountN1)}</div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
 }

@@ -42,6 +42,7 @@ export interface RdvPrep {
   pricelist: string | null;
   campaigns: PrepCampaign[];
   drops: ProductTrend[];
+  rises: ProductTrend[];   // plus grosses hausses (top positif)
   tracking: TrackingModel | null;
   family: number[];
 }
@@ -252,16 +253,18 @@ export async function loadRdvPrep(session: odoo.OdooSession, client: any): Promi
     qtyByProduct(session, family, `${y}-01-01`, todayN),
   ]);
   const ids = new Set<number>([...Array.from(allN1.keys()), ...Array.from(allN.keys())]);
-  const drops: ProductTrend[] = Array.from(ids).map(id => {
+  const trends: ProductTrend[] = Array.from(ids).map(id => {
     const a = allN1.get(id), b = allN.get(id);
     const { code, name } = splitCode(a?.label || b?.label || "");
     return { product: { id }, code, name, n1: a?.qty || 0, n: b?.qty || 0, diff: (b?.qty || 0) - (a?.qty || 0), amountN1: a?.amount || 0, amountN: b?.amount || 0 };
-  }).filter(d => d.diff < 0 && d.amountN1 > 0).sort((p, q) => (p.amountN - p.amountN1) - (q.amountN - q.amountN1)).slice(0, 15);
+  });
+  const drops = trends.filter(d => d.diff < 0 && d.amountN1 > 0).sort((p, q) => (p.amountN - p.amountN1) - (q.amountN - q.amountN1)).slice(0, 15);
+  const rises = trends.filter(d => d.diff > 0 && d.amountN > 0).sort((p, q) => (q.amountN - q.amountN1) - (p.amountN - p.amountN1)).slice(0, 15);
 
   return {
     ca: { n: caF.n ? Number(cRow?.[caF.n]) || 0 : null, n1: caF.n1 ? Number(cRow?.[caF.n1]) || 0 : null },
     discount: pricelistDiscount(pricelist), pricelist,
     campaigns: prepCampaigns.sort((a, b) => ({ todo: 0, devis: 1, pris: 2 }[a.status] - { todo: 0, devis: 1, pris: 2 }[b.status])),
-    drops, tracking, family,
+    drops, rises, tracking, family,
   };
 }
