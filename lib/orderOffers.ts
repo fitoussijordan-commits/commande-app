@@ -121,7 +121,9 @@ export async function offerOptions(session: odoo.OdooSession, meta: OrderMeta): 
 // Champs Studio des MODÈLES de devis (MEA / implantation), repérés par libellé :
 //   « Note interne »          → recopiée sur la commande (suivi des campagnes, ex. SERUM26)
 //   « Date d'expédition… »    → date d'expédition prévue de la commande
-export interface TemplateMeta { noteField?: string; shipField?: string }
+// Modèles de devis (MEA) : note interne, date de début d'expédition, période
+// d'affichage (date début / date fin) et code offre (ex. SERUM26).
+export interface TemplateMeta { noteField?: string; shipField?: string; startField?: string; endField?: string; codeField?: string }
 let _tmeta: TemplateMeta | null = null;
 export async function templateMeta(session: odoo.OdooSession): Promise<TemplateMeta> {
   if (_tmeta) return _tmeta;
@@ -132,7 +134,11 @@ export async function templateMeta(session: odoo.OdooSession): Promise<TemplateM
     for (const [name, f] of Object.entries(fields)) {
       const label = String(f.string || "");
       if (!out.noteField && /note\s+interne/i.test(label) && ["text", "html", "char"].includes(f.type)) out.noteField = name;
-      if (!out.shipField && /exp[ée]dition/i.test(label) && (f.type === "date" || f.type === "datetime")) out.shipField = name;
+      const isDate = f.type === "date" || f.type === "datetime";
+      if (!out.shipField && /exp[ée]dition/i.test(label) && isDate) out.shipField = name;
+      else if (!out.startField && isDate && (name === "x_studio_date_debut_1" || /^date\s+d[ée]but$/i.test(label.trim()))) out.startField = name;
+      else if (!out.endField && isDate && (name === "x_studio_date_fin" || /^date\s+fin$/i.test(label.trim()))) out.endField = name;
+      if (!out.codeField && /code\s*offre/i.test(label) && ["char", "text"].includes(f.type)) out.codeField = name;
     }
   } catch (e) {
     if (odoo.isNetworkError(e)) return out;   // hors ligne : on réessaiera

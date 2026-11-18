@@ -505,7 +505,7 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
     return Array.from(m, ([id, name]) => ({ id, name }));
   }, [cart, giftItems]);
   // Infos des modèles ajoutés (MEA / implantation) : note interne de campagne, date d'expédition.
-  const [templateInfo, setTemplateInfo] = useState<Record<string, { note?: string; shipDate?: string }>>({});
+  const [templateInfo, setTemplateInfo] = useState<Record<string, { note?: string; shipDate?: string; code?: string }>>({});
   const refreshPendingDrafts = useCallback(() => setPendingDrafts(listDrafts()), []);
 
   // D'où vient-on quand on ouvre une fiche client : recherche ou planning.
@@ -638,7 +638,9 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
     const dates = Object.entries(templateInfo).filter(([g, t]) => groups.has(g) && t.shipDate).map(([, t]) => String(t.shipDate).slice(0, 10)).sort();
     return dates.length ? new Date(`${dates[dates.length - 1]}T12:00:00`) : null;
   })();
-  const shippingPlan = client ? planShipping(new Date(), clientClosedWeekdays(client, closedDayTags), wantedExpedition ?? offerShipDate) : null;
+  // Date d'expédition voulue : jamais avant la date de début d'expédition des MEA du panier.
+  const effectiveExpedition = wantedExpedition && offerShipDate ? (wantedExpedition < offerShipDate ? offerShipDate : wantedExpedition) : (wantedExpedition ?? offerShipDate);
+  const shippingPlan = client ? planShipping(new Date(), clientClosedWeekdays(client, closedDayTags), effectiveExpedition) : null;
   const blockLabel = clientBlocks.map(t => t.name).join(" · ");
 
   // Écran d'où l'on a ouvert le rapport Périmés, pour y revenir.
@@ -882,10 +884,10 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
       const tagIds = [validatedTagId, transmiseId].filter((x): x is number => x !== null);
       const tagVals = tagIds.length ? { tag_ids: [[6, 0, tagIds]] } : {};
       // Date calculée AU MOMENT de la validation (l'heure compte : coupure 14 h 30).
-      const plan = planShipping(new Date(), clientClosedWeekdays(client, closedDayTags), wantedExpedition ?? offerShipDate);
-      // Délégué « direct logistique » : date calculée ; sinon, date d'expédition des offres si elle existe.
-      const shipVals = directLogistics ? { [EXPEDITION_FIELD]: toOdooDate(plan.expedition) }
-        : offerShipDate ? { [EXPEDITION_FIELD]: toOdooDate(offerShipDate) } : {};
+      const plan = planShipping(new Date(), clientClosedWeekdays(client, closedDayTags), effectiveExpedition);
+      // Délégué « direct logistique » : date calculée ; sinon, date de début
+      // d'expédition des MEA — ou la première date possible si elle est passée.
+      const shipVals = directLogistics || offerShipDate ? { [EXPEDITION_FIELD]: toOdooDate(plan.expedition) } : {};
       let orderNote = clientBlocked
         ? `CLIENT ${blockLabel.toUpperCase()} — commande à valider par le service client.${note ? `\n${note}` : ""}`
         : (note || "");
@@ -904,6 +906,10 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
       const metaVals: any = {};
       const m = await orderMeta(session).catch(() => null);
       if (m?.typeField && orderType !== "") metaVals[m.typeField] = orderType;
+      // Code offre des MEA du panier (ex. SERUM26) → champ « Note interne » de la commande.
+      const offerCodes = Array.from(new Set(Object.entries(templateInfo)
+        .filter(([g, t]) => t.code && Object.values(cart).some(i => i.group === g)).map(([, t]) => String(t.code))));
+      if (offerCodes.length && m?.internalNoteField) metaVals[m.internalNoteField] = offerCodes.join(", ");
       const allOfferIds = Array.from(new Set([...offerIds, ...autoOffers.map(o => o.id)]));
       if (m?.offersField && allOfferIds.length) metaVals[m.offersField] = [[6, 0, allOfferIds]];
       // Note INTERNE (jamais imprimée sur le devis) : ruptures à vérifier par le
@@ -3490,7 +3496,7 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
   orderType: string | number | ""; setOrderType: (v: string | number | "") => void;
   offerIds: number[]; setOfferIds: React.Dispatch<React.SetStateAction<number[]>>;
   autoOffers: { id: number; name: string }[];
-  onTemplateApplied: (name: string, info: { note?: string; shipDate?: string }) => void;
+  onTemplateApplied: (name: string, info: { note?: string; shipDate?: string; code?: string }) => void;
   onRenameGroup: (from: string, to: string) => void;
   onClearCart: (group?: string) => void;
   // Commande transmise directement à la logistique : dates prévues (sinon null).
@@ -3563,7 +3569,10 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
 
   const [meaTemplates, setMeaTemplates] = useState<any[]>([]);
   const isOfferView = activeCatId === MEA_CAT_ID || activeCatId === DEVIS_CAT_ID;
-  const shownTemplates = meaTemplates.filter((t: any) => isImplantTemplate(t) === (activeCatId === DEVIS_CAT_ID)
+  // Période de l'offre : pas affichée avant sa date de début, retirée après sa date de fin.
+  const todayIso = (() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; })();
+  const inPeriod = (t: any) => (!t.startDate || t.startDate <= todayIso) && (!t.endDate || t.endDate >= todayIso);
+  const shownTemplates = meaTemplates.filter((t: any) => inPeriod(t) && isImplantTemplate(t) === (activeCatId === DEVIS_CAT_ID)
     && fold(String(t.name || "")).includes(fold(search).trim()));
   const [meaLoading, setMeaLoading] = useState(false);
   // Champs « Type de commande » / « Offres commandées » de cette base Odoo.
@@ -3733,12 +3742,15 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
       const tm = await templateMeta(session);
       const templates = await odoo.searchRead(session, "sale.order.template",
         [["active", "=", true]],
-        ["id", "name", "sale_order_template_line_ids", ...(tm.noteField ? [tm.noteField] : []), ...(tm.shipField ? [tm.shipField] : [])],
+        ["id", "name", "sale_order_template_line_ids", ...[tm.noteField, tm.shipField, tm.startField, tm.endField, tm.codeField].filter((f): f is string => !!f)],
         200, "name");
       // Champs Studio normalisés : la commande n'a pas à connaître leurs noms techniques.
       for (const t of templates) {
         if (tm.noteField) t.internalNote = descToText(String(t[tm.noteField] || "")).trim() || undefined;
         if (tm.shipField && t[tm.shipField]) t.shipDate = String(t[tm.shipField]).slice(0, 10);
+        if (tm.startField && t[tm.startField]) t.startDate = String(t[tm.startField]).slice(0, 10);
+        if (tm.endField && t[tm.endField]) t.endDate = String(t[tm.endField]).slice(0, 10);
+        if (tm.codeField && t[tm.codeField]) t.offerCode = String(t[tm.codeField]).trim() || undefined;
       }
       setMeaTemplates(templates);
       sync.cacheMea(templates).catch(() => {});
@@ -3889,7 +3901,7 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
         const cond = { label: template.name, required };
         setGiftItems(prev => [...prev, ...v.gifts.map(g => ({ ...g, cond }))]);
       }
-      if (template.internalNote || template.shipDate) onTemplateApplied(template.name, { note: template.internalNote, shipDate: template.shipDate });
+      if (template.internalNote || template.shipDate || template.offerCode) onTemplateApplied(template.name, { note: template.internalNote, shipDate: template.shipDate, code: template.offerCode });
       // Implantation → type de commande « Implantation » ; MEA → coche l'offre du même nom.
       if (isImplantTemplate(template)) {
         if (orderType === "" && meta?.implantValues.length) setOrderType(meta.implantValues[0]);

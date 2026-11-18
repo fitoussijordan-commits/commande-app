@@ -8,6 +8,7 @@ export const CHANGELOG: ChangelogEntry[] = [
   {
     date: "2026-11-13",
     items: [
+      "MEA : affichées seulement entre leur « Date début » et leur « Date fin » ; commande passée avant la « Date début Expédition » → expédiée au plus tôt à cette date ; « Code offre » recopié dans la Note interne de la commande.",
       "Messages sur mes commandes : la commande s'ouvre avec les échanges en haut (le détail en dessous) ; bouton « ✎ Modifier » pour la charger dans le panier et la modifier / compléter.",
       "Préparer le RDV : « Top positif » (plus grosses hausses par produit) à côté des plus grosses baisses.",
       "Commandes portail : « Valider DC » refusé pour un client Bloqué compta / en redressement (validation par le service client), comme pour les commandes saisies.",
