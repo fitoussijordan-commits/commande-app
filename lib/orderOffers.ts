@@ -113,7 +113,21 @@ export async function offerNames(session: odoo.OdooSession, orders: any[], meta:
 export async function offerOptions(session: odoo.OdooSession, meta: OrderMeta): Promise<{ id: number; name: string }[]> {
   if (!meta.offersRelation) return [];
   try {
-    const rows = await odoo.searchRead(session, meta.offersRelation, [], ["display_name"], 500, "id desc");
+    // Toutes les offres (plus de plafond à 500 : une offre ancienne restait
+    // sans nom et s'affichait « Offre #208 »).
+    const rows = await odoo.searchRead(session, meta.offersRelation, [], ["display_name"], 0, "id desc");
+    return rows.map((r: any) => ({ id: r.id, name: String(r.display_name || "") }));
+  } catch { return []; }
+}
+
+// Noms d'offres absentes de la liste (archivées) : affichées par leur vrai nom.
+export async function offerNamesByIds(session: odoo.OdooSession, meta: OrderMeta, ids: number[]): Promise<{ id: number; name: string }[]> {
+  if (!meta.offersRelation || !ids.length) return [];
+  try {
+    const f: Record<string, any> = await odoo.callMethod(session, meta.offersRelation, "fields_get", [], { attributes: ["type"] });
+    const act = ["active", "x_active"].find(k => f[k]?.type === "boolean");
+    const rows = await odoo.searchRead(session, meta.offersRelation,
+      [["id", "in", ids], ...(act ? [[act, "in", [true, false]]] : [])], ["display_name"], ids.length);
     return rows.map((r: any) => ({ id: r.id, name: String(r.display_name || "") }));
   } catch { return []; }
 }

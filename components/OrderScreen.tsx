@@ -15,7 +15,7 @@ import { resolveClientFamily, odooRecordUrl } from "@/lib/perimes";
 import InvoiceHistory from "@/components/InvoiceHistory";
 import { GLASS, GLASS_PILL } from "@/components/glass";
 import { saleStep, snapQty, optionalProductFields, ppcOf } from "@/lib/productFields";
-import { orderMeta, isMea, isImplantation, offerNames, offerOptions, templateMeta, templateLineMeta, type OrderMeta } from "@/lib/orderOffers";
+import { orderMeta, isMea, isImplantation, offerNames, offerOptions, offerNamesByIds, templateMeta, templateLineMeta, type OrderMeta } from "@/lib/orderOffers";
 import { loadBlockingTags, clientBlockingTags, loadClosedDayTags, clientClosedWeekdays, type BlockingTag, type ClosedDayTag } from "@/lib/clientFlags";
 import { planShipping, toOdooDate, toOdooDatetime, isDirectLogistics, type ShippingPlan } from "@/lib/delivery";
 import { onIncomingFile } from "@/lib/incomingFile";
@@ -3581,6 +3581,15 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
   useEffect(() => {
     orderMeta(session).then(async m => { setMeta(m); setOffers(await offerOptions(session, m)); }).catch(() => {});
   }, [session]);
+  // Offres cochées dont le nom est inconnu (archivées…) : nom réel récupéré.
+  useEffect(() => {
+    if (!meta) return;
+    const missing = offerIds.filter(id => !offers.some(o => o.id === id));
+    if (!missing.length) return;
+    offerNamesByIds(session, meta, missing).then(found => {
+      if (found.length) setOffers(prev => [...prev, ...found.filter(f => !prev.some(p => p.id === f.id))]);
+    });
+  }, [offerIds, offers, meta, session]);
   // Vue liste : une ligne par article, le panier prend toute la largeur.
   const [listView, setListView] = useState(false);
   // Récap du panier replié par défaut (expédition, type, offres, note, détail
@@ -4835,7 +4844,7 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
                     ))}
                     {offerIds.map(id => (
                       <span key={id} style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "3px 4px 3px 8px", borderRadius: 999, background: "rgba(251,146,60,0.18)", color: "#fdba74", fontSize: 11, fontWeight: 700 }}>
-                        {offers.find(o => o.id === id)?.name || `Offre #${id}`}
+                        {offers.find(o => o.id === id)?.name || `Offre n° ${id} (nom introuvable)`}
                         <button onClick={() => setOfferIds(prev => prev.filter(x => x !== id))} style={{ background: "none", border: "none", color: "#fdba74", cursor: "pointer", fontSize: 11, padding: "0 2px" }}>✕</button>
                       </span>
                     ))}

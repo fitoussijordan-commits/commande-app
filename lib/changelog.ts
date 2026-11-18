@@ -8,6 +8,7 @@ export const CHANGELOG: ChangelogEntry[] = [
   {
     date: "2026-11-13",
     items: [
+      "Panier : les offres commandées s'affichent toujours avec leur nom (avant, une offre ancienne ou archivée apparaissait « Offre #208 »).",
       "MEA : affichées seulement entre leur « Date début » et leur « Date fin » ; commande passée avant la « Date début Expédition » → expédiée au plus tôt à cette date ; « Code offre » recopié dans la Note interne de la commande.",
       "Messages sur mes commandes : la commande s'ouvre avec les échanges en haut (le détail en dessous) ; bouton « ✎ Modifier » pour la charger dans le panier et la modifier / compléter.",
       "Préparer le RDV : « Top positif » (plus grosses hausses par produit) à côté des plus grosses baisses.",
