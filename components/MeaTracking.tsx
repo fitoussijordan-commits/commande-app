@@ -59,7 +59,8 @@ export default function MeaDashboard({ session, onClose, onOpenClient, onToast }
   const [rdvFor, setRdvFor] = useState<any>(null);
   const [mine, setMine] = useState(getMineOnly);
   const [showAll, setShowAll] = useState(false);
-  const [bdcBusy, setBdcBusy] = useState(false);   // MEA actives seulement (par défaut) / toutes   // Mes clients / Tous (même choix que la recherche)
+  const [bdcBusy, setBdcBusy] = useState(false);
+  const [sortBy, setSortBy] = useState<"ca_desc" | "ca_asc" | "name">("ca_desc");   // tri des clients   // MEA actives seulement (par défaut) / toutes   // Mes clients / Tous (même choix que la recherche)
 
   const reloadVisits = useCallback(() => { loadNextVisits(session).then(setVisits); }, [session]);
   useEffect(() => {
@@ -84,8 +85,10 @@ export default function MeaDashboard({ session, onClose, onOpenClient, onToast }
     return data.clients
       .filter(c => status(c.id) === filter)
       .filter(c => words.every(w => `${c.name} ${c.city || ""} ${c.ref || ""}`.toLowerCase().includes(w)))
-      .sort((a, b) => (Number(b.x_ca_n_1) || 0) - (Number(a.x_ca_n_1) || 0));
-  }, [data, taken, filter, q]); // eslint-disable-line react-hooks/exhaustive-deps
+      .sort((a, b) => sortBy === "name" ? String(a.name).localeCompare(String(b.name), "fr")
+        : sortBy === "ca_asc" ? (Number(a.x_ca_n_1) || 0) - (Number(b.x_ca_n_1) || 0)
+        : (Number(b.x_ca_n_1) || 0) - (Number(a.x_ca_n_1) || 0));
+  }, [data, taken, filter, q, sortBy]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const save = async (clientId: number, patch: Partial<Plan>) => {
     if (!data) return;
@@ -180,21 +183,23 @@ export default function MeaDashboard({ session, onClose, onOpenClient, onToast }
             </div>
           )}
           {data && data.campaigns.length > 0 && (
-            <div style={{ display: "flex", gap: 10, overflowX: "auto" as const, marginTop: 10, paddingBottom: 2 }}>
-              {data.campaigns.filter(c => showAll || c.active).map(c => {
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(190px, 1fr))", gap: 8, marginTop: 10 }}>
+              {data.campaigns.filter(c => (showAll || c.active) && c.key).map(c => {
                 const took = Array.from(data.taken.get(c.key)?.values() || []).filter(t => t.state === "pris").length;
                 const pct = total ? Math.round((took / total) * 100) : 0;
                 const sel = c.key === key;
                 return (
                   <button key={c.key} onClick={() => setKey(c.key)}
-                    style={{ flex: "0 0 220px", textAlign: "left" as const, padding: "12px 14px", borderRadius: 14, cursor: "pointer", fontFamily: "inherit",
+                    title={`${c.key} — variantes : ${c.offers.map(o => o.variant).join(", ")}`}
+                    style={{ textAlign: "left" as const, padding: "9px 12px", borderRadius: 12, cursor: "pointer", fontFamily: "inherit",
                       border: `2px solid ${sel ? C.teal : C.border}`, background: sel ? C.tealSoft : C.white }}>
-                    <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
-                      <span style={{ flex: 1, minWidth: 0, fontSize: 13.5, fontWeight: 800, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>{c.key}</span>
-                      <span style={{ fontSize: 18, fontWeight: 800, color: C.tealDark }}>{pct}%</span>
+                    {/* En un coup d'œil : nom, placés / clients, % de placement */}
+                    <div style={{ fontSize: 13, fontWeight: 800, color: C.text, lineHeight: 1.25, minHeight: 32, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" as const, overflow: "hidden" }}>{c.key.replace(/^MEA\s+/i, "")}</div>
+                    <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginTop: 4 }}>
+                      <span style={{ fontSize: 13, fontWeight: 800, color: C.textSec }}>{took}<span style={{ color: C.muted, fontWeight: 600 }}>/{total}</span></span>
+                      <span style={{ fontSize: 17, fontWeight: 800, color: C.tealDark }}>{pct}%</span>
                     </div>
-                    <div style={{ fontSize: 11.5, color: C.muted, marginTop: 1 }}>{took} / {total} clients · {c.offers.map(o => o.variant).join(" · ")}</div>
-                    <div style={{ height: 4, borderRadius: 2, background: "rgba(15,23,42,0.07)", marginTop: 8, overflow: "hidden" }}>
+                    <div style={{ height: 4, borderRadius: 2, background: "rgba(15,23,42,0.07)", marginTop: 6, overflow: "hidden" }}>
                       <div style={{ width: `${pct}%`, height: "100%", background: C.teal }} />
                     </div>
                   </button>
@@ -234,7 +239,14 @@ export default function MeaDashboard({ session, onClose, onOpenClient, onToast }
           {data && !data.campaigns.length && <div style={{ textAlign: "center" as const, color: C.muted, fontSize: 13, padding: 30 }}>Aucune MEA active.</div>}
           {data && camp && <>
             <div style={{ display: "grid", gridTemplateColumns: GRID, gap: 12, padding: "10px 14px 8px", fontSize: 11, fontWeight: 800, color: C.muted, textTransform: "uppercase" as const, letterSpacing: "0.05em" }}>
-              <span>Client</span><span>Prochain RDV</span><span>{filter === "todo" ? "Offre prévue" : "Offre"}</span><span>Note</span>
+              <span style={{ display: "flex", alignItems: "center", gap: 6 }}>Client
+                <select value={sortBy} onChange={e => setSortBy(e.target.value as any)} title="Trier les clients"
+                  style={{ height: 24, borderRadius: 6, border: `1px solid ${C.border}`, background: C.white, fontSize: 11, fontWeight: 700, color: C.textSec, fontFamily: "inherit", textTransform: "none" as const }}>
+                  <option value="ca_desc">CA N-1 ↓</option>
+                  <option value="ca_asc">CA N-1 ↑</option>
+                  <option value="name">Nom A→Z</option>
+                </select>
+              </span><span>Prochain RDV</span><span>{filter === "todo" ? "Offre prévue" : "Offre"}</span><span>Note</span>
             </div>
             <div style={{ background: C.white, borderRadius: 14, border: `1px solid ${C.border}`, overflow: "hidden" }}>
               {rows.length === 0 && <div style={{ textAlign: "center" as const, color: C.muted, fontSize: 13, padding: 30 }}>

@@ -30,9 +30,13 @@ export interface MeaData {
   tracking: TrackingModel | null;                // null : modèle Studio pas encore créé
 }
 
+// Campagne = nom avant le PREMIER « - » (« MEA Noël 2026 - Essentiel - Exclusif
+// retail » → « MEA Noël 2026 ») : toutes les variantes d'une MEA forment une
+// seule campagne (avant : coupe au dernier « - », d'où plusieurs « MEA Noël »).
 const campaignOf = (name: string) => {
-  const i = name.lastIndexOf(" - ");
-  return i > 0 ? { key: name.slice(0, i).trim(), variant: name.slice(i + 3).trim() } : { key: name.trim(), variant: name.trim() };
+  const n = name.trim();
+  const i = n.indexOf(" - ");
+  return i > 0 ? { key: n.slice(0, i).trim(), variant: n.slice(i + 3).trim() } : { key: n, variant: n };
 };
 export const planKey = (campaign: string, clientId: number) => `${campaign}|${clientId}`;
 

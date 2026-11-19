@@ -8,6 +8,7 @@ export const CHANGELOG: ChangelogEntry[] = [
   {
     date: "2026-11-13",
     items: [
+      "Mes MEA : cartes compactes (nom, placés / clients, %), toutes visibles d'un coup d'œil ; une seule carte par MEA (plus de « MEA Noël » en double) ; tri des clients par CA N-1 (↓ / ↑) ou par nom.",
       "MEA : vue groupée par MEA aussi en mode « Cartes » (avant : seulement en mode Liste).",
       "MEA à quantités libres : le palier et la remise sont lus dans le nom (« 12 unités // 15% remise ») — la variante et la remise changent quand on dépasse le palier.",
       "Devis d'implantation : les testeurs ne sont plus barrés (jamais suspendus).",
