@@ -34,6 +34,7 @@ export default function RdvPrepModal({ session, client, onClose: onCloseProp, on
   const [error, setError] = useState("");
   const [open, setOpen] = useState<string | null>(null);
   const [edits, setEdits] = useState<Record<string, Record<number, number>>>({});   // campagne → produit → quantité
+  const [variantSel, setVariantSel] = useState<Record<string, number>>({});        // campagne → variante (modèle) du BDC
 
   useEffect(() => {
     let alive = true;
@@ -50,6 +51,25 @@ export default function RdvPrepModal({ session, client, onClose: onCloseProp, on
     return c;
   }, [data]);
 
+  // Variante affichée / exportée : choisie à la main, sinon celle de l'« Offre
+  // prévue » (même nom que le modèle), sinon la variante conseillée.
+  const fold = (t: string) => t.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]/g, "");
+  const viewOf = (pc: PrepCampaign): PrepCampaign => {
+    let id = variantSel[pc.campaign.key];
+    if (id == null && pc.plan?.offerId) {
+      const off = pc.campaign.offers.find(o => o.id === pc.plan!.offerId);
+      const m = off && pc.variants.find(v => fold(v.name) === fold(off.name))
+        || off && pc.variants.find(v => fold(v.name).endsWith(fold(off.variant)));
+      if (m) id = m.id;
+    }
+    const opt = id != null ? pc.options[id] : null;
+    return opt ? { ...pc, chosen: opt.chosen, reason: opt.reason, products: opt.products, free: opt.free } : pc;
+  };
+  const pickVariant = (pc: PrepCampaign, id: number) => {
+    setVariantSel(v => ({ ...v, [pc.campaign.key]: id }));
+    setEdits(e => ({ ...e, [pc.campaign.key]: {} }));
+  };
+
   const qtyOf = (pc: PrepCampaign, pid: number, def: number) => edits[pc.campaign.key]?.[pid] ?? def;
   const setQty = (pc: PrepCampaign, pid: number, v: number) =>
     setEdits(e => ({ ...e, [pc.campaign.key]: { ...(e[pc.campaign.key] || {}), [pid]: Math.max(0, v) } }));
@@ -62,7 +82,8 @@ export default function RdvPrepModal({ session, client, onClose: onCloseProp, on
     try {
       if (data.tracking) next.id = await savePlan(session, data.tracking, pc.campaign.key, client.id, next);
       else saveLocalPlan(planKey(pc.campaign.key, client.id), next);
-      setData(d => d && { ...d, campaigns: d.campaigns.map(x => x === pc ? { ...x, plan: next } : x) });
+      setData(d => d && { ...d, campaigns: d.campaigns.map(x => x.campaign.key === pc.campaign.key ? { ...x, plan: next } : x) });
+      if (patch.offerId !== undefined) setVariantSel(v => { const n = { ...v }; delete n[pc.campaign.key]; return n; });
     } catch (e: any) { onToast(odoo.isNetworkError(e) ? "Hors ligne : non enregistré" : `Enregistrement refusé : ${e?.message || e}`, "error"); }
   };
 
@@ -113,7 +134,8 @@ export default function RdvPrepModal({ session, client, onClose: onCloseProp, on
           {!data.tracking && <div style={{ fontSize: 11.5, color: C.orange, margin: "-4px 2px 8px" }}>Offre prévue et notes gardées sur cet appareil (modèle Odoo « Suivi MEA » absent).</div>}
           {data.campaigns.length === 0 && <div style={{ color: C.muted, fontSize: 13, padding: 10 }}>Aucune MEA active.</div>}
           <div className="stagger" style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 22 }}>
-            {data.campaigns.map(pc => {
+            {data.campaigns.map(pc0 => {
+              const pc = viewOf(pc0);
               const st = STATUS[pc.status];
               const isOpen = open === pc.campaign.key;
               const total = pc.products.reduce((s, p) => s + qtyOf(pc, p.product.id, p.proposal) * p.price, 0) * (1 - data.discount / 100);
@@ -149,16 +171,30 @@ export default function RdvPrepModal({ session, client, onClose: onCloseProp, on
 
                   {isOpen && (
                     <div className="reveal" style={{ borderTop: `1px solid ${C.border}`, padding: "10px 14px 14px", background: "#fbfcfd" }}>
-                      <div style={{ fontSize: 12, color: C.textSec, marginBottom: 8 }}>{pc.reason}</div>
-                      {pc.products.length === 0 ? <div style={{ fontSize: 12.5, color: C.muted }}>Aucun modèle de devis trouvé pour cette offre.</div> : (
+                      {pc.variants.length > 1 && (
+                        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 8 }}>
+                          {pc.variants.map(v => {
+                            const on = pc.chosen?.id === v.id;
+                            const label = v.name.startsWith(pc.campaign.key) ? v.name.slice(pc.campaign.key.length).replace(/^\s*-\s*/, "") || v.name : v.name;
+                            return (
+                              <button key={v.id} onClick={() => pickVariant(pc, v.id)}
+                                style={{ height: 28, padding: "0 10px", borderRadius: 999, border: `1.5px solid ${on ? C.teal : C.border}`, background: on ? C.tealSoft : C.white, color: on ? C.tealDark : C.textSec, fontSize: 11.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+                                {label}{v.total ? ` · ${v.total} u.` : ""}{pc0.chosen?.id === v.id ? " ★" : ""}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      )}
+                      <div style={{ fontSize: 12, color: C.textSec, marginBottom: 8 }}>{pc.reason}{pc0.chosen && pc.variants.length > 1 ? " ★ = variante conseillée d'après les achats du client." : ""}</div>
+                      {pc.products.length === 0 ? <div style={{ fontSize: 12.5, color: C.muted }}>Aucun produit de vente dans les modèles de cette offre (offre sans BDC).</div> : (
                         <div style={{ overflowX: "auto" }}>
                           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
                             <thead>
                               <tr style={{ color: C.muted, fontSize: 11, textAlign: "right" }}>
                                 <th style={{ textAlign: "left", padding: "4px 6px" }}>Produit</th>
                                 <th style={{ padding: "4px 6px" }}>PU HT</th>
-                                <th style={{ padding: "4px 6px" }}>Achats N-1</th>
-                                <th style={{ padding: "4px 6px" }}>Achats N</th>
+                                <th style={{ padding: "4px 6px" }} title="Achats sur toute l'année précédente">Achats N-1 (année)</th>
+                                <th style={{ padding: "4px 6px" }}>Achats N (à date)</th>
                                 <th style={{ padding: "4px 6px", textAlign: "center" }}>Proposition</th>
                               </tr>
                             </thead>
@@ -188,13 +224,15 @@ export default function RdvPrepModal({ session, client, onClose: onCloseProp, on
                           </table>
                         </div>
                       )}
-                      {pc.kit.length > 0 && <div style={{ fontSize: 11.5, color: C.muted, marginTop: 8 }}>Kit offert : {pc.kit.map(k => k.name).join(" · ")}</div>}
+                      {pc.free.length > 0 && <div style={{ fontSize: 11.5, color: C.tealDark, marginTop: 8, fontWeight: 700 }}>Unités gratuites : {pc.free.map(f => `${f.qty} × ${f.name}`).join(" · ")}</div>}
+                      {pc.kit.length > 0 && <div style={{ fontSize: 11.5, color: C.muted, marginTop: 4 }}>Kit offert (hors BDC) : {pc.kit.map(k => k.name).join(" · ")}</div>}
                       <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 10, flexWrap: "wrap" }}>
                         <span style={{ fontSize: 13, fontWeight: 800, color: C.text }}>{units} u. · {eur2(total)} HT remisé{data.discount ? ` (−${data.discount} %)` : ""}</span>
                         <span style={{ flex: 1 }} />
                         <button onClick={() => exportBdc(pc)} disabled={!pc.products.length}
-                          style={{ height: 34, padding: "0 14px", borderRadius: 10, border: "none", background: C.teal, color: "#fff", fontSize: 12.5, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>
-                          Générer le BDC (Excel)
+                          title={pc.products.length ? "" : "Pas de BDC pour cette offre (aucun produit de vente)"}
+                          style={{ height: 34, padding: "0 14px", borderRadius: 10, border: "none", background: pc.products.length ? C.teal : "#cbd5e1", color: "#fff", fontSize: 12.5, fontWeight: 800, cursor: pc.products.length ? "pointer" : "not-allowed", fontFamily: "inherit" }}>
+                          {pc.products.length ? "Générer le BDC (Excel)" : "Pas de BDC pour cette offre"}
                         </button>
                       </div>
                     </div>

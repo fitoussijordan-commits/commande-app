@@ -78,7 +78,7 @@ export async function loadCampaigns(session: odoo.OdooSession): Promise<Campaign
   const startField = dateField(/\b(d[ée]but|start|depuis)/i);
   const offerRows: any[] = await odoo.searchRead(session, rel,
     activeField ? [[activeField, "in", [true, false]]] : [],
-    ["display_name", ...(activeField ? [activeField] : []), ...(endField ? [endField] : []), ...(startField ? [startField] : [])], 500, "id desc");
+    ["display_name", ...(activeField ? [activeField] : []), ...(endField ? [endField] : []), ...(startField ? [startField] : [])], 0, "id desc");
   const today = new Date().toISOString().slice(0, 10);
   const offerOk = (r: any) => (!activeField || r[activeField] !== false)
     && (!endField || !r[endField] || String(r[endField]).slice(0, 10) >= today)
@@ -103,6 +103,7 @@ export async function loadCampaigns(session: odoo.OdooSession): Promise<Campaign
   for (const r of offerRows) {
     const name = String(r.display_name || "");
     const { key, variant } = campaignOf(name);
+    if (!fold(key)) continue;   // offre sans nom de campagne (« - … ») : ignorée
     if (!byKey.has(key)) byKey.set(key, { key, offers: [], active: false });
     byKey.get(key)!.offers.push({ id: r.id, name, variant });
   }

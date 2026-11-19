@@ -3042,6 +3042,7 @@ function ClientHistory({ session, client }: { session: odoo.OdooSession; client:
   const [rkRange, setRkRange] = useState(() => yearRange(new Date().getFullYear()));
   const [rkSort, setRkSort] = useState<"qty" | "n1" | "drop" | "rise">("qty");
   const [rkFilter, setRkFilter] = useState<"all" | "neg" | "pos">("all");   // tous / en baisse / en hausse
+  const [rkSearch, setRkSearch] = useState("");                               // recherche d'un produit
   const [meaOrders, setMeaOrders] = useState<any[]>([]);
   // Devis d'implantation : séparés des MEA, devis non confirmés compris.
   const [implantOrders, setImplantOrders] = useState<any[]>([]);
@@ -3052,7 +3053,8 @@ function ClientHistory({ session, client }: { session: odoo.OdooSession; client:
   // Gratuités : quotas Studio (état courant, fiche client) + consommation de l'année
   // recalculée depuis les lignes de commande (seule source qui porte un historique).
   const [giftQuotas, setGiftQuotas] = useState<Record<string, number> | null>(null);
-  const [giftYearLines, setGiftYearLines] = useState<{ label: string; qty: number; lines: number }[]>([]);
+  const [giftYearLines, setGiftYearLines] = useState<{ label: string; qty: number; lines: number; detail: { product: string; qty: number; order: string; date: string }[] }[]>([]);
+  const [giftOpen, setGiftOpen] = useState<string | null>(null);
   const [giftTypes, setGiftTypes] = useState<sync.FreeType[]>([]);
 
   useEffect(() => {
@@ -3150,19 +3152,24 @@ function ClientHistory({ session, client }: { session: odoo.OdooSession; client:
             const ids = yearOrders.map((o: any) => o.id);
             const lines = await odoo.searchRead(session, "sale.order.line",
               [["order_id", "in", ids], ["type_gratuit", "!=", false], ["display_type", "=", false]],
-              ["product_uom_qty", "type_gratuit"], 2000);
+              ["product_uom_qty", "type_gratuit", "product_id", "order_id"], 2000);
             if (cancelled) return;
-            const agg = new Map<string, { qty: number; lines: number }>();
+            const oDate = new Map<number, string>(yearOrders.map((o: any) => [o.id, String(o.date_order || "")]));
+            const agg = new Map<string, { qty: number; lines: number; detail: { product: string; qty: number; order: string; date: string }[] }>();
             for (const l of lines) {
               const key = String(l.type_gratuit || "");
               if (!key) continue;
-              const cur = agg.get(key) || { qty: 0, lines: 0 };
+              const cur = agg.get(key) || { qty: 0, lines: 0, detail: [] };
               cur.qty += l.product_uom_qty || 0; cur.lines += 1;
+              const oid = Array.isArray(l.order_id) ? l.order_id[0] : 0;
+              cur.detail.push({ product: Array.isArray(l.product_id) ? String(l.product_id[1]) : "", qty: l.product_uom_qty || 0,
+                order: Array.isArray(l.order_id) ? String(l.order_id[1]) : "", date: oDate.get(oid) || "" });
               agg.set(key, cur);
             }
+            agg.forEach(v => v.detail.sort((a, b) => b.date.localeCompare(a.date)));
             setGiftYearLines(
               Array.from(agg.entries())
-                .map(([value, v]) => ({ label: value, qty: v.qty, lines: v.lines }))
+                .map(([value, v]) => ({ label: value, qty: v.qty, lines: v.lines, detail: v.detail }))
                 .sort((a, b) => b.qty - a.qty)
             );
           }
@@ -3248,7 +3255,9 @@ function ClientHistory({ session, client }: { session: odoo.OdooSession; client:
         {/* ── Onglet PALMARÈS ── */}
         {mode === "ranking" && (() => {
           const sorted = [...ranking].filter(r => (r.qty > 0 || r.qtyN1 > 0)
-            && (rkFilter === "all" || (rkFilter === "neg" ? r.qty < r.qtyN1 : r.qty > r.qtyN1))).sort((a, b) =>
+            && (rkFilter === "all" || (rkFilter === "neg" ? r.qty < r.qtyN1 : r.qty > r.qtyN1))
+            && (!rkSearch.trim() || rkSearch.trim().toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").split(/\s+/).every(w =>
+              `${r.name || ""} ${r.code || ""} ${r.default_code || ""} ${r.label || ""}`.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").includes(w)))).sort((a, b) =>
             rkSort === "qty" ? b.qty - a.qty || b.qtyN1 - a.qtyN1
             : rkSort === "n1" ? b.qtyN1 - a.qtyN1
             : rkSort === "drop" ? (a.qty - a.qtyN1) - (b.qty - b.qtyN1)
@@ -3284,6 +3293,12 @@ function ClientHistory({ session, client }: { session: odoo.OdooSession; client:
                 <option value="drop">Tri : plus grosses baisses</option>
                 <option value="rise">Tri : plus grosses hausses</option>
               </select>
+            </div>
+            <div style={{ position: "relative" as const, marginBottom: 10 }}>
+              <span style={{ position: "absolute" as const, left: 10, top: 8, color: C.muted, pointerEvents: "none" as const }}><Icon name="search" size={15} /></span>
+              <input value={rkSearch} onChange={e => setRkSearch(e.target.value)} placeholder="Rechercher un produit (nom, référence)…"
+                style={{ width: "100%", boxSizing: "border-box" as const, height: 34, padding: "0 32px 0 32px", borderRadius: 10, border: `1px solid ${rkSearch ? C.teal : C.border}`, fontFamily: "inherit", fontSize: 13, background: C.white }} />
+              {rkSearch && <button onClick={() => setRkSearch("")} aria-label="Effacer" style={{ position: "absolute" as const, right: 6, top: 5, width: 24, height: 24, border: "none", background: "none", color: C.muted, cursor: "pointer", fontSize: 15 }}>×</button>}
             </div>
             {!analyLoading && ranking.length > 0 && (
               <div style={{ fontSize: 12, color: C.muted, marginBottom: 10 }}>
@@ -3430,16 +3445,34 @@ function ClientHistory({ session, client }: { session: odoo.OdooSession; client:
                 <div style={{ textAlign: "center" as const, color: C.muted, padding: 24, fontSize: 13 }}>Aucune gratuité sur des commandes confirmées en {year}</div>
               ) : (
                 <div className="stagger" style={{ display: "flex", flexDirection: "column" as const, gap: 6 }}>
-                  {giftYearLines.map(g => (
-                    <div key={g.label} style={{ display: "flex", alignItems: "center", gap: 10, background: C.greenSoft, border: `1px solid ${C.green}33`, borderRadius: 10, padding: "9px 12px" }}>
-                      <Icon name="gift" size={13} color={C.green} />
-                      <span style={{ flex: 1, fontSize: 13, fontWeight: 700, color: C.text }}>
-                        {giftTypes.find(t => t.value === g.label)?.label || g.label}
-                      </span>
-                      <span style={{ fontSize: 11, color: C.muted }}>{g.lines} ligne{g.lines > 1 ? "s" : ""}</span>
-                      <span style={{ fontSize: 14, fontWeight: 800, color: C.green }}>{Math.round(g.qty)}</span>
-                    </div>
-                  ))}
+                  {giftYearLines.map(g => {
+                    const isOpen = giftOpen === g.label;
+                    return (
+                      <div key={g.label} style={{ background: C.greenSoft, border: `1px solid ${C.green}33`, borderRadius: 10, overflow: "hidden" }}>
+                        <button onClick={() => setGiftOpen(isOpen ? null : g.label)}
+                          style={{ width: "100%", display: "flex", alignItems: "center", gap: 10, padding: "9px 12px", background: "none", border: "none", cursor: "pointer", fontFamily: "inherit", textAlign: "left" as const }}>
+                          <Icon name="gift" size={13} color={C.green} />
+                          <span style={{ flex: 1, fontSize: 13, fontWeight: 700, color: C.text }}>
+                            {giftTypes.find(t => t.value === g.label)?.label || g.label}
+                          </span>
+                          <span style={{ fontSize: 11, color: C.muted }}>{g.lines} ligne{g.lines > 1 ? "s" : ""}</span>
+                          <span style={{ fontSize: 14, fontWeight: 800, color: C.green }}>{Math.round(g.qty)}</span>
+                          <span style={{ color: C.muted, fontSize: 14, transform: isOpen ? "rotate(90deg)" : "none", transition: "transform 0.2s" }}>›</span>
+                        </button>
+                        {isOpen && (
+                          <div className="reveal" style={{ background: C.white, borderTop: `1px solid ${C.green}33` }}>
+                            {g.detail.map((d, i) => (
+                              <div key={i} style={{ display: "flex", alignItems: "center", gap: 10, padding: "7px 12px", borderTop: i ? `1px solid ${C.border}` : "none", fontSize: 12.5 }}>
+                                <span style={{ flex: 1, minWidth: 0, color: C.text, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>{d.product}</span>
+                                <span style={{ fontSize: 11, color: C.muted, whiteSpace: "nowrap" as const }}>{d.order}{d.date ? ` · ${d.date.slice(0, 10).split("-").reverse().join("/")}` : ""}</span>
+                                <span style={{ width: 36, textAlign: "right" as const, fontWeight: 800, color: C.green }}>{Math.round(d.qty)}</span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
               )}
             </div>

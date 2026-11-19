@@ -33,8 +33,12 @@ export interface PrepCampaign {
   chosen: PrepVariant | null;      // variante conseillée
   reason: string;                  // pourquoi cette proposition
   products: PrepProduct[];
+  free: PrepFree[];                // unités gratuites (produits de vente offerts) de la variante
   kit: { code: string; name: string }[];
+  options: Record<number, PrepOption>;   // proposition pour chaque variante (choix du BDC)
 }
+export interface PrepFree { product: any; code: string; name: string; ean: string; qty: number }
+export interface PrepOption { chosen: PrepVariant; reason: string; products: PrepProduct[]; free: PrepFree[] }
 export interface ProductTrend { product: any; code: string; name: string; n1: number; n: number; diff: number; amountN1: number; amountN: number }
 export interface RdvPrep {
   ca: { n: number | null; n1: number | null };
@@ -81,62 +85,102 @@ const snap = (p: any, q: number) => { const s = saleStep(p); return q <= 0 ? 0 :
 
 // ── Modèles de devis d'une campagne → produits mis en avant, kit, variantes ──
 export interface TemplateCtx { tLines: any[]; tlm: { discount?: string; freeType?: string }; pMap: Map<number, any>; templates: any[] }
-export interface CampaignBase { campaign: MeaCampaign; variants: PrepVariant[]; tpls: any[]; prodLines: any[]; kit: { code: string; name: string }[]; linesOf: (tpl: any) => any[]; isKit: (l: any) => boolean }
+export interface CampaignBase { campaign: MeaCampaign; variants: PrepVariant[]; tpls: any[]; prodLines: any[]; kit: { code: string; name: string }[]; linesOf: (tpl: any) => any[]; isKit: (l: any) => boolean; pMap: Map<number, any> }
 
 export const templatesOf = (templates: any[], c: MeaCampaign) =>
-  templates.filter(t => fold(String(t.name || "")).startsWith(fold(c.key)) && !/implantation/i.test(String(t.name)));
+  fold(c.key) ? templates.filter(t => fold(String(t.name || "")).startsWith(fold(c.key)) && !/implantation/i.test(String(t.name))) : [];
+
+// Produit de VENTE (référence en 1…) : seul repris sur le BDC. Les séparateurs
+// (« ----- Éléments de PLV … ----- », S01/S02), testeurs, PLV et kits ne le sont pas.
+export const isSaleProduct = (p: any) => /^1/.test(String(p?.default_code || "").trim()) && !/^\s*[-–—]{3,}/.test(String(p?.name || ""));
 
 export function campaignBase(ctx: TemplateCtx, c: MeaCampaign): CampaignBase {
   const tpls = templatesOf(ctx.templates, c);
   const linesOf = (tpl: any) => ctx.tLines.filter(l => (tpl.sale_order_template_line_ids || []).includes(l.id) && l.product_id && !l.display_type);
   const isKit = (l: any) => (ctx.tlm.discount ? Number(l[ctx.tlm.discount]) || 0 : 0) >= 99.99 || !!(ctx.tlm.freeType && l[ctx.tlm.freeType]);
+  const isSaleLine = (l: any) => isSaleProduct(ctx.pMap.get(m2oId(l.product_id)!));
   const variants: PrepVariant[] = tpls.map(tpl => ({
     id: tpl.id, name: String(tpl.name),
-    total: linesOf(tpl).filter(l => !isKit(l)).reduce((s, l) => s + (Number(l.product_uom_qty) || 0), 0),
+    total: linesOf(tpl).filter(l => !isKit(l) && isSaleLine(l)).reduce((s, l) => s + (Number(l.product_uom_qty) || 0), 0),
   })).sort((a, b) => a.total - b.total);
   const seen = new Set<number>(); const kitSeen = new Set<number>();
   const prodLines: any[] = []; const kit: { code: string; name: string }[] = [];
   for (const tpl of tpls) for (const l of linesOf(tpl)) {
     const pid = m2oId(l.product_id)!; const p = ctx.pMap.get(pid); if (!p) continue;
-    if (isKit(l)) { if (!kitSeen.has(pid)) { kitSeen.add(pid); kit.push({ code: String(p.default_code || ""), name: String(p.name) }); } continue; }
+    if (isKit(l)) { if (!kitSeen.has(pid) && !isSaleProduct(p) && !/^\s*[-–—]{3,}/.test(String(p.name || ""))) { kitSeen.add(pid); kit.push({ code: String(p.default_code || ""), name: String(p.name) }); } continue; }
+    if (!isSaleProduct(p)) continue;
     if (!seen.has(pid)) { seen.add(pid); prodLines.push(p); }
   }
-  return { campaign: c, variants, tpls, prodLines, kit, linesOf, isKit };
+  return { campaign: c, variants, tpls, prodLines, kit, linesOf, isKit, pMap: ctx.pMap };
 }
 
-// Proposition : variante la plus grande atteinte par les achats N-1 du client
-// (sinon la plus petite), répartie selon son mix d'achats N-1.
-export function propose(base: CampaignBase, n1Map: Map<number, { qty: number }>, nMap: Map<number, { qty: number }>, y: number) {
-  const { variants, tpls, prodLines, linesOf, isKit } = base;
-  const n1Total = prodLines.reduce((s, p) => s + (n1Map.get(p.id)?.qty || 0), 0);
-  const withTotal = variants.filter(v => v.total > 0);
-  const reach = withTotal.filter(v => v.total <= n1Total);
-  const chosen = reach.length ? reach[reach.length - 1] : withTotal[0] || null;
-  const chosenTpl = chosen ? tpls.find(tp => tp.id === chosen.id) : null;
-  const tplQty = (pid: number) => chosenTpl ? linesOf(chosenTpl).filter(l => m2oId(l.product_id) === pid && !isKit(l)).reduce((s, l) => s + (Number(l.product_uom_qty) || 0), 0) : 0;
-  const products: PrepProduct[] = prodLines.map(p => {
+// Proposition pour UNE variante (modèle de devis) : ses produits de vente,
+// quantités réparties selon le mix d'achats N-1 du client, et ses unités
+// gratuites (produits de vente remisés à 100 %).
+function proposeFor(base: CampaignBase, chosen: PrepVariant, n1Map: Map<number, { qty: number }>, nMap: Map<number, { qty: number }>, y: number, auto: boolean): PrepOption {
+  const { tpls, linesOf, isKit, pMap } = base;
+  const tpl = tpls.find(tp => tp.id === chosen.id);
+  const lines = tpl ? linesOf(tpl) : [];
+  const qtyBy = new Map<number, number>(); const order: number[] = [];
+  const freeBy = new Map<number, number>(); const freeOrder: number[] = [];
+  for (const l of lines) {
+    const pid = m2oId(l.product_id)!; const p = pMap.get(pid);
+    if (!p || !isSaleProduct(p)) continue;
+    const qn = Number(l.product_uom_qty) || 0;
+    if (isKit(l)) { if (!freeBy.has(pid)) freeOrder.push(pid); freeBy.set(pid, (freeBy.get(pid) || 0) + qn); }
+    else { if (!qtyBy.has(pid)) order.push(pid); qtyBy.set(pid, (qtyBy.get(pid) || 0) + qn); }
+  }
+  const products: PrepProduct[] = order.map(pid => {
+    const p = pMap.get(pid);
     const { code, name } = splitCode(String(p.name || ""));
     return {
       product: p, code: String(p.default_code || code), name: name.replace(/\u200b/g, ""), ean: String(p.barcode || ""),
-      price: Number(p.lst_price) || 0, ppc: ppcOf(p), templateQty: tplQty(p.id),
-      n1: n1Map.get(p.id)?.qty || 0, n: nMap.get(p.id)?.qty || 0, proposal: 0,
+      price: Number(p.lst_price) || 0, ppc: ppcOf(p), templateQty: qtyBy.get(pid) || 0,
+      n1: n1Map.get(pid)?.qty || 0, n: nMap.get(pid)?.qty || 0, proposal: 0,
     };
   });
+  const free: PrepFree[] = freeOrder.map(pid => {
+    const p = pMap.get(pid); const { code, name } = splitCode(String(p.name || ""));
+    return { product: p, code: String(p.default_code || code), name: name.replace(/\u200b/g, ""), ean: String(p.barcode || ""), qty: freeBy.get(pid) || 0 };
+  }).filter(f => f.qty > 0);
+  const n1Total = products.reduce((s, x) => s + x.n1, 0);
+  const vName = chosen.name.slice(chosen.name.lastIndexOf(" - ") + 3) || chosen.name;
   let reason: string;
-  if (chosen && n1Total > 0) {
+  if (n1Total > 0 && chosen.total > 0) {
     products.forEach(x => { x.proposal = snap(x.product, (chosen.total * x.n1) / n1Total); });
     let diff = chosen.total - products.reduce((s, x) => s + x.proposal, 0);
     const byN1 = [...products].sort((a, b) => b.n1 - a.n1);
     for (let i = 0; diff > 0 && i < 200; i++) { const x = byN1[i % byN1.length]; const st = saleStep(x.product); x.proposal += st; diff -= st; }
-    reason = `Variante « ${chosen.name.slice(chosen.name.lastIndexOf(" - ") + 3) || chosen.name} » (${chosen.total} u.) : le client a acheté ${Math.round(n1Total)} u. de ces produits en ${y - 1}, réparties selon ses achats.`;
-  } else if (chosen) {
+    reason = `${auto ? "Variante conseillée" : "Variante"} « ${vName} » (${chosen.total} u.)${auto ? ` : le client a acheté ${Math.round(n1Total)} u. de ces produits en ${y - 1} (année complète) — c'est le plus grand palier atteint par ses achats` : ""}. Quantités réparties selon ses achats ${y - 1}.`;
+  } else if (chosen.total > 0) {
     products.forEach(x => { x.proposal = x.templateQty; });
-    reason = `Pas d'achat de ces produits en ${y - 1} : quantités du palier d'entrée (${chosen.total} u.).`;
+    reason = `Variante « ${vName} » (${chosen.total} u.) : pas d'achat de ces produits en ${y - 1}, quantités du modèle.`;
   } else {
-    products.forEach(x => { x.proposal = snap(x.product, x.n1); });
-    reason = n1Total > 0 ? `Quantités achetées en ${y - 1} (pas de palier dans le modèle).` : `Pas d'historique ni de palier : à compléter.`;
+    products.forEach(x => { x.proposal = x.templateQty || snap(x.product, x.n1); });
+    reason = `Variante « ${vName} » : quantités libres, d'après les achats ${y - 1}.`;
   }
-  return { chosen, reason, products };
+  return { chosen, reason, products, free };
+}
+
+// Variante conseillée : la plus grande atteinte par les achats N-1 du client
+// sur ses produits (sinon la plus petite). Une proposition par variante.
+export function propose(base: CampaignBase, n1Map: Map<number, { qty: number }>, nMap: Map<number, { qty: number }>, y: number) {
+  const n1Of = (v: PrepVariant) => {
+    const tpl = base.tpls.find(tp => tp.id === v.id); if (!tpl) return 0;
+    const pids = new Set(base.linesOf(tpl).filter(l => !base.isKit(l)).map(l => m2oId(l.product_id)!));
+    return Array.from(pids).reduce((s, pid) => s + (n1Map.get(pid)?.qty || 0), 0);
+  };
+  const withTotal = base.variants.filter(v => v.total > 0);
+  const reach = withTotal.filter(v => v.total <= n1Of(v));
+  const chosen = reach.length ? reach[reach.length - 1] : withTotal[0] || base.variants[0] || null;
+  const options: Record<number, PrepOption> = {};
+  for (const v of base.variants) options[v.id] = proposeFor(base, v, n1Map, nMap, y, chosen?.id === v.id);
+  const opt = chosen ? options[chosen.id] : null;
+  return {
+    chosen, options,
+    reason: opt ? opt.reason : "Aucun modèle de devis pour cette offre.",
+    products: opt ? opt.products : [], free: opt ? opt.free : [],
+  };
 }
 
 // Contexte des modèles (lignes, articles) pour une liste de campagnes.
@@ -185,8 +229,8 @@ export async function loadBatchBdc(session: odoo.OdooSession, campaign: MeaCampa
   }
   return clients.map(c => {
     const h = byClient.get(c.id) || { n1: new Map(), n: new Map() };
-    const { chosen, reason, products } = propose(base, h.n1, h.n, y);
-    const pc: PrepCampaign = { campaign, status: "todo", orders: [], variantsTaken: [], plan: null, variants: base.variants, chosen, reason, products, kit: base.kit };
+    const { chosen, reason, products, free, options } = propose(base, h.n1, h.n, y);
+    const pc: PrepCampaign = { campaign, status: "todo", orders: [], variantsTaken: [], plan: null, variants: base.variants, chosen, reason, products, free, options, kit: base.kit };
     return { client: c, campaign: pc };
   });
 }
@@ -205,8 +249,8 @@ export async function loadRdvPrep(session: odoo.OdooSession, client: any): Promi
 
   // ── Campagnes du cycle + statut pour ce client ──
   const { campaigns, offersField, offerCampaign, offerRows } = await loadCampaigns(session);
-  const active = campaigns.filter(c => c.active);
-  const offerIds = active.flatMap(c => c.offers.map(o => o.id));
+  const valid = campaigns.filter(c => fold(c.key));
+  const offerIds = valid.flatMap(c => c.offers.map(o => o.id));
   const taken = new Map<string, { state: "pris" | "devis"; orders: string[]; variants: string[] }>();
   if (offerIds.length) {
     const orders: any[] = await odoo.searchRead(session, "sale.order",
@@ -224,6 +268,9 @@ export async function loadRdvPrep(session: odoo.OdooSession, client: any): Promi
     }
   }
   const { tracking, plans } = await clientPlans(session, client.id);
+  // Offres du cycle : MEA actives + toute MEA déjà faite / en devis par le
+  // client, même terminée (ex. « ON PACK 2026 » passée par l'AZUR).
+  const active = valid.filter(c => c.active || taken.has(c.key));
 
   // ── Modèles de devis des campagnes (produits mis en avant + kit) ──
   const { tLines, tlm, templates, pMap } = await loadTemplateCtx(session, active);
@@ -239,11 +286,11 @@ export async function loadRdvPrep(session: odoo.OdooSession, client: any): Promi
   const prepCampaigns: PrepCampaign[] = active.map(c => {
     const t = taken.get(c.key);
     const base = campaignBase(ctx, c);
-    const { chosen, reason, products: prods } = propose(base, n1Map, nMap, y);
+    const { chosen, reason, products: prods, free, options } = propose(base, n1Map, nMap, y);
     return {
       campaign: c, status: t?.state || "todo", orders: t?.orders || [], variantsTaken: t?.variants || [],
       plan: plans.get(planKey(c.key, client.id)) || null,
-      variants: base.variants, chosen, reason, products: prods, kit: base.kit,
+      variants: base.variants, chosen, reason, products: prods, free, options, kit: base.kit,
     };
   });
 
@@ -258,8 +305,17 @@ export async function loadRdvPrep(session: odoo.OdooSession, client: any): Promi
     const { code, name } = splitCode(a?.label || b?.label || "");
     return { product: { id }, code, name, n1: a?.qty || 0, n: b?.qty || 0, diff: (b?.qty || 0) - (a?.qty || 0), amountN1: a?.amount || 0, amountN: b?.amount || 0 };
   });
-  const drops = trends.filter(d => d.diff < 0 && d.amountN1 > 0).sort((p, q) => (p.amountN - p.amountN1) - (q.amountN - q.amountN1)).slice(0, 15);
-  const rises = trends.filter(d => d.diff > 0 && d.amountN > 0).sort((p, q) => (q.amountN - q.amountN1) - (p.amountN - p.amountN1)).slice(0, 15);
+  // Produits désactivés (éditions limitées, arrêts) : leur « baisse » n'en est
+  // pas une — exclus des baisses et des hausses.
+  const gone = new Set<number>();
+  if (ids.size) {
+    const inactive: any[] = await odoo.searchRead(session, "product.product", [["id", "in", Array.from(ids)], ["active", "=", false]], ["id"], 0).catch(() => []);
+    inactive.forEach(r => gone.add(r.id));
+  }
+  const limited = (t: ProductTrend) => gone.has(t.product.id) || /[ée]dition\s+limit|limited\s+edition|\bLE\b/i.test(t.name);
+  const kept = trends.filter(t => !limited(t));
+  const drops = kept.filter(d => d.diff < 0 && d.amountN1 > 0).sort((p, q) => (p.amountN - p.amountN1) - (q.amountN - q.amountN1)).slice(0, 15);
+  const rises = kept.filter(d => d.diff > 0 && d.amountN > 0).sort((p, q) => (q.amountN - q.amountN1) - (p.amountN - p.amountN1)).slice(0, 15);
 
   return {
     ca: { n: caF.n ? Number(cRow?.[caF.n]) || 0 : null, n1: caF.n1 ? Number(cRow?.[caF.n1]) || 0 : null },

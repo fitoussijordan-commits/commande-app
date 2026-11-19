@@ -6,6 +6,18 @@ export interface ChangelogEntry { date: string; items: string[] }
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    date: "2026-11-19",
+    items: [
+      "BDC Excel : seulement les produits de vente de l'offre + les « Unités gratuites » s'il y en a (plus de séparateurs S01/S02, PLV ni éléments de kit) ; sans quadrillage ; colonne « Achats N-1 (année complète) ».",
+      "BDC Excel : reflète la variante choisie (Retail / Institut, Essentiel / Premium…) — boutons de variante dans « Préparer le RDV », ★ = variante conseillée ; l'« Offre prévue » sélectionne la variante correspondante.",
+      "BDC Excel : bouton grisé « Pas de BDC pour cette offre » quand l'offre n'a pas de produit de vente (OPCA, offre personnalisable…).",
+      "Préparer le RDV : plus de ligne d'offre sans nom qui proposait tous les produits ; les MEA déjà faites ou en devis apparaissent même si la campagne est terminée (ex. ON PACK 2026).",
+      "Préparer le RDV → Évolution par produit : produits désactivés et éditions limitées exclus (fausses baisses).",
+      "Historique → Palmarès : recherche d'un produit (nom ou référence).",
+      "Historique → Gratuités : chaque type de gratuité s'ouvre sur le détail (produit, commande, date, quantité).",
+    ],
+  },
+  {
     date: "2026-11-13",
     items: [
       "Mes MEA : cartes compactes (nom, placés / clients, %), toutes visibles d'un coup d'œil ; une seule carte par MEA (plus de « MEA Noël » en double) ; tri des clients par CA N-1 (↓ / ↑) ou par nom.",

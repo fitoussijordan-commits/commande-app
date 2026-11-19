@@ -128,7 +128,8 @@ export default function MeaDashboard({ session, onClose, onOpenClient, onToast }
     setBdcBusy(true);
     try {
       const list = await loadBatchBdc(session, camp, rows);
-      const images = await loadBdcImages(session, list[0]?.campaign.products.map(p => p.product.id) || []);
+      if (!list.some(x => x.campaign.products.length)) { onToast("Pas de BDC pour cette offre (aucun produit de vente dans ses modèles)", "info"); setBdcBusy(false); return; }
+      const images = await loadBdcImages(session, Array.from(new Set(list.flatMap(x => x.campaign.products.map(p => p.product.id)))));
       const blob = await buildBdc(list.map(x => ({
         code: String(x.client.ref || ""), name: String(x.client.name || ""),
         discount: pricelistDiscount(Array.isArray(x.client.property_product_pricelist) ? x.client.property_product_pricelist[1] : ""),

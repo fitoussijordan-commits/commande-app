@@ -2,8 +2,8 @@
 // Bon de commande MEA au format des BDC de séminaire (« BDC MEA Sérum tarifs
 // 2026 ») : code et libellé client, remise client, une ligne par produit mis en
 // avant (code, désignation, EAN, PU HT, PPC TTC, achats N-1, proposition
-// commerciale, 2 dates de livraison, total remisé), puis les éléments du kit
-// offert. Les totaux restent des formules : le DC peut modifier les quantités.
+// commerciale, 2 dates de livraison, total remisé), puis les unités gratuites
+// (produits de vente offerts). Pas de séparateurs, PLV ni éléments de kit. Les totaux restent des formules : le DC peut modifier les quantités.
 // Plusieurs clients → un onglet par client dans le même fichier.
 import type { PrepCampaign } from "@/lib/rdvPrep";
 
@@ -65,7 +65,7 @@ export async function buildBdc(clients: BdcClient[], images?: BdcImages): Promis
 
   for (const cl of clients) {
     const c = cl.campaign;
-    const ws = wb.addWorksheet(sheetName(cl.name, used), { pageSetup: { orientation: "landscape", fitToPage: true, fitToWidth: 1, fitToHeight: 0 } });
+    const ws = wb.addWorksheet(sheetName(cl.name, used), { views: [{ showGridLines: false }], pageSetup: { orientation: "landscape", fitToPage: true, fitToWidth: 1, fitToHeight: 0 } });
     ws.columns = [
       { width: 20 }, { width: 12 }, { width: 44 }, { width: 16 }, { width: 10 }, { width: 10 },
       { width: 12 }, { width: 14 }, { width: 16 }, { width: 16 }, { width: 16 },
@@ -96,11 +96,11 @@ export async function buildBdc(clients: BdcClient[], images?: BdcImages): Promis
     ws.getCell("D5").value = "Remise client (%)"; ws.getCell("D5").font = { bold: true };
     ws.getCell("E5").value = cl.discount / 100; ws.getCell("E5").numFmt = "0%";
     ws.getCell("E5").fill = { type: "pattern", pattern: "solid", fgColor: { argb: TEAL_SOFT } };
-    ws.getCell("G5").value = c.chosen ? `Variante conseillée : ${c.chosen.name}` : "";
+    ws.getCell("G5").value = c.chosen ? `Offre : ${c.chosen.name}` : "";
     ws.getCell("G5").font = { italic: true, color: { argb: MUTED }, size: 9 };
 
     const head = ws.getRow(7);
-    head.values = ["", "Code article", "Désignation", "Code EAN", "PU HT €", "PPC TTC €", `Achats ${year - 1}`, "Proposition commerciale",
+    head.values = ["", "Code article", "Désignation", "Code EAN", "PU HT €", "PPC TTC €", `Achats ${year - 1}\n(année complète)`, "Proposition commerciale",
       "Date de livraison 1\n…… / …… / ……", "Date de livraison 2\n…… / …… / ……", "Total Remisé HT €"];
     head.height = 36;
     head.eachCell((cell, col) => {
@@ -148,14 +148,23 @@ export async function buildBdc(clients: BdcClient[], images?: BdcImages): Promis
     ws.getCell(`K${r}`).numFmt = EUR;
     r += 2;
 
-    if (c.kit.length) {
-      ws.getCell(`C${r}`).value = "Éléments kit offert";
+    // Unités gratuites de l'offre (produits de vente offerts), s'il y en a.
+    if (c.free.length) {
+      ws.getCell(`C${r}`).value = "Unités gratuites";
       ws.getCell(`C${r}`).font = { bold: true, color: { argb: TEAL } };
+      ws.getCell(`H${r}`).value = "Quantité"; ws.getCell(`H${r}`).font = { bold: true, color: { argb: MUTED }, size: 9 };
+      ws.getCell(`H${r}`).alignment = { horizontal: "center" };
       r++;
-      for (const k of c.kit) {
-        ws.getCell(`B${r}`).value = Number(k.code) || k.code;
-        ws.getCell(`C${r}`).value = k.name;
-        ws.getCell(`B${r}`).alignment = { horizontal: "center" };
+      for (const f of c.free) {
+        ws.getCell(`B${r}`).value = Number(f.code) || f.code;
+        ws.getCell(`C${r}`).value = f.name;
+        ws.getCell(`D${r}`).value = f.ean ? (Number(f.ean) || f.ean) : ""; ws.getCell(`D${r}`).numFmt = "0";
+        ws.getCell(`H${r}`).value = f.qty;
+        for (const col of ["B", "C", "D", "H"]) {
+          ws.getCell(`${col}${r}`).border = box;
+          ws.getCell(`${col}${r}`).alignment = { vertical: "middle", horizontal: col === "C" ? "left" : "center" };
+        }
+        ws.getCell(`H${r}`).font = { bold: true, color: { argb: TEAL } };
         r++;
       }
       r++;
