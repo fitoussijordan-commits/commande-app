@@ -1613,6 +1613,7 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
           giftItems={giftItems} setGiftItems={setGiftItems} freeTypes={freeTypes}
           eventDiscount={eventDiscount} setEventDiscount={setEventDiscount}
           shipping={directLogistics ? shippingPlan : null} onChangeExpedition={setWantedExpedition}
+          minShipDate={!directLogistics && offerShipDate ? shippingPlan?.expedition ?? null : null}
           onAddNote={addNote} onNoteText={setNoteText}
           groupDiscounts={groupDiscounts} setGroupDiscounts={setGroupDiscounts}
           orderType={orderType} setOrderType={setOrderType} offerIds={offerIds} setOfferIds={setOfferIds} autoOffers={autoOffers}
@@ -3489,7 +3490,7 @@ function ClientHistory({ session, client }: { session: odoo.OdooSession; client:
 // ═══════════════════════════════════════════════════════════════════════════
 // ÉTAPE 2 — Catalogue + Panier persistant
 // ═══════════════════════════════════════════════════════════════════════════
-function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submitting, note, setNote, client, priceItems, onToast, appliedPromos, giftItems, setGiftItems, freeTypes, eventDiscount, setEventDiscount, shipping, onChangeExpedition, onAddNote, onNoteText, groupDiscounts, setGroupDiscounts, orderType, setOrderType, offerIds, setOfferIds, autoOffers, onTemplateApplied, onRenameGroup, onClearCart }: {
+function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submitting, note, setNote, client, priceItems, onToast, appliedPromos, giftItems, setGiftItems, freeTypes, eventDiscount, setEventDiscount, shipping, minShipDate, onChangeExpedition, onAddNote, onNoteText, groupDiscounts, setGroupDiscounts, orderType, setOrderType, offerIds, setOfferIds, autoOffers, onTemplateApplied, onRenameGroup, onClearCart }: {
   onAddNote: (text: string, kind?: "line_note" | "line_section", group?: string) => void;
   onNoteText: (id: number, text: string) => void;
   groupDiscounts: Record<string, number>; setGroupDiscounts: React.Dispatch<React.SetStateAction<Record<string, number>>>;
@@ -3501,6 +3502,7 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
   onClearCart: (group?: string) => void;
   // Commande transmise directement à la logistique : dates prévues (sinon null).
   shipping?: ShippingPlan | null;
+  minShipDate?: Date | null;   // hors logistique directe : expédition au plus tôt (date des MEA)
   onChangeExpedition?: (d: Date | null) => void;
   session: odoo.OdooSession; cart: Record<number, CartItem>;
   onQtyChange: (p: any, q: number, price?: number, group?: string, keepZero?: boolean, regroup?: boolean) => void; freeItems: FreeItem[];
@@ -3825,6 +3827,11 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
       const ids = new Set<number>(t.sale_order_template_line_ids || []);
       const out: MeaParsed = { id: t.id, name: t.name, notes: [], items: [], gifts: [], paid: {}, total: 0, rows: [] };
       const pushNote = (n: { name: string; type: "line_note" | "line_section" }) => { out.notes.push(n); out.rows.push({ note: n }); };
+      // Palier et remise écrits dans le NOM quand les lignes du modèle sont à 0
+      // (« … - Essentiel (12 unités // 15% remise) ») : sans ça, aucune variante
+      // n'avait de palier et la remise ne changeait jamais en montant en quantité.
+      const nameUnits = Number((/(\d+)\s*unit[ée]s?/i.exec(String(t.name || "")) || [])[1]) || 0;
+      const namePct = Number(((/(\d+(?:[.,]\d+)?)\s*%\s*(?:de\s+)?remise/i.exec(String(t.name || "")) || [])[1] || "0").replace(",", ".")) || 0;
       for (const line of lines.filter((l: any) => ids.has(l.id))) {
         if (line.display_type === "line_section" || line.display_type === "line_note") {
           if (line.name) pushNote({ name: String(line.name), type: line.display_type });
@@ -3850,12 +3857,16 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
         const kit = !!(tlm.freeType && line[tlm.freeType]);
         const listPrice = applyPricelist(product.lst_price || 0, product.id, product.product_tmpl_id?.[0] || 0, priceItems, Math.max(1, qty));
         // Remise partielle du modèle appliquée au prix de la ligne ; testeurs à 0 €.
-        const price = tester ? 0 : discount > 0 ? Math.round(listPrice * (1 - discount / 100) * 100) / 100 : listPrice;
-        const kind: MeaLine["kind"] = qty === 0 ? "optional" : tester ? "tester" : kit ? "kit" : "paid";
+        const pct = discount > 0 ? discount : (qty === 0 && nameUnits ? namePct : 0);
+        const price = tester ? 0 : pct > 0 ? Math.round(listPrice * (1 - pct / 100) * 100) / 100 : listPrice;
+        // Ligne à 0 d'une variante à palier dans le nom : article de l'offre
+        // (compté pour le palier), pas une option facultative.
+        const kind: MeaLine["kind"] = tester ? "tester" : kit ? "kit" : qty === 0 && !nameUnits ? "optional" : "paid";
         const item: MeaLine = { product, qty, price, kind };
         out.items.push(item); out.rows.push({ item });
         if (kind === "paid") { out.paid[product.id] = (out.paid[product.id] || 0) + qty; out.total += qty; }
       }
+      if (out.total === 0 && nameUnits) out.total = nameUnits;
       return out;
     });
   };
@@ -3907,7 +3918,8 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
       }
       const gifts = v.gifts.reduce((s, g) => s + g.qty, 0);
       if (v.gifts.length) {
-        const cond = { label: template.name, required };
+        // Devis d'implantation : gratuités jamais suspendues (pas de palier).
+        const cond = { label: template.name, required: isImplantTemplate(template) ? {} : required };
         setGiftItems(prev => [...prev, ...v.gifts.map(g => ({ ...g, cond }))]);
       }
       if (template.internalNote || template.shipDate || template.offerCode) onTemplateApplied(template.name, { note: template.internalNote, shipDate: template.shipDate, code: template.offerCode });
@@ -3933,7 +3945,9 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
       if (!cur) continue;
       const allPaid = new Set(g.variants.flatMap(x => Object.keys(x.paid).map(Number)));
       // MEA retirée du panier : on arrête de la suivre.
-      if (!Array.from(allPaid).some(id => (cart[id]?.qty || 0) > 0)) {
+      // (Lignes encore au panier, même à 0 : la MEA est suivie — sinon une MEA à
+      // quantités libres perdait son suivi dès l'ajout et ne changeait plus de palier.)
+      if (!Array.from(allPaid).some(id => cart[id] !== undefined)) {
         setMeaVariants(prev => { const n = { ...prev }; delete n[key]; return n; });
         continue;
       }
@@ -3975,6 +3989,16 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cart, meaVariants]);
+
+  // Gratuités d'une MEA / d'un devis d'implantation dont plus aucune ligne n'est
+  // au panier (lignes supprimées une à une) : retirées aussi, au lieu de rester
+  // à supprimer une par une.
+  useEffect(() => {
+    const groups = new Set(Object.values(cart).map(i => i.group).filter(Boolean) as string[]);
+    if (giftItems.some(g => g.cond?.label && !groups.has(g.cond.label)))
+      setGiftItems(prev => prev.filter(g => !g.cond?.label || groups.has(g.cond.label)));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cart]);
 
   useEffect(() => { setSmartCats(loadSmartCats()); }, []);
 
@@ -4263,8 +4287,7 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
                 <div>{activeCatId === DEVIS_CAT_ID ? "Aucun devis d'implantation" : "Aucune MEA trouvée"}</div>
               </div>
             ) : (
-              dense ? (
-              /* Vue liste groupée : un bloc par MEA (couleur, titre), ses variantes dedans */
+              /* Vue groupée (Liste ET Cartes) : un bloc par MEA (couleur, titre), ses variantes dedans */
               (() => {
                 // Groupe = nom avant le premier « - » (« MEA Cures 2026 - Standard… » → « MEA Cures 2026 »).
                 const groupOf = (n: string) => { const i = n.indexOf(" - "); return (i > 0 ? n.slice(0, i) : n).trim(); };
@@ -4291,8 +4314,31 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
                               {g.items.length} variante{g.items.length > 1 ? "s" : ""}
                             </span>
                           </div>
-                          {/* Variantes */}
-                          {g.items.map((t, i) => {
+                          {/* Variantes : cartes (mode Cartes) ou lignes (mode Liste) */}
+                          {!dense && (
+                            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(230px, 1fr))", gap: 10, padding: 12 }}>
+                              {g.items.map(t => {
+                                const isApplying = applyingMea === t.id;
+                                const lineCount = t.sale_order_template_line_ids?.length || 0;
+                                const open = meaOpen === t.id;
+                                return (
+                                  <div key={t.id} style={{ background: C.white, borderRadius: 12, border: `1.5px solid ${open || isApplying ? accent : mid}`, padding: "12px 14px", display: "flex", flexWrap: "wrap" as const, alignItems: "center", gap: 10, ...(open ? { gridColumn: "1 / -1" } : {}) }}>
+                                    <div style={{ flex: 1, minWidth: 0 }}>
+                                      <div style={{ fontSize: 11, color: C.muted, marginBottom: 3 }}>{lineCount} produit{lineCount > 1 ? "s" : ""}</div>
+                                      <div style={{ fontSize: 13.5, fontWeight: 800, color: C.text, lineHeight: 1.3, overflowWrap: "anywhere" as const }} title={t.name}>{variantOf(String(t.name || ""))}</div>
+                                    </div>
+                                    {chevron(t)}
+                                    <button onClick={() => applyMeaTemplate(t)} disabled={isApplying}
+                                      style={{ flexShrink: 0, height: 36, padding: "0 14px", background: isApplying ? C.bg : accent, color: isApplying ? C.muted : "#fff", border: "none", borderRadius: 9, fontSize: 12.5, fontWeight: 800, cursor: isApplying ? "default" : "pointer", fontFamily: "inherit", whiteSpace: "nowrap" as const }}>
+                                      {isApplying ? "…" : "+ Ajouter"}
+                                    </button>
+                                    {open && <div style={{ flexBasis: "100%" }}>{meaContent(t.id)}</div>}
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          )}
+                          {dense && g.items.map((t, i) => {
                             const isApplying = applyingMea === t.id;
                             const lineCount = t.sale_order_template_line_ids?.length || 0;
                             return (
@@ -4316,33 +4362,6 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
                   </div>
                 );
               })()
-              ) : (
-              <div className="stagger" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))", gap: 10 }}>
-                {shownTemplates.map((t) => {
-                  const isApplying = applyingMea === t.id;
-                  const lineCount = t.sale_order_template_line_ids?.length || 0;
-                  return (
-                    <div key={t.id} style={{ minHeight: 90, background: C.white, borderRadius: 10, border: `1px solid ${isApplying || meaOpen === t.id ? C.teal : C.border}`, boxShadow: C.shadow, display: "flex", flexWrap: "wrap" as const, alignItems: "center", gap: 14, padding: "12px 16px", transition: "border-color 0.15s",
-                      ...(meaOpen === t.id ? { gridColumn: "1 / -1" } : {}) }}>
-                      {/* Infos */}
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ fontSize: 11, color: C.muted, marginBottom: 3 }}>{lineCount} produit{lineCount > 1 ? "s" : ""}</div>
-                        <div style={{ fontSize: 13, fontWeight: 700, color: C.text, lineHeight: 1.35, overflowWrap: "anywhere" as const }}>{t.name}</div>
-                      </div>
-                      {chevron(t)}
-                      {/* Bouton */}
-                      <button
-                        onClick={() => applyMeaTemplate(t)}
-                        disabled={isApplying}
-                        style={{ flexShrink: 0, padding: "8px 14px", background: isApplying ? C.bg : C.teal, color: isApplying ? C.muted : "#fff", border: `1px solid ${isApplying ? C.border : C.teal}`, borderRadius: 8, fontSize: 12, fontWeight: 700, cursor: isApplying ? "default" : "pointer", fontFamily: "inherit", whiteSpace: "nowrap" as const }}>
-                        {isApplying ? "…" : "+ Ajouter"}
-                      </button>
-                      {meaOpen === t.id && <div style={{ flexBasis: "100%" }}>{meaContent(t.id)}</div>}
-                    </div>
-                  );
-                })}
-              </div>
-              )
             )
           ) : activeCatId === FAV_CAT_ID && favLoading ? (
             <CatalogSkeleton dense={dense} count={8} />
@@ -4787,7 +4806,8 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
               style={{ width: "100%", display: "flex", alignItems: "center", gap: 6, padding: "4px 2px", marginBottom: recapOpen ? 10 : 8, background: "none", border: "none", cursor: "pointer", fontFamily: "inherit", color: "rgba(255,255,255,0.7)", fontSize: 11.5, fontWeight: 700, textAlign: "left" as const, minWidth: 0 }}>
               <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>
                 {[
-                  shipping && `Expé. ${shipping.expedition.toLocaleDateString("fr-FR", { day: "2-digit", month: "2-digit" })}`,
+                  shipping ? `Expé. ${shipping.expedition.toLocaleDateString("fr-FR", { day: "2-digit", month: "2-digit" })}`
+                    : minShipDate && `Expé. à partir du ${minShipDate.toLocaleDateString("fr-FR", { day: "2-digit", month: "2-digit" })}`,
                   meta?.typeField && (meta.typeOptions.find(o => o.value === orderType)?.label || "Type ?"),
                   allOffers.length > 0 && `${allOffers.length} offre${allOffers.length > 1 ? "s" : ""}`,
                   note.trim() && "Note",
@@ -4797,6 +4817,11 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6" style={{ flexShrink: 0, transform: recapOpen ? "rotate(180deg)" : "none", transition: "transform 0.2s" }}><path d="M6 15l6-6 6 6"/></svg>
             </button>
             {recapOpen && <div className="reveal">
+            {!shipping && minShipDate && (
+              <div style={{ marginBottom: 10, padding: "9px 10px", borderRadius: 10, background: "rgba(45,212,191,0.12)", color: "#5eead4", fontSize: 11.5, fontWeight: 700 }}>
+                Expédition à partir du {minShipDate.toLocaleDateString("fr-FR", { weekday: "short", day: "numeric", month: "short" })} (date de début d'expédition de la MEA)
+              </div>
+            )}
             {shipping && (() => {
               const d = (x: Date) => x.toLocaleDateString("fr-FR", { weekday: "short", day: "numeric", month: "short" });
               return (

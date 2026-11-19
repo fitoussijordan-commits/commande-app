@@ -8,6 +8,11 @@ export const CHANGELOG: ChangelogEntry[] = [
   {
     date: "2026-11-13",
     items: [
+      "MEA : vue groupée par MEA aussi en mode « Cartes » (avant : seulement en mode Liste).",
+      "MEA à quantités libres : le palier et la remise sont lus dans le nom (« 12 unités // 15% remise ») — la variante et la remise changent quand on dépasse le palier.",
+      "Devis d'implantation : les testeurs ne sont plus barrés (jamais suspendus).",
+      "Gratuités : retirées automatiquement quand toutes les lignes de leur MEA / devis sont supprimées.",
+      "Panier : date d'expédition visible dans le récap (« Expé. à partir du … ») quand une MEA impose une date de début d'expédition.",
       "Panier : les offres commandées s'affichent toujours avec leur nom (avant, une offre ancienne ou archivée apparaissait « Offre #208 »).",
       "MEA : affichées seulement entre leur « Date début » et leur « Date fin » ; commande passée avant la « Date début Expédition » → expédiée au plus tôt à cette date ; « Code offre » recopié dans la Note interne de la commande.",
       "Messages sur mes commandes : la commande s'ouvre avec les échanges en haut (le détail en dessous) ; bouton « ✎ Modifier » pour la charger dans le panier et la modifier / compléter.",
