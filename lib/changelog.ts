@@ -8,7 +8,7 @@ export const CHANGELOG: ChangelogEntry[] = [
   {
     date: "2026-11-23",
     items: [
-      "Articles sans photo : plus aucune image produit chargée (catalogue, gammes, fiche article, « Télécharger les données ») — l'app est plus rapide. Les photos du BDC Excel restent.",
+      "Articles sans photo : plus aucune image produit chargée ni d'emplacement photo (catalogue en grille et en liste, gammes, « Télécharger les données ») — l'app est plus rapide et les cartes plus compactes. Les photos du BDC Excel restent.",
       "Connexion : plus de champ « Base de données » — la base est déduite de l'URL Odoo (ex. https://wala-prod-test35-40892627.dev.odoo.com → wala-prod-test35-40892627).",
       "Base de test : étiquette rouge « BASE DE TEST » en haut de l'écran une fois connecté, dès que l'URL Odoo n'est pas la production (prod-main), et « [TEST] » dans le titre de l'onglet.",
       "Connexion : à la première connexion, l'URL Odoo et la base de données sont pré-remplies (base de test wala-prod-test35).",

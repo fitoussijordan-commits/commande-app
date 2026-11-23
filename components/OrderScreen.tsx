@@ -4292,11 +4292,11 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
             <button key={cat.id} onClick={() => setActiveCatId(cat.id)}
               style={{ width: "100%", padding: "10px 10px", background: active ? C.tealSoft : "transparent", border: "none", borderLeft: `3px solid ${active ? C.teal : "transparent"}`, cursor: "pointer", textAlign: "left" as const, fontFamily: "inherit", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6, transition: "all 0.1s" }}>
               <span style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: active ? 700 : 400, color: active ? C.tealDark : C.textSec }}>
-                <span style={{ position: "relative" as const, width: 34, height: 34, borderRadius: 9, background: "#fff", border: `1px solid ${active ? C.tealMid : C.border}`, display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden", flexShrink: 0 }}>
+                {SHOW_PRODUCT_IMAGES && <span style={{ position: "relative" as const, width: 34, height: 34, borderRadius: 9, background: "#fff", border: `1px solid ${active ? C.tealMid : C.border}`, display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden", flexShrink: 0 }}>
                   {/* Initiale de la gamme en fond : visible tant que l'image manque */}
                   <span style={{ position: "absolute" as const, fontSize: 14, fontWeight: 800, color: active ? C.teal : C.muted }}>{String(cat.label || "").charAt(0).toUpperCase()}</span>
                   {hero && <ProductImage id={hero.id} networkUrl={imgUrl(hero.id)} style={{ width: 30, height: 30, objectFit: "contain", position: "relative" as const, background: "#fff" }} />}
-                </span>
+                </span>}
                 {cat.label}
               </span>
               {count > 0 && <span style={{ fontSize: 10, fontWeight: 700, color: active ? C.teal : C.muted, background: active ? C.tealMid : C.bg, borderRadius: 5, padding: "1px 5px", flexShrink: 0 }}>{count}</span>}
@@ -4509,10 +4509,10 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
                 const gifted = giftQtyById.get(p.id);
                 return (
                   <div key={p.id} style={{ display: "flex", flexWrap: "wrap" as const, rowGap: 4, alignItems: "center", gap: 10, padding: "6px 10px 6px 8px", borderTop: i ? `1px solid ${C.border}` : "none", borderLeft: `4px solid ${qty > 0 ? C.teal : "transparent"}`, background: qty > 0 ? C.tealSoft : C.white, transition: "background-color 0.25s ease, border-color 0.25s ease" }}>
-                    <div onClick={() => openZoom(p)} title={SHOW_PRODUCT_IMAGES ? "Agrandir l'image" : "Détails de l'article"} style={{ width: 42, height: 42, flexShrink: 0, borderRadius: 9, background: C.bg, display: "flex", alignItems: "center", justifyContent: "center", cursor: "zoom-in", position: "relative" as const, overflow: "hidden" }}>
+                    {SHOW_PRODUCT_IMAGES && <div onClick={() => openZoom(p)} title="Agrandir l'image" style={{ width: 42, height: 42, flexShrink: 0, borderRadius: 9, background: C.bg, display: "flex", alignItems: "center", justifyContent: "center", cursor: "zoom-in", position: "relative" as const, overflow: "hidden" }}>
                       <div style={{ position: "absolute" }}><Icon name="package" size={18} color={C.border} /></div>
                       <ProductImage id={p.id} networkUrl={imgUrl(p.id)} style={{ height: 38, objectFit: "contain", position: "relative" as const, zIndex: 1 }} />
-                    </div>
+                    </div>}
                     {/* Catalogue étroit (portrait) : le nom garde sa ligne, prix et quantité passent dessous */}
                     <div style={{ flex: "1 1 190px", minWidth: 0 }}>
                       <div style={{ fontSize: 13, fontWeight: 600, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>{p.name}</div>
@@ -4556,7 +4556,8 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
                 const hasDiscount = priceItems.length > 0 && Math.abs(clientPrice - (p.lst_price || 0)) > 0.01;
                 return (
                   <div key={p.id} style={{ background: C.white, borderRadius: 14, overflow: "hidden", border: `2px solid ${qty > 0 ? C.teal : isFree ? C.green : C.border}`, boxShadow: qty > 0 ? `0 0 0 3px ${C.tealMid}` : C.shadow, transition: "border-color 0.25s ease, box-shadow 0.25s ease" }}>
-                    <div onClick={() => openZoom(p)} title={SHOW_PRODUCT_IMAGES ? "Agrandir l'image" : "Détails de l'article"} style={{ height: 80, background: C.bg, display: "flex", alignItems: "center", justifyContent: "center", position: "relative" as const, cursor: "zoom-in" }}>
+                    {SHOW_PRODUCT_IMAGES ? (
+                    <div onClick={() => openZoom(p)} title="Agrandir l'image" style={{ height: 80, background: C.bg, display: "flex", alignItems: "center", justifyContent: "center", position: "relative" as const, cursor: "zoom-in" }}>
                       <div style={{ position: "absolute" }}><Icon name="package" size={30} color={C.border} /></div>
                       <ProductImage id={p.id} networkUrl={imgUrl(p.id)} style={{ height: 72, objectFit: "contain", position: "relative" as const, zIndex: 1 }} />
                       <div style={{ position: "absolute", bottom: 4, right: 4, background: "rgba(255,255,255,0.85)", borderRadius: 6, width: 20, height: 20, display: "flex", alignItems: "center", justifyContent: "center" }}>
@@ -4571,6 +4572,18 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
                         </div>
                       )}
                     </div>
+                    ) : (isFree || Array.isArray(p.x_offre_produit_id)) && (
+                      // Sans photo : seuls les badges « OFFERT » et offre restent, en tête de carte.
+                      // (La quantité est déjà dans le stepper et la bordure de la carte.)
+                      <div style={{ display: "flex", gap: 4, padding: "8px 10px 0", minWidth: 0 }}>
+                        {isFree && <div className="badge-in" style={{ flexShrink: 0, background: C.green, color: "#fff", fontSize: 9, fontWeight: 700, borderRadius: 5, padding: "2px 5px" }}>OFFERT</div>}
+                        {Array.isArray(p.x_offre_produit_id) && (
+                          <div title={`Offre : ${p.x_offre_produit_id[1]}`} style={{ flex: 1, minWidth: 0, background: C.orange, color: "#fff", fontSize: 9.5, fontWeight: 800, borderRadius: 5, padding: "2px 6px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const, textAlign: "center" as const }}>
+                            {p.x_offre_produit_id[1]}
+                          </div>
+                        )}
+                      </div>
+                    )}
                     <div style={{ padding: "8px 10px 10px" }}>
                       <div style={{ fontSize: 10.5, color: C.textSec, fontFamily: "monospace", marginBottom: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>{p.default_code}{p.barcode ? ` · ${p.barcode}` : ""}</div>
                       <div style={{ fontSize: 12.5, fontWeight: 600, color: C.text, lineHeight: 1.3, height: 33, overflow: "hidden" }}>{p.name}</div>
