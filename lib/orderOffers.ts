@@ -112,21 +112,37 @@ export async function offerNames(session: odoo.OdooSession, orders: any[], meta:
 // Offres que l'on peut cocher sur une commande (champ « Offres commandées »).
 export async function offerOptions(session: odoo.OdooSession, meta: OrderMeta): Promise<{ id: number; name: string }[]> {
   if (!meta.offersRelation) return [];
-  try {
-    // Toutes les offres (plus de plafond à 500 : une offre ancienne restait
-    // sans nom et s'affichait « Offre #208 »).
-    const rows = await odoo.searchRead(session, meta.offersRelation, [], ["display_name"], 0, "id desc");
-    return rows.map((r: any) => ({ id: r.id, name: String(r.display_name || "") }));
-  } catch { return []; }
+  const rel = meta.offersRelation;
+  const map = (rows: any[]) => rows.map((r: any) => ({ id: r.id, name: String(r.display_name || r.x_name || r.name || "") }));
+  // Toutes les offres (plus de plafond : une offre ancienne restait sans nom).
+  // Si la lecture complète échoue (droits, délai…), on se replie sur les 1 000
+  // plus récentes, puis sur le champ nom brut.
+  try { return map(await odoo.searchRead(session, rel, [], ["display_name"], 0, "id desc")); }
+  catch (e) { console.warn("offerOptions", e); }
+  try { return map(await odoo.searchRead(session, rel, [], ["display_name"], 1000, "id desc")); }
+  catch (e) { console.warn("offerOptions (1000)", e); }
+  for (const f of ["x_name", "name"]) {
+    try { return map(await odoo.searchRead(session, rel, [], [f], 1000, "id desc")); } catch { /* champ suivant */ }
+  }
+  return [];
 }
 
-// Noms d'offres absentes de la liste (archivées) : affichées par leur vrai nom.
+// Noms d'offres absentes de la liste (archivées…) : affichées par leur vrai nom.
+// read() par id ne filtre pas sur « actif », name_search en dernier recours.
 export async function offerNamesByIds(session: odoo.OdooSession, meta: OrderMeta, ids: number[]): Promise<{ id: number; name: string }[]> {
   if (!meta.offersRelation || !ids.length) return [];
+  const rel = meta.offersRelation;
+  for (const fields of [["display_name"], ["x_name"], ["name"]]) {
+    try {
+      const rows: any[] = await odoo.callMethod(session, rel, "read", [ids, fields]);
+      const out = rows.map((r: any) => ({ id: r.id, name: String(r[fields[0]] || "") })).filter(r => r.name);
+      if (out.length) return out;
+    } catch (e) { console.warn("offerNamesByIds", fields, e); }
+  }
   try {
-    const f: Record<string, any> = await odoo.callMethod(session, meta.offersRelation, "fields_get", [], { attributes: ["type"] });
+    const f: Record<string, any> = await odoo.callMethod(session, rel, "fields_get", [], { attributes: ["type"] });
     const act = ["active", "x_active"].find(k => f[k]?.type === "boolean");
-    const rows = await odoo.searchRead(session, meta.offersRelation,
+    const rows = await odoo.searchRead(session, rel,
       [["id", "in", ids], ...(act ? [[act, "in", [true, false]]] : [])], ["display_name"], ids.length);
     return rows.map((r: any) => ({ id: r.id, name: String(r.display_name || "") }));
   } catch { return []; }

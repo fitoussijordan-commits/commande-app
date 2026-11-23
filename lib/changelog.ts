@@ -6,6 +6,13 @@ export interface ChangelogEntry { date: string; items: string[] }
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    date: "2026-11-23",
+    items: [
+      "Panier : la date de début d'expédition de la MEA est gardée quand la MEA change de variante (ex. passage en « Standard ») et quand on reprend un brouillon — avant, elle disparaissait.",
+      "Panier : noms des offres commandées relus autrement quand la liste complète ne se charge pas (plus de « Offre n° 208 »).",
+    ],
+  },
+  {
     date: "2026-11-19",
     items: [
       "BDC Excel : seulement les produits de vente de l'offre + les « Unités gratuites » s'il y en a (plus de séparateurs S01/S02, PLV ni éléments de kit) ; sans quadrillage ; colonne « Achats N-1 (année complète) ».",

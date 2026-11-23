@@ -262,6 +262,10 @@ interface Draft {
   cart: Record<number, CartItem>;
   note: string;
   savedAt: number; // timestamp
+  // Infos des MEA du panier (date de début d'expédition, note, code offre) et
+  // offres cochées : sans elles, un brouillon repris perdait la date d'expé.
+  templateInfo?: Record<string, { note?: string; shipDate?: string; code?: string }>;
+  offerIds?: number[];
 }
 
 // Brouillons stockés par client (clientId → Draft) — changer de client n'écrase plus rien.
@@ -778,10 +782,10 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
   // stocké par client, ne touche jamais aux brouillons des autres clients.
   useEffect(() => {
     if (client && Object.keys(cart).length > 0) {
-      saveDraftForClient(client.id, { client, cart, note, savedAt: Date.now() });
+      saveDraftForClient(client.id, { client, cart, note, savedAt: Date.now(), templateInfo, offerIds });
       refreshPendingDrafts();
     }
-  }, [cart, client, note, refreshPendingDrafts]);
+  }, [cart, client, note, templateInfo, offerIds, refreshPendingDrafts]);
 
   useEffect(() => { setFreeItems(HOMEMADE_RULES_ENABLED ? computeFreeItems(cart, rules) : []); }, [cart, rules]);
 
@@ -837,6 +841,7 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
   const acceptResumePrompt = () => {
     if (!resumePrompt) return;
     setCart(resumePrompt.cart);
+    setTemplateInfo(resumePrompt.templateInfo || {}); setOfferIds(resumePrompt.offerIds || []);
     setNote(resumePrompt.note || "");
     setResumePrompt(null);
     onToast("Brouillon restauré", "success");
@@ -852,6 +857,7 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
   const resumeDraftFromPanel = (d: Draft) => {
     setClient(d.client);
     setCart(d.cart);
+    setTemplateInfo(d.templateInfo || {}); setOfferIds(d.offerIds || []);
     setNote(d.note || "");
     setResumePrompt(null);
     setAppliedPromos({});
@@ -1622,6 +1628,9 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
             // Variante de MEA changée : les lignes (et réglages) du groupe suivent le nouveau nom.
             setCart(prev => Object.fromEntries(Object.entries(prev).map(([k, i]) => [k, i.group === from ? { ...i, group: to } : i])) as Record<number, CartItem>);
             setGroupDiscounts(prev => from in prev ? (({ [from]: v, ...rest }) => ({ ...rest, [to]: v }))(prev) : prev);
+            // … et la date de début d'expédition / note / code offre de la MEA aussi
+            // (sinon la date d'expé disparaissait au changement de variante).
+            setTemplateInfo(prev => from in prev && !(to in prev) ? (({ [from]: v, ...rest }) => ({ ...rest, [to]: v }))(prev) : prev);
           }} />
       )}
       </div>
@@ -4017,6 +4026,8 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
         return newOffer && !n.includes(newOffer.id) ? [...n, newOffer.id] : n;
       });
       onRenameGroup(cur.name, best.name);
+      const bt = meaTemplates.find((t: any) => t.id === best.id);
+      if (bt && (bt.internalNote || bt.shipDate || bt.offerCode)) onTemplateApplied(best.name, { note: bt.internalNote, shipDate: bt.shipDate, code: bt.offerCode });
       setMeaVariants(prev => ({ ...prev, [key]: { ...g, current: best.id } }));
       onToast(`MEA passée en « ${best.name} » (${inCart(best)} articles)`, "info");
     }
@@ -4902,7 +4913,7 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
                     ))}
                     {offerIds.map(id => (
                       <span key={id} style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "3px 4px 3px 8px", borderRadius: 999, background: "rgba(251,146,60,0.18)", color: "#fdba74", fontSize: 11, fontWeight: 700 }}>
-                        {offers.find(o => o.id === id)?.name || `Offre n° ${id} (nom introuvable)`}
+                        {offers.find(o => o.id === id)?.name || `Offre n° ${id} (archivée ou non lisible)`}
                         <button onClick={() => setOfferIds(prev => prev.filter(x => x !== id))} style={{ background: "none", border: "none", color: "#fdba74", cursor: "pointer", fontSize: 11, padding: "0 2px" }}>✕</button>
                       </span>
                     ))}
