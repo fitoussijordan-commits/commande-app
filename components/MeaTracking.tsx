@@ -49,6 +49,14 @@ export default function MeaDashboard({ session, onClose, onOpenClient, onToast }
   onToast: (msg: string, type?: "success" | "error" | "info") => void;
 }) {
   const [data, setData] = useState<MeaData | null>(null);
+  const [info, setInfo] = useState<string | null>(null);   // carte MEA dont le détail (ⓘ) est ouvert
+  // Un tap ailleurs referme le détail.
+  useEffect(() => {
+    if (!info) return;
+    const close = () => setInfo(null);
+    const t = setTimeout(() => document.addEventListener("click", close), 0);
+    return () => { clearTimeout(t); document.removeEventListener("click", close); };
+  }, [info]);
   const [visits, setVisits] = useState<Map<number, Date>>(new Map());
   const [error, setError] = useState("");
   const [key, setKey] = useState("");
@@ -190,12 +198,37 @@ export default function MeaDashboard({ session, onClose, onOpenClient, onToast }
                 const pct = total ? Math.round((took / total) * 100) : 0;
                 const sel = c.key === key;
                 return (
-                  <button key={c.key} onClick={() => setKey(c.key)}
-                    title={`${c.key} — variantes : ${c.offers.map(o => o.variant).join(", ")}`}
-                    style={{ textAlign: "left" as const, padding: "9px 12px", borderRadius: 12, cursor: "pointer", fontFamily: "inherit",
+                  <div key={c.key} role="button" tabIndex={0} onClick={() => setKey(c.key)}
+                    onKeyDown={e => { if (e.key === "Enter") setKey(c.key); }}
+                    style={{ position: "relative" as const, textAlign: "left" as const, padding: "9px 12px", borderRadius: 12, cursor: "pointer", fontFamily: "inherit",
                       border: `2px solid ${sel ? C.teal : C.border}`, background: sel ? C.tealSoft : C.white }}>
                     {/* En un coup d'œil : nom, placés / clients, % de placement */}
-                    <div style={{ fontSize: 13, fontWeight: 800, color: C.text, lineHeight: 1.25, minHeight: 32, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" as const, overflow: "hidden" }}>{c.key.replace(/^MEA\s+/i, "")}</div>
+                    <div style={{ display: "flex", alignItems: "flex-start", gap: 6 }}>
+                      <div style={{ flex: 1, minWidth: 0, fontSize: 13, fontWeight: 800, color: C.text, lineHeight: 1.25, minHeight: 32, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" as const, overflow: "hidden" }}>{c.key.replace(/^MEA\s+/i, "")}</div>
+                      {/* ⓘ : nom complet et variantes de la MEA */}
+                      <button onClick={e => { e.stopPropagation(); setInfo(info === c.key ? null : c.key); }} aria-label="Détail de la MEA"
+                        style={{ flexShrink: 0, width: 20, height: 20, borderRadius: 999, border: `1.5px solid ${info === c.key ? C.teal : C.muted}`, background: info === c.key ? C.teal : "transparent", color: info === c.key ? "#fff" : C.muted, fontSize: 11, fontWeight: 800, fontStyle: "italic", fontFamily: "Georgia, serif", lineHeight: 1, cursor: "pointer", padding: 0 }}>i</button>
+                    </div>
+                    {info === c.key && (() => {
+                      const byVariant = new Map<string, number>();
+                      data.taken.get(c.key)?.forEach(t => { if (t.state === "pris") t.offers.forEach(v => byVariant.set(v, (byVariant.get(v) || 0) + 1)); });
+                      const variants = Array.from(new Set(c.offers.map(o => o.variant)));
+                      return (
+                        <div onClick={e => e.stopPropagation()} className="reveal"
+                          style={{ position: "absolute" as const, zIndex: 20, top: "100%", left: 0, marginTop: 6, width: 280, maxWidth: "80vw", background: C.white, border: `1px solid ${C.border}`, borderRadius: 12, boxShadow: "0 12px 30px rgba(15,23,42,0.18)", padding: "10px 12px", cursor: "default" }}>
+                          <div style={{ fontSize: 13, fontWeight: 800, color: C.text, lineHeight: 1.3 }}>{c.key}</div>
+                          <div style={{ fontSize: 11, color: c.active ? C.tealDark : C.muted, fontWeight: 700, marginTop: 2 }}>{c.active ? "Active" : "Terminée"} · {variants.length} variante{variants.length > 1 ? "s" : ""}</div>
+                          <div style={{ marginTop: 6, display: "flex", flexDirection: "column" as const, gap: 3 }}>
+                            {variants.map(v => (
+                              <div key={v} style={{ display: "flex", gap: 8, fontSize: 12, color: C.textSec }}>
+                                <span style={{ flex: 1, minWidth: 0 }}>• {v}</span>
+                                {byVariant.get(v) ? <span style={{ fontWeight: 800, color: C.tealDark, whiteSpace: "nowrap" as const }}>{byVariant.get(v)} pris</span> : null}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      );
+                    })()}
                     <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginTop: 4 }}>
                       <span style={{ fontSize: 13, fontWeight: 800, color: C.textSec }}>{took}<span style={{ color: C.muted, fontWeight: 600 }}>/{total}</span></span>
                       <span style={{ fontSize: 17, fontWeight: 800, color: C.tealDark }}>{pct}%</span>
@@ -203,7 +236,7 @@ export default function MeaDashboard({ session, onClose, onOpenClient, onToast }
                     <div style={{ height: 4, borderRadius: 2, background: "rgba(15,23,42,0.07)", marginTop: 6, overflow: "hidden" }}>
                       <div style={{ width: `${pct}%`, height: "100%", background: C.teal }} />
                     </div>
-                  </button>
+                  </div>
                 );
               })}
             </div>

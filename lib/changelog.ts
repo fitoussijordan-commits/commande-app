@@ -8,6 +8,7 @@ export const CHANGELOG: ChangelogEntry[] = [
   {
     date: "2026-11-23",
     items: [
+      "Mes MEA : petit ⓘ sur chaque carte → nom complet de la MEA, active / terminée, liste de ses variantes et nombre de clients qui ont pris chacune.",
       "Panier : liste déroulante sur le titre d'une MEA qui a plusieurs variantes (Essentiel, Standard, Premium…) pour passer directement à une autre — la MEA est remplacée par la variante choisie.",
       "Panier : la date de début d'expédition de la MEA est gardée quand la MEA change de variante (ex. passage en « Standard ») et quand on reprend un brouillon — avant, elle disparaissait.",
       "Offres commandées : quand l'article MEA porte déjà son offre, plus aucune offre n'est cochée en plus par rapprochement de nom (fini l'offre n° 208 en double).",
