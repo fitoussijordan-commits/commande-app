@@ -28,6 +28,23 @@ const STAT: Record<Status, { label: string; color: string; soft: string }> = {
   ne: { label: "Non éligibles", color: "#94a3b8", soft: "#f1f5f9" },
 };
 
+// Clients « indirects » : étiquette contenant « indirect » sur la fiche client,
+// ou sur au moins une de leurs commandes (ex. « CA indirect », « CA Indirect Mlle Bio »).
+async function loadIndirect(session: odoo.OdooSession, ids: number[]): Promise<Set<number>> {
+  const out = new Set<number>();
+  if (!ids.length) return out;
+  const byTag: any[] = await odoo.searchRead(session, "res.partner", [["id", "in", ids], ["category_id.name", "ilike", "indirect"]], ["id"], 0).catch(() => []);
+  byTag.forEach(p => out.add(p.id));
+  const orders: any[] = await odoo.searchRead(session, "sale.order",
+    [["partner_id.commercial_partner_id", "in", ids], ["tag_ids.name", "ilike", "indirect"], ["state", "!=", "cancel"]], ["partner_id"], 0).catch(() => []);
+  const pids = Array.from(new Set(orders.map(o => o.partner_id?.[0]).filter(Boolean))) as number[];
+  if (pids.length) {
+    const parts: any[] = await odoo.searchRead(session, "res.partner", [["id", "in", pids]], ["commercial_partner_id"], 0).catch(() => []);
+    parts.forEach(p => out.add(p.commercial_partner_id?.[0] || p.id));
+  }
+  return out;
+}
+
 // Prochain RDV (non annulé) de chaque client, sur les 6 mois à venir.
 async function loadNextVisits(session: odoo.OdooSession): Promise<Map<number, Date>> {
   const now = new Date(), to = new Date(); to.setMonth(to.getMonth() + 6);
@@ -49,7 +66,19 @@ export default function MeaDashboard({ session, onClose, onOpenClient, onToast }
   onOpenClient: (c: any) => void;
   onToast: (msg: string, type?: "success" | "error" | "info") => void;
 }) {
-  const [data, setData] = useState<MeaData | null>(null);
+  const [raw, setData] = useState<MeaData | null>(null);
+  // Clients directs / indirects : étiquette « CA indirect » (fiche client ou
+  // commandes). Le filtre s'applique à tout l'écran (cartes, % et liste).
+  const [kind, setKind] = useState<"all" | "direct" | "indirect">("all");
+  const [indirect, setIndirect] = useState<Set<number> | null>(null);
+  useEffect(() => {
+    if (!raw || indirect) return;
+    let alive = true;
+    loadIndirect(session, raw.clients.map(c => c.id)).then(s => { if (alive) setIndirect(s); }).catch(() => { if (alive) setIndirect(new Set()); });
+    return () => { alive = false; };
+  }, [raw, indirect, session]);
+  const data = useMemo(() => !raw || kind === "all" || !indirect ? raw
+    : { ...raw, clients: raw.clients.filter(c => indirect.has(c.id) === (kind === "indirect")) }, [raw, kind, indirect]);
   const [info, setInfo] = useState<string | null>(null);   // carte MEA dont le détail (ⓘ) est ouvert
   // Un tap ailleurs referme le détail.
   useEffect(() => {
@@ -73,7 +102,7 @@ export default function MeaDashboard({ session, onClose, onOpenClient, onToast }
 
   const reloadVisits = useCallback(() => { loadNextVisits(session).then(setVisits); }, [session]);
   useEffect(() => {
-    setData(null); setError("");
+    setData(null); setError(""); setIndirect(null);
     loadMeaData(session, mine)
       .then(d => {
         setData(d); setKey(k => d.campaigns.some(c => c.key === k && (showAll || c.active)) ? k : (d.campaigns.find(c => showAll || c.active) || d.campaigns[0])?.key || "");
@@ -280,6 +309,12 @@ export default function MeaDashboard({ session, onClose, onOpenClient, onToast }
           {data && camp && <>
             <div style={{ display: "grid", gridTemplateColumns: GRID, gap: 12, padding: "10px 14px 8px", fontSize: 11, fontWeight: 800, color: C.muted, textTransform: "uppercase" as const, letterSpacing: "0.05em" }}>
               <span style={{ display: "flex", alignItems: "center", gap: 6 }}>Client
+                <select value={kind} onChange={e => setKind(e.target.value as any)} title="Clients directs / indirects (étiquette « CA indirect »)"
+                  style={{ height: 24, borderRadius: 6, border: `1px solid ${kind !== "all" ? C.teal : C.border}`, background: kind !== "all" ? C.tealSoft : C.white, fontSize: 11, fontWeight: 700, color: kind !== "all" ? C.tealDark : C.textSec, fontFamily: "inherit", textTransform: "none" as const }}>
+                  <option value="all">Directs + indirects</option>
+                  <option value="direct">Directs</option>
+                  <option value="indirect">Indirects{indirect ? ` (${indirect.size})` : ""}</option>
+                </select>
                 <select value={sortBy} onChange={e => setSortBy(e.target.value as any)} title="Trier les clients"
                   style={{ height: 24, borderRadius: 6, border: `1px solid ${C.border}`, background: C.white, fontSize: 11, fontWeight: 700, color: C.textSec, fontFamily: "inherit", textTransform: "none" as const }}>
                   <option value="ca_desc">CA N-1 ↓</option>
