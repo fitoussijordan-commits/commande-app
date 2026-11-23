@@ -79,7 +79,13 @@ export async function deliveredMoves(session: odoo.OdooSession, partnerDomain: a
     _qtyField = f.quantity_done ? "quantity_done" : f.quantity ? "quantity" : "product_uom_qty";
   }
   const qf = _qtyField;
-  const base: any[] = [["state", "=", "done"], ["date", ">=", `${from} 00:00:00`], ["date", "<=", `${to} 23:59:59`], ["product_id", "!=", false], ...partnerDomain];
+  // Client = destinataire de la livraison OU client de la commande d'origine :
+  // une commande indirecte (au nom de la pharmacie) est livrée au grossiste,
+  // ses mouvements ne portent pas la pharmacie comme destinataire.
+  const who = partnerDomain.length === 1 && Array.isArray(partnerDomain[0])
+    ? ["|", partnerDomain[0], [`sale_line_id.order_id.${String(partnerDomain[0][0]).replace(/^picking_id\./, "")}`, partnerDomain[0][1], partnerDomain[0][2]]]
+    : partnerDomain;
+  const base: any[] = [["state", "=", "done"], ["date", ">=", `${from} 00:00:00`], ["date", "<=", `${to} 23:59:59`], ["product_id", "!=", false], ...who];
   if (productIds) base.push(["product_id", "in", productIds]);
   const fields = ["product_id", qf, "sale_line_id", "picking_id", "date"];
   const [out, back] = await Promise.all([
@@ -93,8 +99,8 @@ export async function deliveredMoves(session: odoo.OdooSession, partnerDomain: a
   const lineIds = Array.from(new Set(moves.map(x => m2oId(x.m.sale_line_id)).filter(Boolean))) as number[];
   let lines: any[] = [];
   if (lineIds.length) {
-    lines = await odoo.searchRead(session, "sale.order.line", [["id", "in", lineIds]], ["id", "product_id", "price_unit", "discount", "type_gratuit"], 0)
-      .catch(() => odoo.searchRead(session, "sale.order.line", [["id", "in", lineIds]], ["id", "product_id", "price_unit", "discount"], 0));
+    lines = await odoo.searchRead(session, "sale.order.line", [["id", "in", lineIds]], ["id", "product_id", "price_unit", "discount", "order_partner_id", "type_gratuit"], 0)
+      .catch(() => odoo.searchRead(session, "sale.order.line", [["id", "in", lineIds]], ["id", "product_id", "price_unit", "discount", "order_partner_id"], 0));
   }
   const lineMap = new Map<number, any>(lines.map(l => [l.id, l]));
   const isGift = (l: any) => !!l && ((Number(l.discount) || 0) >= 99.99 || !!l.type_gratuit);
@@ -118,7 +124,7 @@ export async function deliveredMoves(session: odoo.OdooSession, partnerDomain: a
     const disc = (Number(line?.discount) || 0) / 100;
     const unit = line && m2oId(line.product_id) === pid ? Number(line.price_unit) || 0 : lst.get(pid) || 0;
     const pk = m2oId(m.picking_id);
-    rows.push({ pid, label: String(m.product_id[1] || ""), qty, amount: qty * unit * (1 - disc), partner: pk ? pickPartner.get(pk) ?? null : null, picking: pk, date: String(m.date || "").slice(0, 10) });
+    rows.push({ pid, label: String(m.product_id[1] || ""), qty, amount: qty * unit * (1 - disc), partner: m2oId(line?.order_partner_id) ?? (pk ? pickPartner.get(pk) ?? null : null), picking: pk, date: String(m.date || "").slice(0, 10) });
   }
   return rows;
 }
