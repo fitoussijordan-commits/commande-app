@@ -8,6 +8,7 @@ export const CHANGELOG: ChangelogEntry[] = [
   {
     date: "2026-11-23",
     items: [
+      "Hors ligne (navigateur) : l'app s'ouvre maintenant sans réseau, même après avoir fermé et relancé le navigateur — il faut l'avoir ouverte une fois avec du réseau. Avant : erreur du navigateur (NS_ERROR_OFFLINE sous Firefox).",
       "Articles sans photo : plus aucune image produit chargée ni d'emplacement photo (catalogue en grille et en liste, gammes, « Télécharger les données ») — l'app est plus rapide et les cartes plus compactes. Les photos du BDC Excel restent.",
       "Connexion : plus de champ « Base de données » — la base est déduite de l'URL Odoo (ex. https://wala-prod-test35-40892627.dev.odoo.com → wala-prod-test35-40892627).",
       "Base de test : étiquette rouge « BASE DE TEST » en haut de l'écran une fois connecté, dès que l'URL Odoo n'est pas la production (prod-main), et « [TEST] » dans le titre de l'onglet.",

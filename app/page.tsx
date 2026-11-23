@@ -5,6 +5,7 @@ import LoginScreen from "@/components/LoginScreen";
 import OrderScreen from "@/components/OrderScreen";
 import TestEnvBanner from "@/components/TestEnvBanner";
 import { initIncomingFiles } from "@/lib/incomingFile";
+import { registerServiceWorker } from "@/lib/serviceWorker";
 import { versionLabel, APP_VERSION } from "@/components/VersionFooter";
 import { CHANGELOG } from "@/lib/changelog";
 
@@ -140,6 +141,9 @@ export default function HomePage() {
   // Écoute dès le lancement les PDF / photos ouverts depuis Mail (partager → Commande),
   // même si le commercial n'est pas encore connecté.
   useEffect(() => { initIncomingFiles(); }, []);
+
+  // Version web : met l'app en cache pour pouvoir l'ouvrir sans réseau (public/sw.js).
+  useEffect(() => { registerServiceWorker(); }, []);
 
   // Journal de version : tracée dans la console à chaque lancement, et
   // historique des versions vues sur l'appareil (localStorage « app_versions »,
