@@ -15,6 +15,7 @@ import { resolveClientFamily, odooRecordUrl } from "@/lib/perimes";
 import InvoiceHistory from "@/components/InvoiceHistory";
 import { GLASS, GLASS_PILL } from "@/components/glass";
 import { saleStep, snapQty, optionalProductFields, ppcOf } from "@/lib/productFields";
+import { deliveredMoves, type DeliveredRow } from "@/lib/rdvPrep";
 import { orderMeta, isMea, isImplantation, offerNames, offerOptions, offerNamesByIds, templateMeta, templateLineMeta, type OrderMeta } from "@/lib/orderOffers";
 import { loadBlockingTags, clientBlockingTags, loadClosedDayTags, clientClosedWeekdays, type BlockingTag, type ClosedDayTag } from "@/lib/clientFlags";
 import { planShipping, toOdooDate, toOdooDatetime, isDirectLogistics, type ShippingPlan } from "@/lib/delivery";
@@ -3133,22 +3134,19 @@ function ClientHistory({ session, client }: { session: odoo.OdooSession; client:
         // les plus grosses baisses).
         if (mode === "ranking") {
           const shift = (d: string) => `${Number(d.slice(0, 4)) - 1}${d.slice(4)}`;
-          const period = async (from: string, to: string) => odoo.searchRead(session, "sale.order.line",
-            [["order_id.partner_id", "child_of", family], ["order_id.state", "in", ["sale", "done"]],
-             ["order_id.date_order", ">=", `${from} 00:00:00`], ["order_id.date_order", "<=", `${to} 23:59:59`],
-             ["product_id", "!=", false], ["display_type", "=", false]],
-            ["product_id", "product_uom_qty", "price_subtotal", "order_id"], 0);
+          // Quantités LIVRÉES : mouvements de stock terminés vers le client,
+          // moins les retours, sans les gratuités (comme « Préparer le RDV »).
+          const period = (from: string, to: string) => deliveredMoves(session, [["picking_id.partner_id", "child_of", family]], from, to);
           const [cur, prev] = await Promise.all([period(rkRange.from, rkRange.to), period(shift(rkRange.from), shift(rkRange.to))]);
           if (cancelled) return;
           const agg = new Map<number, { name: string; qty: number; times: number; total: number; qtyN1: number; totalN1: number; orders: Set<number> }>();
-          const add = (l: any, n1: boolean) => {
-            const pid = l.product_id?.[0]; if (!pid) return;
-            const c = agg.get(pid) || { name: l.product_id[1] || "", qty: 0, times: 0, total: 0, qtyN1: 0, totalN1: 0, orders: new Set<number>() };
-            if (n1) { c.qtyN1 += l.product_uom_qty || 0; c.totalN1 += l.price_subtotal || 0; }
-            else { c.qty += l.product_uom_qty || 0; c.total += l.price_subtotal || 0; c.orders.add(l.order_id?.[0]); c.times = c.orders.size; }
-            agg.set(pid, c);
+          const add = (l: DeliveredRow, n1: boolean) => {
+            const c = agg.get(l.pid) || { name: l.label, qty: 0, times: 0, total: 0, qtyN1: 0, totalN1: 0, orders: new Set<number>() };
+            if (n1) { c.qtyN1 += l.qty; c.totalN1 += l.amount; }
+            else { c.qty += l.qty; c.total += l.amount; if (l.picking && l.qty > 0) c.orders.add(l.picking); c.times = c.orders.size; }
+            agg.set(l.pid, c);
           };
-          cur.forEach((l: any) => add(l, false)); prev.forEach((l: any) => add(l, true));
+          cur.forEach(l => add(l, false)); prev.forEach(l => add(l, true));
           setRanking(Array.from(agg.values()));
         }
 
@@ -3311,12 +3309,12 @@ function ClientHistory({ session, client }: { session: odoo.OdooSession; client:
             </div>
             {!analyLoading && ranking.length > 0 && (
               <div style={{ fontSize: 12, color: C.muted, marginBottom: 10 }}>
-                {Math.round(totQ)} unités du {fmtD(rkRange.from)} au {fmtD(rkRange.to)} · {Math.round(totN1)} sur la même période N-1
+                {Math.round(totQ)} unités livrées (retours déduits, hors gratuités) du {fmtD(rkRange.from)} au {fmtD(rkRange.to)} · {Math.round(totN1)} sur la même période N-1
                 <span style={{ fontWeight: 800, color: totQ >= totN1 ? C.green : C.red }}> ({totQ >= totN1 ? "+" : ""}{Math.round(totQ - totN1)})</span>
               </div>
             )}
             {analyLoading ? <TubeLoader label="Calcul du palmarès…" />
-            : sorted.length === 0 ? <div style={{ textAlign: "center" as const, color: C.muted, padding: 40 }}>Aucun produit commandé sur la période ni sur la même période N-1</div>
+            : sorted.length === 0 ? <div style={{ textAlign: "center" as const, color: C.muted, padding: 40 }}>Aucun produit livré sur la période ni sur la même période N-1</div>
             : (
               <div className="stagger" style={{ display: "flex", flexDirection: "column" as const, gap: 8 }}>
                 <div style={{ display: "flex", gap: 12, padding: "0 14px", fontSize: 10.5, fontWeight: 700, color: C.muted, textTransform: "uppercase" as const }}>
@@ -3328,7 +3326,7 @@ function ClientHistory({ session, client }: { session: odoo.OdooSession; client:
                     <div key={i} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 14px", background: C.white, border: `1px solid ${C.border}`, borderLeft: `4px solid ${diff < 0 ? C.red : diff > 0 ? C.green : C.border}`, borderRadius: 12, boxShadow: C.shadow }}>
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <div style={{ fontSize: 13, fontWeight: 600, color: C.text }}>{r.name}</div>
-                        <div style={{ fontSize: 11, color: C.muted, marginTop: 1 }}>{r.times ? `${r.times} commande${r.times > 1 ? "s" : ""}` : "aucune commande sur la période"}</div>
+                        <div style={{ fontSize: 11, color: C.muted, marginTop: 1 }}>{r.times ? `${r.times} livraison${r.times > 1 ? "s" : ""}` : "aucune livraison sur la période"}</div>
                       </div>
                       <div style={{ width: 54, textAlign: "right" as const, fontSize: 15, fontWeight: 800, color: C.tealDark }}>{Math.round(r.qty)}</div>
                       <div style={{ width: 54, textAlign: "right" as const, fontSize: 13.5, fontWeight: 700, color: C.textSec }}>{Math.round(r.qtyN1)}</div>

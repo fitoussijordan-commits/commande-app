@@ -193,7 +193,7 @@ export default function RdvPrepModal({ session, client, onClose: onCloseProp, on
                               <tr style={{ color: C.muted, fontSize: 11, textAlign: "right" }}>
                                 <th style={{ textAlign: "left", padding: "4px 6px" }}>Produit</th>
                                 <th style={{ padding: "4px 6px" }}>PU HT</th>
-                                <th style={{ padding: "4px 6px" }} title="Achats sur toute l'année précédente">Achats N-1 (année)</th>
+                                <th style={{ padding: "4px 6px" }} title="Livré sur toute l'année précédente (mouvements de stock terminés, retours déduits, hors gratuités)">Achats N-1 (année)</th>
                                 <th style={{ padding: "4px 6px" }}>Achats N (à date)</th>
                                 <th style={{ padding: "4px 6px", textAlign: "center" }}>Proposition</th>
                               </tr>

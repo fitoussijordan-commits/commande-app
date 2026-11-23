@@ -8,6 +8,7 @@ export const CHANGELOG: ChangelogEntry[] = [
   {
     date: "2026-11-23",
     items: [
+      "Achats N-1 / N (Préparer le RDV, BDC Excel, évolution par produit) et Palmarès : calculés sur les LIVRAISONS — mouvements de stock terminés vers le client, retours déduits, gratuités exclues. Les coffrets en nomenclature « kit » comptent dans leurs produits ; la date est celle de la livraison.",
       "Préparer le RDV : explication de la proposition corrigée — nom d'offre plus coupé (« fre découverte… »), et plus de mot « variante » pour une offre sans paliers.",
       "Mes MEA : liste « Directs + indirects / Directs / Indirects » à côté du tri — un client est indirect s'il a une étiquette « … indirect … » (fiche client ou commandes, ex. CA indirect, CA Indirect Mlle Bio). Cartes, % de placement et liste suivent le filtre.",
       "Mes MEA : case « Non éligible » par client et par MEA — le client sort du calcul de placement (x / clients éligibles et %, ici et sur le tableau de bord) et passe dans le filtre « Non éligibles ». S'il prend quand même la MEA, il compte dans « Ont pris ».",

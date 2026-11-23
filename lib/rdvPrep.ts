@@ -64,18 +64,73 @@ export function pricelistDiscount(name: string | null | undefined): number {
   return m ? Number(m[1].replace(",", ".")) : 0;
 }
 
-// Quantités vendues par produit sur une période (commandes confirmées).
+// ── Quantités achetées = LIVRÉES ───────────────────────────────────────────────
+// Mouvements de stock TERMINÉS vers le client, moins les retours client, sans
+// les gratuités (ligne de vente remisée à 100 % ou avec un type de gratuité).
+// Les coffrets en nomenclature « kit » sont comptés dans leurs produits (Odoo
+// crée un mouvement par composant). Date = date du mouvement (livraison).
+// Montant : prix net de la ligne de vente ; pour un composant de kit, prix
+// catalogue du composant avec la remise de la ligne.
+export interface DeliveredRow { pid: number; label: string; qty: number; amount: number; partner: number | null; picking: number | null; date: string }
+let _qtyField: string | null = null;
+export async function deliveredMoves(session: odoo.OdooSession, partnerDomain: any[], from: string, to: string, productIds?: number[]): Promise<DeliveredRow[]> {
+  if (!_qtyField) {
+    const f: Record<string, any> = await odoo.callMethod(session, "stock.move", "fields_get", [], { attributes: ["type"] }).catch(() => ({}));
+    _qtyField = f.quantity_done ? "quantity_done" : f.quantity ? "quantity" : "product_uom_qty";
+  }
+  const qf = _qtyField;
+  const base: any[] = [["state", "=", "done"], ["date", ">=", `${from} 00:00:00`], ["date", "<=", `${to} 23:59:59`], ["product_id", "!=", false], ...partnerDomain];
+  if (productIds) base.push(["product_id", "in", productIds]);
+  const fields = ["product_id", qf, "sale_line_id", "picking_id", "date"];
+  const [out, back] = await Promise.all([
+    odoo.searchRead(session, "stock.move", [...base, ["location_dest_id.usage", "=", "customer"], ["location_id.usage", "!=", "customer"]], fields, 0),
+    odoo.searchRead(session, "stock.move", [...base, ["location_id.usage", "=", "customer"], ["location_dest_id.usage", "!=", "customer"]], fields, 0),
+  ]);
+  const moves = [...out.map((m: any) => ({ m, sign: 1 })), ...back.map((m: any) => ({ m, sign: -1 }))];
+  if (!moves.length) return [];
+
+  // Lignes de vente d'origine : gratuités et prix.
+  const lineIds = Array.from(new Set(moves.map(x => m2oId(x.m.sale_line_id)).filter(Boolean))) as number[];
+  let lines: any[] = [];
+  if (lineIds.length) {
+    lines = await odoo.searchRead(session, "sale.order.line", [["id", "in", lineIds]], ["id", "product_id", "price_unit", "discount", "type_gratuit"], 0)
+      .catch(() => odoo.searchRead(session, "sale.order.line", [["id", "in", lineIds]], ["id", "product_id", "price_unit", "discount"], 0));
+  }
+  const lineMap = new Map<number, any>(lines.map(l => [l.id, l]));
+  const isGift = (l: any) => !!l && ((Number(l.discount) || 0) >= 99.99 || !!l.type_gratuit);
+
+  // Prix catalogue (composants de kit) et client de chaque livraison.
+  const pids = Array.from(new Set(moves.map(x => m2oId(x.m.product_id)).filter(Boolean))) as number[];
+  const pickIds = Array.from(new Set(moves.map(x => m2oId(x.m.picking_id)).filter(Boolean))) as number[];
+  const [prods, picks] = await Promise.all([
+    odoo.searchRead(session, "product.product", [["id", "in", pids], ["active", "in", [true, false]]], ["id", "lst_price"], 0).catch(() => []),
+    pickIds.length ? odoo.searchRead(session, "stock.picking", [["id", "in", pickIds]], ["id", "partner_id"], 0).catch(() => []) : Promise.resolve([]),
+  ]);
+  const lst = new Map<number, number>(prods.map((p: any) => [p.id, Number(p.lst_price) || 0]));
+  const pickPartner = new Map<number, number | null>(picks.map((p: any) => [p.id, m2oId(p.partner_id)]));
+
+  const rows: DeliveredRow[] = [];
+  for (const { m, sign } of moves) {
+    const pid = m2oId(m.product_id); if (!pid) continue;
+    const line = lineMap.get(m2oId(m.sale_line_id) || 0);
+    if (isGift(line)) continue;
+    const qty = (Number(m[qf]) || 0) * sign;
+    const disc = (Number(line?.discount) || 0) / 100;
+    const unit = line && m2oId(line.product_id) === pid ? Number(line.price_unit) || 0 : lst.get(pid) || 0;
+    const pk = m2oId(m.picking_id);
+    rows.push({ pid, label: String(m.product_id[1] || ""), qty, amount: qty * unit * (1 - disc), partner: pk ? pickPartner.get(pk) ?? null : null, picking: pk, date: String(m.date || "").slice(0, 10) });
+  }
+  return rows;
+}
+
+// Quantités achetées (livrées) par produit sur une période.
 async function qtyByProduct(session: odoo.OdooSession, family: number[], from: string, to: string, productIds?: number[]) {
-  const domain: any[] = [["order_id.partner_id", "child_of", family], ["order_id.state", "in", ["sale", "done"]],
-    ["order_id.date_order", ">=", `${from} 00:00:00`], ["order_id.date_order", "<=", `${to} 23:59:59`], ["product_id", "!=", false]];
-  if (productIds) domain.push(["product_id", "in", productIds]);
-  const rows: any[] = await odoo.searchRead(session, "sale.order.line", domain, ["product_id", "product_uom_qty", "price_subtotal"], 0);
+  const rows = await deliveredMoves(session, [["picking_id.partner_id", "child_of", family]], from, to, productIds);
   const out = new Map<number, { qty: number; amount: number; label: string }>();
   for (const r of rows) {
-    const id = m2oId(r.product_id); if (!id) continue;
-    const cur = out.get(id) || { qty: 0, amount: 0, label: String(r.product_id[1]) };
-    cur.qty += Number(r.product_uom_qty) || 0; cur.amount += Number(r.price_subtotal) || 0;
-    out.set(id, cur);
+    const cur = out.get(r.pid) || { qty: 0, amount: 0, label: r.label };
+    cur.qty += r.qty; cur.amount += r.amount;
+    out.set(r.pid, cur);
   }
   return out;
 }
@@ -213,24 +268,18 @@ export async function loadBatchBdc(session: odoo.OdooSession, campaign: MeaCampa
   const ids = clients.map(c => c.id);
   const byClient = new Map<number, { n1: Map<number, { qty: number }>; n: Map<number, { qty: number }> }>();
   if (pids.length && ids.length) {
-    const rows: any[] = await odoo.searchRead(session, "sale.order.line",
-      [["order_id.partner_id.commercial_partner_id", "in", ids], ["order_id.state", "in", ["sale", "done"]],
-       ["order_id.date_order", ">=", `${y - 1}-01-01 00:00:00`], ["product_id", "in", pids]],
-      ["product_id", "product_uom_qty", "order_id"], 0);
-    // Société et date de chaque commande.
-    const orderIds = Array.from(new Set(rows.map(r => m2oId(r.order_id)).filter(Boolean))) as number[];
-    const orders: any[] = orderIds.length ? await odoo.searchRead(session, "sale.order", [["id", "in", orderIds]], ["id", "date_order", "partner_id"], 0) : [];
-    const partnerIds = Array.from(new Set(orders.map(o => m2oId(o.partner_id)).filter(Boolean))) as number[];
+    // Livraisons (moins retours, sans gratuités) depuis le 1er janvier N-1, par société.
+    const rows = await deliveredMoves(session, [["picking_id.partner_id.commercial_partner_id", "in", ids]], `${y - 1}-01-01`, ymd(new Date()), pids);
+    const partnerIds = Array.from(new Set(rows.map(r => r.partner).filter(Boolean))) as number[];
     const partners: any[] = partnerIds.length ? await odoo.searchRead(session, "res.partner", [["id", "in", partnerIds]], ["id", "commercial_partner_id"], 0) : [];
     const company = new Map<number, number>(partners.map(p => [p.id, m2oId(p.commercial_partner_id) || p.id]));
-    const oInfo = new Map<number, { cid: number; year: number }>(orders.map(o => [o.id, { cid: company.get(m2oId(o.partner_id)!) || m2oId(o.partner_id)!, year: Number(String(o.date_order).slice(0, 4)) }]));
     for (const r of rows) {
-      const info = oInfo.get(m2oId(r.order_id)!); if (!info) continue;
-      const b = byClient.get(info.cid) || { n1: new Map(), n: new Map() };
-      const m = info.year === y ? b.n : info.year === y - 1 ? b.n1 : null; if (!m) continue;
-      const pid = m2oId(r.product_id)!;
-      m.set(pid, { qty: (m.get(pid)?.qty || 0) + (Number(r.product_uom_qty) || 0) });
-      byClient.set(info.cid, b);
+      const cid = r.partner ? company.get(r.partner) || r.partner : null; if (!cid) continue;
+      const year = Number(r.date.slice(0, 4));
+      const b = byClient.get(cid) || { n1: new Map(), n: new Map() };
+      const m = year === y ? b.n : year === y - 1 ? b.n1 : null; if (!m) continue;
+      m.set(r.pid, { qty: (m.get(r.pid)?.qty || 0) + r.qty });
+      byClient.set(cid, b);
     }
   }
   return clients.map(c => {
