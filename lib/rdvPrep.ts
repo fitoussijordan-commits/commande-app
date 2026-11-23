@@ -72,7 +72,7 @@ export function pricelistDiscount(name: string | null | undefined): number {
 // crée un mouvement par composant). Date = date du mouvement (livraison).
 // Montant : prix net de la ligne de vente ; pour un composant de kit, prix
 // catalogue du composant avec la remise de la ligne.
-export interface DeliveredRow { pid: number; label: string; qty: number; amount: number; partner: number | null; picking: number | null; date: string }
+export interface DeliveredRow { pid: number; archived: boolean; label: string; qty: number; amount: number; partner: number | null; picking: number | null; date: string }
 let _qtyField: string | null = null;
 export async function deliveredMoves(session: odoo.OdooSession, partnerDomain: any[], from: string, to: string, productIds?: number[]): Promise<DeliveredRow[]> {
   if (!_qtyField) {
@@ -110,10 +110,11 @@ export async function deliveredMoves(session: odoo.OdooSession, partnerDomain: a
   const pids = Array.from(new Set(moves.map(x => m2oId(x.m.product_id)).filter(Boolean))) as number[];
   const pickIds = Array.from(new Set(moves.map(x => m2oId(x.m.picking_id)).filter(Boolean))) as number[];
   const [prods, picks] = await Promise.all([
-    odoo.searchRead(session, "product.product", [["id", "in", pids], ["active", "in", [true, false]]], ["id", "lst_price"], 0).catch(() => []),
+    odoo.searchRead(session, "product.product", [["id", "in", pids], ["active", "in", [true, false]]], ["id", "lst_price", "active"], 0).catch(() => []),
     pickIds.length ? odoo.searchRead(session, "stock.picking", [["id", "in", pickIds]], ["id", "partner_id"], 0).catch(() => []) : Promise.resolve([]),
   ]);
   const lst = new Map<number, number>(prods.map((p: any) => [p.id, Number(p.lst_price) || 0]));
+  const archived = new Set<number>(prods.filter((p: any) => p.active === false).map((p: any) => p.id));
   const pickPartner = new Map<number, number | null>(picks.map((p: any) => [p.id, m2oId(p.partner_id)]));
 
   const rows: DeliveredRow[] = [];
@@ -125,7 +126,7 @@ export async function deliveredMoves(session: odoo.OdooSession, partnerDomain: a
     const disc = (Number(line?.discount) || 0) / 100;
     const unit = line && m2oId(line.product_id) === pid ? Number(line.price_unit) || 0 : lst.get(pid) || 0;
     const pk = m2oId(m.picking_id);
-    rows.push({ pid, label: String(m.product_id[1] || ""), qty, amount: qty * unit * (1 - disc), partner: m2oId(line?.order_partner_id) ?? (pk ? pickPartner.get(pk) ?? null : null), picking: pk, date: String(m.date || "").slice(0, 10) });
+    rows.push({ pid, archived: archived.has(pid), label: String(m.product_id[1] || ""), qty, amount: qty * unit * (1 - disc), partner: m2oId(line?.order_partner_id) ?? (pk ? pickPartner.get(pk) ?? null : null), picking: pk, date: String(m.date || "").slice(0, 10) });
   }
   return rows;
 }

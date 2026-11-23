@@ -8,6 +8,7 @@ export const CHANGELOG: ChangelogEntry[] = [
   {
     date: "2026-11-23",
     items: [
+      "Palmarès : produits archivés retirés (période et N-1).",
       "Préparer le RDV : deux colonnes « PU HT » et « PU remisé MEA » dans la proposition.",
       "Préparer le RDV : prix remisé de la MEA (prix barré + −15 %, −20 %…) et total calculé avec la remise de l'offre puis la remise client ; même prix remisé sur le BDC Excel.",
       "Préparer le RDV : paliers écrits dans le nom (« 24 unités // 20% remise ») pris en compte pour la variante conseillée et la répartition.",

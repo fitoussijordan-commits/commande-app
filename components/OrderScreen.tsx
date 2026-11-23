@@ -3148,6 +3148,7 @@ function ClientHistory({ session, client }: { session: odoo.OdooSession; client:
           if (cancelled) return;
           const agg = new Map<number, { name: string; qty: number; times: number; total: number; qtyN1: number; totalN1: number; orders: Set<number> }>();
           const add = (l: DeliveredRow, n1: boolean) => {
+            if (l.archived) return;   // produit archivé : sans intérêt dans les stats
             const c = agg.get(l.pid) || { name: l.label, qty: 0, times: 0, total: 0, qtyN1: 0, totalN1: 0, orders: new Set<number>() };
             if (n1) { c.qtyN1 += l.qty; c.totalN1 += l.amount; }
             else { c.qty += l.qty; c.total += l.amount; if (l.picking && l.qty > 0) c.orders.add(l.picking); c.times = c.orders.size; }
