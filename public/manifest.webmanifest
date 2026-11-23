@@ -1,6 +1,6 @@
 {
-  "name": "Prise de commande",
-  "short_name": "Commande",
+  "name": "Flow",
+  "short_name": "Flow",
   "description": "Outil de prise de commande — connexion directe Odoo",
   "start_url": "/",
   "display": "standalone",

@@ -1,6 +1,6 @@
 {
   "appId": "com.jordanfitoussi.commande",
-  "appName": "Commande",
+  "appName": "Flow",
   "webDir": "out",
   "server": {
     "iosScheme": "https"

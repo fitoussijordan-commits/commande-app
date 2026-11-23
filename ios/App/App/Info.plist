@@ -58,7 +58,7 @@
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>Votre position sert à trouver les clients proches de vous.</string>
 	<key>CFBundleDisplayName</key>
-	<string>Commande</string>
+	<string>Flow</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>

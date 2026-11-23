@@ -59,7 +59,7 @@ export async function loadBdcImages(session: import("@/lib/odoo").OdooSession, p
 export async function buildBdc(clients: BdcClient[], images?: BdcImages): Promise<Blob> {
   const ExcelJS = (await import("exceljs")).default;
   const wb = new ExcelJS.Workbook();
-  wb.creator = "Commande DC";
+  wb.creator = "Flow";
   const used = new Set<string>();
   const year = new Date().getFullYear();
 

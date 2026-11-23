@@ -71,13 +71,9 @@ export default function LoginScreen({ onLogin }: Props) {
     <div style={{ minHeight: "100vh", background: C.bg, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'DM Sans', sans-serif", padding: 20 }}>
       <form onSubmit={handleSubmit} className="fade-up" style={{ width: "100%", maxWidth: 380, background: C.white, borderRadius: 20, padding: "36px 32px", boxShadow: C.shadowXl }}>
         <div style={{ textAlign: "center", marginBottom: 28 }}>
-          <div style={{ width: 64, height: 64, borderRadius: 18, background: C.teal, display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 14px" }}>
-            <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-              <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/>
-              <rect x="8" y="2" width="8" height="4" rx="1"/><path d="M9 12h6M9 16h4"/>
-            </svg>
-          </div>
-          <div style={{ fontSize: 22, fontWeight: 800, color: C.text }}>Prise de commande</div>
+          <img src="/icons/icon-192.png" alt="" width={72} height={72}
+            style={{ display: "block", margin: "0 auto 12px", borderRadius: 18, boxShadow: "0 4px 14px rgba(15,23,42,0.12)" }} />
+          <div style={{ fontSize: 22, fontWeight: 800, color: C.text }}>Flow</div>
           <div style={{ fontSize: 13, color: C.muted, marginTop: 4 }}>Connexion à Odoo</div>
         </div>
 
