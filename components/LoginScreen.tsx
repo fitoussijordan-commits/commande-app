@@ -22,12 +22,22 @@ interface Props {
 
 // Valeurs proposées à la toute première connexion (aucune config enregistrée).
 const DEFAULT_URL = "https://wala-prod-test35-40892627.dev.odoo.com";
-const DEFAULT_DB = "wala-prod-test35-40892627";
 const DEFAULT_LOGIN = "@drhauschka.fr";
+
+// La base Odoo se déduit de l'URL : premier élément du nom d'hôte.
+// https://wala-prod-test35-40892627.dev.odoo.com → wala-prod-test35-40892627
+// https://monentreprise.odoo.com → monentreprise
+export function dbFromUrl(url: string): string {
+  const u = url.trim();
+  if (!u) return "";
+  try {
+    const host = new URL(/^https?:\/\//i.test(u) ? u : `https://${u}`).hostname;
+    return host.split(".")[0] || "";
+  } catch { return ""; }
+}
 
 export default function LoginScreen({ onLogin }: Props) {
   const [url, setUrl] = useState(DEFAULT_URL);
-  const [db, setDb] = useState(DEFAULT_DB);
   const [login, setLogin] = useState(DEFAULT_LOGIN);
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
@@ -39,7 +49,6 @@ export default function LoginScreen({ onLogin }: Props) {
       if (raw) {
         const cfg = JSON.parse(raw);
         setUrl(cfg.url || DEFAULT_URL);
-        setDb(cfg.db || DEFAULT_DB);
         setLogin(cfg.login || DEFAULT_LOGIN);
       }
     } catch {}
@@ -56,15 +65,20 @@ export default function LoginScreen({ onLogin }: Props) {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
-    if (!url.trim() || !db.trim() || !login.trim() || !password) {
+    if (!url.trim() || !login.trim() || !password) {
       setError("Tous les champs sont requis");
+      return;
+    }
+    const db = dbFromUrl(url);
+    if (!db) {
+      setError("URL Odoo invalide (ex. https://monentreprise.odoo.com)");
       return;
     }
     setLoading(true);
     try {
       const cleanUrl = url.trim().replace(/\/$/, "");
-      const session = await odoo.authenticate({ url: cleanUrl, db: db.trim() }, login.trim(), password);
-      localStorage.setItem(LS_CONFIG, JSON.stringify({ url: cleanUrl, db: db.trim(), login: login.trim() }));
+      const session = await odoo.authenticate({ url: cleanUrl, db }, login.trim(), password);
+      localStorage.setItem(LS_CONFIG, JSON.stringify({ url: cleanUrl, db, login: login.trim() }));
       onLogin(session);
     } catch (e: any) {
       setError(e.message || "Connexion impossible");
@@ -89,7 +103,6 @@ export default function LoginScreen({ onLogin }: Props) {
         )}
 
         <Field label="URL Odoo" value={url} onChange={setUrl} placeholder="https://monentreprise.odoo.com" />
-        <Field label="Base de données" value={db} onChange={setDb} placeholder="monentreprise" />
         <Field label="Identifiant" value={login} onChange={setLogin} placeholder="prenom.nom@entreprise.fr"
           onFocus={e => {
             // Identifiant encore vide (« @drhauschka.fr » seul) : curseur devant le @
