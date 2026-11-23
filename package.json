@@ -8,7 +8,8 @@
     "start": "next start",
     "build:ios": "node scripts/build-capacitor.js",
     "sync:ios": "npm run build:ios && npx cap sync ios",
-    "open:ios": "npx cap open ios"
+    "open:ios": "npx cap open ios",
+    "build:odoo": "node scripts/build-odoo.js"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.129.0",

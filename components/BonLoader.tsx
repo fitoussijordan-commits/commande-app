@@ -10,12 +10,13 @@
 // public/) : fichiers locaux, donc affichés aussi hors ligne sur l'iPad. Ils
 // sautent à tour de rôle ; ceux des côtés penchent vers le centre en l'air.
 import { useEffect, useRef, useState } from "react";
+import { asset } from "@/lib/appTarget";
 
 // Hauteurs à l'écran proches des proportions réelles (le tube est plus grand).
 const PRODUCTS = [
-  { src: "/serum-hydratant.png", height: 118 },
-  { src: "/tube-purifiant.png", height: 150 },
-  { src: "/lotion-tonifiante.png", height: 128 },
+  { src: asset("/serum-hydratant.png"), height: 118 },
+  { src: asset("/tube-purifiant.png"), height: 150 },
+  { src: asset("/lotion-tonifiante.png"), height: 128 },
 ];
 const JUMP_S = 1.1;
 

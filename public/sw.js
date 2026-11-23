@@ -13,7 +13,14 @@
  *  - /api/… et autres sites  : JAMAIS en cache (Odoo, proxy) — passent tels quels.
  *
  * Pas utilisé dans l'app iPad (Capacitor) : là, le front est déjà embarqué.
+ *
+ * Même fichier pour Vercel (app à la racine « / ») et pour le module Odoo
+ * flow_app (app sous « /flow/ ») : tous les chemins partent de BASE, déduit de
+ * la portée d'enregistrement. Dans Odoo, tout ce qui est hors de /flow/
+ * (/web/…, JSON-RPC) n'est jamais touché.
  */
+const BASE = new URL(self.registration.scope).pathname.replace(/\/$/, "");   // "" ou "/flow"
+const ROOT = BASE + "/";
 const SHELL = "flow-shell-v1";     // page HTML + fichiers publics
 const STATIC = "flow-static-v1";   // /_next/static (versionnés)
 const NAV_TIMEOUT_MS = 6000;       // au-delà, on sert la page en cache
@@ -22,17 +29,17 @@ self.addEventListener("install", (event) => {
   event.waitUntil((async () => {
     // Pré-cache : la page + tous les scripts/styles qu'elle référence.
     try {
-      const res = await fetch("/", { cache: "no-store" });
-      if (res.ok) {
+      const res = await fetch(ROOT, { cache: "no-store" });
+      if (isAppPage(res)) {
         const html = await res.clone().text();
-        await (await caches.open(SHELL)).put("/", res);
-        const assets = Array.from(new Set(html.match(/\/_next\/static\/[^"'\s)]+/g) || []));
+        await (await caches.open(SHELL)).put(ROOT, res);
+        const assets = staticRefs(html);
         const st = await caches.open(STATIC);
         await Promise.all(assets.map((u) => st.add(u).catch(() => {})));
       }
       const shell = await caches.open(SHELL);
       await Promise.all(["/manifest.webmanifest", "/icons/icon-192.png", "/logo-full.png", "/logo-accueil.png"]
-        .map((u) => shell.add(u).catch(() => {})));
+        .map((u) => shell.add(BASE + u).catch(() => {})));
     } catch {}
     await self.skipWaiting();
   })());
@@ -56,7 +63,7 @@ self.addEventListener("message", (event) => {
       for (const u of data.urls) {
         try {
           const url = new URL(u, self.location.origin);
-          if (url.origin !== self.location.origin || !url.pathname.startsWith("/_next/static/")) continue;
+          if (url.origin !== self.location.origin || !url.pathname.startsWith(BASE + "/_next/static/")) continue;
           if (!(await st.match(url.pathname))) await st.add(url.pathname).catch(() => {});
         } catch {}
       }
@@ -69,14 +76,15 @@ self.addEventListener("fetch", (event) => {
   if (req.method !== "GET") return;
   const url = new URL(req.url);
   if (url.origin !== self.location.origin) return;          // Odoo, autres sites
-  if (url.pathname.startsWith("/api/")) return;             // proxy Odoo : jamais en cache
-  if (url.pathname === "/sw.js") return;
+  if (!url.pathname.startsWith(ROOT)) return;               // hors de l'app (dans Odoo : /web/…)
+  if (url.pathname.startsWith(BASE + "/api/")) return;      // proxy Odoo : jamais en cache
+  if (url.pathname === BASE + "/sw.js" || url.pathname === BASE + "/session") return;
 
   if (req.mode === "navigate") {
     event.respondWith(navigate(req));
     return;
   }
-  if (url.pathname.startsWith("/_next/static/")) {
+  if (url.pathname.startsWith(BASE + "/_next/static/")) {
     event.respondWith(cacheFirst(req, STATIC));
     return;
   }
@@ -88,14 +96,15 @@ async function navigate(req) {
   const cache = await caches.open(SHELL);
   try {
     const res = await withTimeout(fetch(req), NAV_TIMEOUT_MS);
-    // Une seule page dans l'app : on garde la dernière version sous « / ».
-    if (res.ok) {
-      await cache.put("/", res.clone());
+    // Une seule page dans l'app : on garde la dernière version sous ROOT.
+    // (Pas une page de connexion Odoo vers laquelle on aurait été redirigé.)
+    if (isAppPage(res)) {
+      await cache.put(ROOT, res.clone());
       pruneStatic(res.clone()).catch(() => {});
     }
     return res;
   } catch {
-    const cached = await cache.match("/");
+    const cached = await cache.match(ROOT);
     if (cached) return cached;
     return new Response(
       "<!doctype html><meta charset=utf-8><meta name=viewport content='width=device-width'>" +
@@ -111,7 +120,7 @@ async function navigate(req) {
 // demande sont remis en cache au fil de l'utilisation (message « cache-urls »).
 async function pruneStatic(res) {
   const html = await res.text();
-  const wanted = new Set(html.match(/\/_next\/static\/[^"'\s)]+/g) || []);
+  const wanted = new Set(staticRefs(html));
   if (wanted.size === 0) return;
   const st = await caches.open(STATIC);
   const keys = await st.keys();
@@ -138,6 +147,18 @@ async function staleWhileRevalidate(req, name) {
     .then((res) => { if (res.ok) cache.put(req, res.clone()).catch(() => {}); return res; })
     .catch(() => undefined);
   return hit || (await net) || new Response("", { status: 504 });
+}
+
+// Vraie page de l'app (et pas une redirection vers la connexion Odoo).
+function isAppPage(res) {
+  if (!res || !res.ok || res.redirected) return false;
+  try { return new URL(res.url).pathname === ROOT || new URL(res.url).pathname === BASE; } catch { return false; }
+}
+
+// Fichiers /_next/static référencés par la page (avec le préfixe BASE).
+function staticRefs(html) {
+  const re = new RegExp(BASE.replace(/[/]/g, "\\/") + "\\/_next\\/static\\/[^\"'\\s)]+", "g");
+  return Array.from(new Set(html.match(re) || []));
 }
 
 function withTimeout(promise, ms) {

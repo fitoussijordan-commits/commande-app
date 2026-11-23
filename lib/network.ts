@@ -6,6 +6,7 @@
 "use client";
 import { useEffect, useRef, useState, useCallback } from "react";
 import { apiUrl } from "@/lib/apiBase";
+import { IS_ODOO } from "@/lib/appTarget";
 
 // Ping : une réponse HTTP du proxy prouve que le réseau est là. Avec l'URL Odoo
 // (et la session), le proxy teste AUSSI la base Odoo : `odoo` vaut alors
@@ -18,6 +19,17 @@ export async function probeOdoo(target?: OdooTarget, timeoutMs = 9000): Promise<
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
+    if (IS_ODOO) {
+      // Servi par Odoo : on interroge directement Odoo (même domaine).
+      const res = await fetch("/web/session/get_session_info", {
+        method: "POST", credentials: "same-origin", cache: "no-store", signal: controller.signal,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", method: "call", id: Date.now(), params: {} }),
+      });
+      const d = await res.json().catch(() => null);
+      const ok = !!d && (!!d.result || /SessionExpired/i.test(JSON.stringify(d?.error || "")));
+      return { net: true, odoo: target ? ok : null, odooError: ok ? undefined : (d?.error?.data?.message || `HTTP ${res.status}`) };
+    }
     const res = await fetch(apiUrl("/api/odoo/proxy"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },

@@ -2,19 +2,21 @@
 // Enregistre le service worker (public/sw.js) qui permet d'OUVRIR l'app web
 // sans réseau (navigateur relancé hors ligne, PWA). Voir public/sw.js.
 //
-// Web en production uniquement : pas dans l'app iPad (Capacitor, front déjà
+// Web (Vercel) et app servie par Odoo (/flow/), en production uniquement : pas dans l'app iPad (Capacitor, front déjà
 // embarqué, et les service workers n'y fonctionnent pas), pas en `next dev`
 // (fichiers non versionnés : le cache servirait du code périmé).
+
+import { APP_TARGET, asset } from "@/lib/appTarget";
 
 export function registerServiceWorker() {
   if (typeof window === "undefined" || !("serviceWorker" in navigator)) return;
   if (process.env.NODE_ENV !== "production") return;
-  if (process.env.NEXT_PUBLIC_APP_TARGET !== "web") return;
+  if (APP_TARGET !== "web" && APP_TARGET !== "odoo") return;
   if (location.protocol !== "https:") return;
 
   const start = async () => {
     try {
-      await navigator.serviceWorker.register("/sw.js", { scope: "/" });
+      await navigator.serviceWorker.register(asset("/sw.js"), { scope: asset("/") });
       const reg = await navigator.serviceWorker.ready;
 
       // Fichiers déjà chargés par la page avant que le service worker ne la

@@ -2,6 +2,7 @@
 import { useState, useEffect, type FocusEvent } from "react";
 import VersionFooter from "@/components/VersionFooter";
 import * as odoo from "@/lib/odoo";
+import { asset } from "@/lib/appTarget";
 
 const C = {
   bg: "#f8fafc", white: "#fff", text: "#0f172a", textSec: "#334155",
@@ -90,7 +91,7 @@ export default function LoginScreen({ onLogin }: Props) {
     <div style={{ minHeight: "100vh", background: C.bg, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'DM Sans', sans-serif", padding: 20 }}>
       <form onSubmit={handleSubmit} className="fade-up" style={{ width: "100%", maxWidth: 380, background: C.white, borderRadius: 20, padding: "36px 32px", boxShadow: C.shadowXl }}>
         <div style={{ textAlign: "center", marginBottom: 28 }}>
-          <img src="/icons/icon-192.png" alt="" width={72} height={72}
+          <img src={asset("/icons/icon-192.png")} alt="" width={72} height={72}
             style={{ display: "block", margin: "0 auto 12px", borderRadius: 18, boxShadow: "0 4px 14px rgba(15,23,42,0.12)" }} />
           <div style={{ fontSize: 22, fontWeight: 800, color: C.text }}>Flow</div>
           <div style={{ fontSize: 13, color: C.muted, marginTop: 4 }}>Connexion à Odoo</div>

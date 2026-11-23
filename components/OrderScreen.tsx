@@ -40,6 +40,7 @@ import { dedupeClients, NOT_SUPPLIER, getMineOnly, setMineOnly, mineDomain, isMi
 import { eventOnDay, ALLDAY_FIELDS, linkedPartnerId } from "@/lib/calendar";
 import { pickClientAmong } from "@/lib/clients";
 import { SHOW_PRODUCT_IMAGES } from "@/lib/features";
+import { asset } from "@/lib/appTarget";
 
 // ── Palette ───────────────────────────────────────────────────────────────────
 const C = {
@@ -2680,7 +2681,7 @@ function ClientStep({ session, onSelect, onImportBon, onOpenPlanning, onToast, d
         {showWidgets && (
           <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 12 }}>
             {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src="/logo-accueil.png" alt="Dr. Hauschka" style={{ display: "block", height: 52, width: "auto" }} />
+            <img src={asset("/logo-accueil.png")} alt="Dr. Hauschka" style={{ display: "block", height: 52, width: "auto" }} />
             <div style={{ flex: 1 }} />
             <div style={{ fontSize: 14, fontWeight: 700, color: C.textSec }}>
               {new Date().toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long" }).replace(/^./, c => c.toUpperCase())}

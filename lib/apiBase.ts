@@ -10,8 +10,12 @@
 // Détection natif : Capacitor expose window.Capacitor. Si présent et qu'une base
 // est configurée, on l'utilise ; sinon on reste en relatif.
 
+import { IS_ODOO } from "@/lib/appTarget";
+
 export function apiBase(): string {
   const configured = (process.env.NEXT_PUBLIC_API_BASE || "").replace(/\/$/, "");
+  // App servie par Odoo : les routes API (assistant, bons, export) restent sur Vercel.
+  if (IS_ODOO && configured) return configured;
   if (typeof window !== "undefined") {
     const isNative = Boolean((window as any).Capacitor?.isNativePlatform?.());
     if (isNative && configured) return configured;

@@ -5,8 +5,9 @@
 // de React : chiffres qui défilent, fermeture animée, tube qui saute, tube de
 // validation, squelettes.
 import { useCallback, useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { asset } from "@/lib/appTarget";
 
-const TUBE = "/tube-purifiant.png";   // 122 × 520, posé sur son capuchon
+const TUBE = asset("/tube-purifiant.png");   // 122 × 520, posé sur son capuchon
 const TUBE_RATIO = 122 / 520;
 // Jonction corps / capuchon, mesurée sur la photo (y = 446 sur 520).
 const CAP_AT = 85.8;

@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <!-- Ouvre l'app Flow (/flow/) dans l'onglet courant. -->
+    <record id="action_flow_open" model="ir.actions.act_url">
+        <field name="name">Flow</field>
+        <field name="url">/flow/</field>
+        <field name="target">self</field>
+    </record>
+
+    <menuitem id="menu_flow_root"
+              name="Flow"
+              action="action_flow_open"
+              web_icon="flow_app,static/description/icon.png"
+              groups="sales_team.group_sale_salesman"
+              sequence="5"/>
+</odoo>

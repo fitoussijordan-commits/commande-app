@@ -11,3 +11,7 @@ out
 ios/App/App/public
 ios/App/Pods
 ios/DerivedData
+
+# Module Odoo : app générée (npm run build:odoo) et archive
+odoo/flow_app/static/app
+dist

@@ -1,13 +1,14 @@
 import "./globals.css";
+import { asset } from "@/lib/appTarget";
 
 // Icône (onglet, écran d'accueil iPad / PWA) : celle de l'app iOS.
 export const metadata = {
   title: "Flow",
   description: "Outil de prise de commande — connexion directe Odoo",
-  manifest: "/manifest.webmanifest",
+  manifest: asset("/manifest.webmanifest"),
   icons: {
-    icon: [{ url: "/icons/favicon-32.png", sizes: "32x32" }, { url: "/icons/icon-192.png", sizes: "192x192" }],
-    apple: "/icons/apple-touch-icon.png",
+    icon: [{ url: asset("/icons/favicon-32.png"), sizes: "32x32" }, { url: asset("/icons/icon-192.png"), sizes: "192x192" }],
+    apple: asset("/icons/apple-touch-icon.png"),
   },
   appleWebApp: { capable: true, title: "Flow", statusBarStyle: "default" as const },
 };

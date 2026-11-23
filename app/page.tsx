@@ -8,6 +8,7 @@ import { initIncomingFiles } from "@/lib/incomingFile";
 import { registerServiceWorker } from "@/lib/serviceWorker";
 import { versionLabel, APP_VERSION } from "@/components/VersionFooter";
 import { CHANGELOG } from "@/lib/changelog";
+import { IS_ODOO, asset } from "@/lib/appTarget";
 
 const LS_SESSION = "commande_session";
 
@@ -111,13 +112,26 @@ function Splash({ name, hiding }: { name?: string; hiding: boolean }) {
         display: "flex", flexDirection: "column", alignItems: "center",
       }}>
         {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src="/logo-full.png" alt="Dr. Hauschka" width={240}
+        <img src={asset("/logo-full.png")} alt="Dr. Hauschka" width={240}
           style={{ objectFit: "contain", height: "auto", maxWidth: "70vw" }} />
         {firstName && (
           <div style={{ marginTop: 24, fontSize: 17, fontWeight: 600, color: "#0d9488" }}>
             Bonjour {firstName}
           </div>
         )}
+      </div>
+    </div>
+  );
+}
+
+// App servie par Odoo, ouverte hors ligne sans jamais avoir été ouverte en ligne.
+function OdooOfflineNoSession() {
+  return (
+    <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'DM Sans', sans-serif", padding: 24, textAlign: "center", color: "#334155" }}>
+      <div>
+        <div style={{ fontSize: 18, fontWeight: 800, marginBottom: 8 }}>Flow n&apos;a pas encore de données sur cet appareil</div>
+        <div style={{ fontSize: 14, marginBottom: 16 }}>Ouvrez Flow une première fois avec du réseau (connecté à Odoo).</div>
+        <button onClick={() => location.reload()} style={{ padding: "10px 18px", borderRadius: 10, border: "none", background: "#0f766e", color: "#fff", fontWeight: 700, cursor: "pointer" }}>Réessayer</button>
       </div>
     </div>
   );
@@ -165,11 +179,43 @@ export default function HomePage() {
 
   // Restaure la session au chargement (évite de se reconnecter à chaque ouverture)
   useEffect(() => {
+    let stored: odoo.OdooSession | null = null;
     try {
       const raw = localStorage.getItem(LS_SESSION);
-      if (raw) setSession(JSON.parse(raw));
+      if (raw) stored = JSON.parse(raw);
     } catch {}
-    setReady(true);
+    if (!IS_ODOO) {
+      if (stored) setSession(stored);
+      setReady(true);
+      return;
+    }
+    // App servie par Odoo : on est déjà connecté à Odoo (la page /flow/ l'exige).
+    // La session vient d'Odoo lui-même ; hors ligne, on reprend la dernière connue.
+    (async () => {
+      try {
+        const r = await fetch(asset("/session"), { credentials: "same-origin", cache: "no-store" });
+        const ct = r.headers.get("content-type") || "";
+        if (r.ok && ct.includes("json")) {
+          const d = await r.json();
+          const s: odoo.OdooSession = {
+            uid: d.uid, name: d.name, login: String(d.login || "").toLowerCase(), sessionId: d.sid || "",
+            config: { url: location.origin, db: d.db },
+          };
+          // Autre utilisateur que la dernière fois : on repart d'une session propre.
+          setSession(s);
+          setReady(true);
+          return;
+        }
+        if (r.redirected || r.status === 401 || r.status === 403 || ct.includes("html")) {
+          // Session Odoo expirée : retour à la connexion Odoo, puis retour ici.
+          location.href = `/web/login?redirect=${encodeURIComponent(asset("/"))}`;
+          return;
+        }
+      } catch {}
+      // Hors ligne (ou Odoo injoignable) : dernière session connue.
+      if (stored) setSession(stored);
+      setReady(true);
+    })();
   }, []);
 
   // Écran d'accueil : visible ~1,6 s, puis fondu de sortie.
@@ -201,6 +247,8 @@ export default function HomePage() {
 
   const handleLogout = () => {
     localStorage.removeItem(LS_SESSION);
+    // Dans Odoo : déconnexion d'Odoo, puis retour sur la page de connexion Odoo.
+    if (IS_ODOO) { location.href = `/web/session/logout?redirect=${encodeURIComponent(asset("/"))}`; return; }
     setSession(null);
   };
 
@@ -210,6 +258,8 @@ export default function HomePage() {
     <ErrorBoundary>
       {session ? (
         <OrderScreen session={session} onBack={handleLogout} onToast={toast} />
+      ) : IS_ODOO ? (
+        <OdooOfflineNoSession />
       ) : (
         <LoginScreen onLogin={setSession} />
       )}

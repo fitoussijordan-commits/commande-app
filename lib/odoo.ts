@@ -4,6 +4,7 @@
 
 import { apiUrl } from "@/lib/apiBase";
 import { syncOutlook, scheduleOutlookSync } from "@/lib/outlookSync";
+import { IS_ODOO } from "@/lib/appTarget";
 
 export interface OdooConfig { url: string; db: string; }
 export interface OdooSession { uid: number; name: string; login: string; sessionId: string; config: OdooConfig; }
@@ -37,6 +38,7 @@ function rpcError(message: string, opts: { network?: boolean; sessionExpired?: b
 }
 
 async function rpc(config: OdooConfig, endpoint: string, params: any, sessionId?: string) {
+  if (IS_ODOO) return rpcDirect(endpoint, params);
   let res: Response;
   try {
     res = await fetch(apiUrl("/api/odoo/proxy"), {
@@ -59,6 +61,32 @@ async function rpc(config: OdooConfig, endpoint: string, params: any, sessionId?
     });
   }
   return { result: data.result, sessionId: data.sessionId };
+}
+
+// App servie par Odoo (module flow_app) : même domaine → JSON-RPC direct, le
+// navigateur envoie lui-même le cookie de session Odoo. Mêmes erreurs que le proxy.
+async function rpcDirect(endpoint: string, params: any) {
+  let res: Response;
+  try {
+    res = await fetch(endpoint, {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ jsonrpc: "2.0", method: "call", id: Date.now(), params }),
+    });
+  } catch {
+    throw rpcError("Réseau indisponible", { network: true });
+  }
+  let data: any;
+  try { data = await res.json(); }
+  catch { throw rpcError(`Réponse serveur invalide (${res.status})`, { network: true }); }
+  if (data?.error) {
+    const msg = data.error.data?.message || data.error.message || JSON.stringify(data.error);
+    const name = String(data.error.data?.name || "");
+    throw rpcError(msg, { sessionExpired: /SessionExpired/i.test(name) || /session\s*(expired|expirée)|expired\s*session/i.test(msg) });
+  }
+  if (!res.ok) throw rpcError(`Erreur ${res.status}`, { network: res.status >= 500 || res.status === 429 });
+  return { result: data.result, sessionId: undefined };
 }
 
 export async function authenticate(config: OdooConfig, login: string, password: string): Promise<OdooSession> {

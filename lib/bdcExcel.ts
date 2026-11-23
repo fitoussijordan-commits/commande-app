@@ -6,6 +6,7 @@
 // (produits de vente offerts). Pas de séparateurs, PLV ni éléments de kit. Les totaux restent des formules : le DC peut modifier les quantités.
 // Plusieurs clients → un onglet par client dans le même fichier.
 import type { PrepCampaign } from "@/lib/rdvPrep";
+import { asset } from "@/lib/appTarget";
 
 const TEAL = "FF0F766E", TEAL_SOFT = "FFF0FDFA", BORDER = "FFCBD5E1", MUTED = "FF64748B";
 const EUR = '#,##0.00 "€"';
@@ -48,7 +49,7 @@ export async function loadBdcImages(session: import("@/lib/odoo").OdooSession, p
   }
   let logo: string | undefined;
   try {
-    const res = await fetch("/logo-bdc.png");   // logo officiel, repris des BDC de séminaire
+    const res = await fetch(asset("/logo-bdc.png"));   // logo officiel, repris des BDC de séminaire
     const buf = new Uint8Array(await res.arrayBuffer());
     let bin = ""; for (let i = 0; i < buf.length; i++) bin += String.fromCharCode(buf[i]);
     logo = btoa(bin);
