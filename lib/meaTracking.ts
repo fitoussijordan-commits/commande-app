@@ -18,9 +18,9 @@ import { NOT_SUPPLIER, mineDomain } from "@/lib/clients";
 export interface MeaOffer { id: number; name: string; variant: string }
 export interface MeaCampaign { key: string; offers: MeaOffer[]; active: boolean }
 export interface Taken { state: "pris" | "devis"; orders: string[]; offers: string[]; date: string }
-export interface Plan { id?: number; offerId: number | null; note: string }
+export interface Plan { id?: number; offerId: number | null; note: string; ineligible?: boolean }   // ineligible : client exclu du placement de cette MEA
 export interface TrackingModel {
-  model: string; partner: string; campaign?: string; offer?: string; note?: string; user?: string;
+  model: string; partner: string; campaign?: string; offer?: string; note?: string; user?: string; ineligible?: string; eligibleIsPositive?: boolean;
 }
 export interface MeaData {
   campaigns: MeaCampaign[];
@@ -52,6 +52,7 @@ export async function findTrackingModel(session: odoo.OdooSession): Promise<Trac
       if (f.type === "many2one" && f.relation === "res.partner" && !out.partner) out.partner = name;
       else if (f.type === "many2one" && f.relation === "res.users" && !/create|write/.test(name) && !out.user) out.user = name;
       else if (f.type === "many2one" && /offre/i.test(`${f.relation} ${label}`) && !out.offer) out.offer = name;
+      else if (f.type === "boolean" && /[ée]ligib/i.test(label) && !out.ineligible) { out.ineligible = name; out.eligibleIsPositive = !/non|in[ée]ligib|pas/i.test(label); }
       else if ((f.type === "char" || f.type === "text") && /campagne|mea/i.test(label) && name !== "x_name" && !out.campaign) out.campaign = name;
       else if ((f.type === "text" || f.type === "html" || f.type === "char") && /note|commentaire|remarque/i.test(label) && !out.note) out.note = name;
     }
@@ -166,24 +167,38 @@ export async function loadMeaData(session: odoo.OdooSession, mine = true): Promi
   const tracking = await findTrackingModel(session);
   const plans = new Map<string, Plan>();
   if (tracking && clients.length) {
-    const fields = ["id", tracking.partner, tracking.campaign!, tracking.offer, tracking.note].filter(Boolean) as string[];
+    const fields = ["id", tracking.partner, tracking.campaign!, tracking.offer, tracking.note, tracking.ineligible].filter(Boolean) as string[];
     const rows = await odoo.searchRead(session, tracking.model, [[tracking.partner, "in", Array.from(clientIds)]], fields, 0).catch(() => []);
     for (const r of rows) {
       const cid = r[tracking.partner]?.[0];
       if (!cid) continue;
       plans.set(planKey(String(r[tracking.campaign!] || ""), cid), {
         id: r.id, offerId: tracking.offer ? (r[tracking.offer]?.[0] || null) : null, note: tracking.note ? String(r[tracking.note] || "") : "",
+        ineligible: tracking.ineligible ? eligibleFlag(tracking, r[tracking.ineligible]) : false,
       });
     }
   }
+  // Sans modèle Studio : prévisions et « non éligible » gardés sur l'appareil.
+  if (!tracking) Object.entries(localPlans()).forEach(([k, p]) => plans.set(k, p));
   return { campaigns, clients, taken, plans, tracking };
 }
+
+// Clients éligibles d'une MEA (base du % de placement) : tous, moins ceux
+// cochés « Non éligible » qui ne l'ont pas prise.
+export function eligibleCount(d: MeaData, key: string): number {
+  const tk = d.taken.get(key);
+  return d.clients.filter(c => tk?.has(c.id) || !d.plans.get(planKey(key, c.id))?.ineligible).length;
+}
+
+// Case « Non éligible » : le champ Studio peut s'appeler « Non éligible » ou « Éligible ».
+const eligibleFlag = (t: TrackingModel, v: any) => t.eligibleIsPositive ? v === false : !!v;
 
 // Enregistre (ou met à jour) la prévision d'un client pour une campagne.
 export async function savePlan(session: odoo.OdooSession, t: TrackingModel, campaign: string, clientId: number, plan: Plan): Promise<number> {
   const vals: any = { [t.partner]: clientId, [t.campaign!]: campaign };
   if (t.offer) vals[t.offer] = plan.offerId || false;
   if (t.note) vals[t.note] = plan.note || false;
+  if (t.ineligible) vals[t.ineligible] = t.eligibleIsPositive ? !plan.ineligible : !!plan.ineligible;
   if (t.user) vals[t.user] = session.uid;
   if (plan.id) { await odoo.write(session, t.model, [plan.id], vals); return plan.id; }
   return await odoo.create(session, t.model, vals);
@@ -200,10 +215,11 @@ export async function clientPlans(session: odoo.OdooSession, clientId: number): 
   const tracking = await findTrackingModel(session);
   const plans = new Map<string, Plan>();
   if (tracking) {
-    const fields = ["id", tracking.partner, tracking.campaign!, tracking.offer, tracking.note].filter(Boolean) as string[];
+    const fields = ["id", tracking.partner, tracking.campaign!, tracking.offer, tracking.note, tracking.ineligible].filter(Boolean) as string[];
     const rows = await odoo.searchRead(session, tracking.model, [[tracking.partner, "=", clientId]], fields, 0).catch(() => []);
     for (const r of rows) plans.set(planKey(String(r[tracking.campaign!] || ""), clientId), {
       id: r.id, offerId: tracking.offer ? (r[tracking.offer]?.[0] || null) : null, note: tracking.note ? String(r[tracking.note] || "") : "",
+      ineligible: tracking.ineligible ? eligibleFlag(tracking, r[tracking.ineligible]) : false,
     });
   } else {
     for (const [k, v] of Object.entries(localPlans())) if (k.endsWith(`|${clientId}`)) plans.set(k, v);

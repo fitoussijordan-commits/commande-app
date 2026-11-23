@@ -8,6 +8,7 @@ export const CHANGELOG: ChangelogEntry[] = [
   {
     date: "2026-11-23",
     items: [
+      "Mes MEA : case « Non éligible » par client et par MEA — le client sort du calcul de placement (x / clients éligibles et %, ici et sur le tableau de bord) et passe dans le filtre « Non éligibles ». S'il prend quand même la MEA, il compte dans « Ont pris ».",
       "Mes MEA : petit ⓘ sur chaque carte → nom complet de la MEA, active / terminée, liste de ses variantes et nombre de clients qui ont pris chacune.",
       "Panier : liste déroulante sur le titre d'une MEA qui a plusieurs variantes (Essentiel, Standard, Premium…) pour passer directement à une autre — la MEA est remplacée par la variante choisie.",
       "Panier : la date de début d'expédition de la MEA est gardée quand la MEA change de variante (ex. passage en « Standard ») et quand on reprend un brouillon — avant, elle disparaissait.",

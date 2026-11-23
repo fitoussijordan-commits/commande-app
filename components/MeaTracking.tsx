@@ -9,7 +9,7 @@ import * as odoo from "@/lib/odoo";
 import { linkedPartnerId } from "@/lib/calendar";
 import { loadBatchBdc, pricelistDiscount } from "@/lib/rdvPrep";
 import { buildBdc, downloadBlob, loadBdcImages } from "@/lib/bdcExcel";
-import { loadMeaData, savePlan, planKey, localPlans, saveLocalPlan, type MeaData, type Plan } from "@/lib/meaTracking";
+import { loadMeaData, savePlan, planKey, saveLocalPlan, eligibleCount, type MeaData, type Plan } from "@/lib/meaTracking";
 import AppointmentModal from "@/components/AppointmentModal";
 import { getMineOnly, setMineOnly } from "@/lib/clients";
 
@@ -20,11 +20,12 @@ const C = {
 };
 const fmtEUR = (n: number) => new Intl.NumberFormat("fr-FR", { style: "currency", currency: "EUR", maximumFractionDigits: 0 }).format(n);
 const toOdoo = (d: Date) => d.toISOString().slice(0, 19).replace("T", " ");
-type Status = "todo" | "devis" | "pris";
+type Status = "todo" | "devis" | "pris" | "ne";
 const STAT: Record<Status, { label: string; color: string; soft: string }> = {
   todo: { label: "À proposer", color: "#334155", soft: "#eef2f6" },
   devis: { label: "Devis en cours", color: "#ea580c", soft: "#fff7ed" },
   pris: { label: "Ont pris", color: "#16a34a", soft: "#f0fdf4" },
+  ne: { label: "Non éligibles", color: "#94a3b8", soft: "#f1f5f9" },
 };
 
 // Prochain RDV (non annulé) de chaque client, sur les 6 mois à venir.
@@ -75,7 +76,6 @@ export default function MeaDashboard({ session, onClose, onOpenClient, onToast }
     setData(null); setError("");
     loadMeaData(session, mine)
       .then(d => {
-        if (!d.tracking) { const lp = localPlans(); d.plans = new Map(Object.entries(lp)); }
         setData(d); setKey(k => d.campaigns.some(c => c.key === k && (showAll || c.active)) ? k : (d.campaigns.find(c => showAll || c.active) || d.campaigns[0])?.key || "");
       })
       .catch(e => setError(odoo.isNetworkError(e) ? "Indisponible hors ligne." : (e?.message || "Lecture impossible")));
@@ -83,8 +83,11 @@ export default function MeaDashboard({ session, onClose, onOpenClient, onToast }
   }, [session, reloadVisits, mine]);
 
   const taken = data?.taken.get(key) || new Map();
-  const status = (id: number): Status => taken.get(id)?.state === "pris" ? "pris" : taken.has(id) ? "devis" : "todo";
-  const counts: Record<Status, number> = { todo: 0, devis: 0, pris: 0 };
+  // Non éligible : coché par le DC (client qui ne peut pas recevoir cette MEA) —
+  // sorti du calcul de placement, sauf s'il l'a quand même prise.
+  const isIneligible = (k: string, id: number) => !!data?.plans.get(planKey(k, id))?.ineligible;
+  const status = (id: number): Status => taken.get(id)?.state === "pris" ? "pris" : taken.has(id) ? "devis" : isIneligible(key, id) ? "ne" : "todo";
+  const counts: Record<Status, number> = { todo: 0, devis: 0, pris: 0, ne: 0 };
   data?.clients.forEach(c => counts[status(c.id)]++);
 
   const rows = useMemo(() => {
@@ -103,7 +106,7 @@ export default function MeaDashboard({ session, onClose, onOpenClient, onToast }
     const k = planKey(key, clientId);
     const cur = data.plans.get(k) || { offerId: null, note: "" };
     const next = { ...cur, ...patch };
-    if (next.offerId === cur.offerId && next.note === cur.note) return;
+    if (next.offerId === cur.offerId && next.note === cur.note && !!next.ineligible === !!cur.ineligible) return;
     if (!data.tracking) {
       saveLocalPlan(k, next);
       setData(d => d && { ...d, plans: new Map(d.plans).set(k, next) });
@@ -149,7 +152,7 @@ export default function MeaDashboard({ session, onClose, onOpenClient, onToast }
     setBdcBusy(false);
   };
   const total = data?.clients.length || 0;
-  const GRID = "minmax(0, 2fr) 120px 140px minmax(0, 1.6fr)";
+  const GRID = "minmax(0, 2fr) 120px 140px minmax(0, 1.6fr) 92px";
 
   return (
     <div className="ov-full" style={{ position: "fixed", inset: 0, zIndex: 300, background: C.bg, display: "flex", flexDirection: "column" as const, fontFamily: "'DM Sans', sans-serif" }}>
@@ -194,8 +197,11 @@ export default function MeaDashboard({ session, onClose, onOpenClient, onToast }
           {data && data.campaigns.length > 0 && (
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(190px, 1fr))", gap: 8, marginTop: 10 }}>
               {data.campaigns.filter(c => (showAll || c.active) && c.key).map(c => {
-                const took = Array.from(data.taken.get(c.key)?.values() || []).filter(t => t.state === "pris").length;
-                const pct = total ? Math.round((took / total) * 100) : 0;
+                const tk = data.taken.get(c.key);
+                const took = Array.from(tk?.values() || []).filter(t => t.state === "pris").length;
+                // Base du placement : clients éligibles (les « non éligibles » sont retirés).
+                const elig = eligibleCount(data, c.key);
+                const pct = elig ? Math.round((took / elig) * 100) : 0;
                 const sel = c.key === key;
                 return (
                   <div key={c.key} role="button" tabIndex={0} onClick={() => setKey(c.key)}
@@ -230,7 +236,7 @@ export default function MeaDashboard({ session, onClose, onOpenClient, onToast }
                       );
                     })()}
                     <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginTop: 4 }}>
-                      <span style={{ fontSize: 13, fontWeight: 800, color: C.textSec }}>{took}<span style={{ color: C.muted, fontWeight: 600 }}>/{total}</span></span>
+                      <span style={{ fontSize: 13, fontWeight: 800, color: C.textSec }}>{took}<span style={{ color: C.muted, fontWeight: 600 }}>/{elig}</span></span>
                       <span style={{ fontSize: 17, fontWeight: 800, color: C.tealDark }}>{pct}%</span>
                     </div>
                     <div style={{ height: 4, borderRadius: 2, background: "rgba(15,23,42,0.07)", marginTop: 6, overflow: "hidden" }}>
@@ -244,8 +250,8 @@ export default function MeaDashboard({ session, onClose, onOpenClient, onToast }
 
           {/* Compteurs = filtres */}
           {data && camp && (
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 10, marginTop: 12 }}>
-              {(["todo", "devis", "pris"] as const).map(f => (
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 10, marginTop: 12 }}>
+              {(["todo", "devis", "pris", "ne"] as const).map(f => (
                 <button key={f} onClick={() => setFilter(f)}
                   style={{ textAlign: "left" as const, padding: "9px 14px", borderRadius: 12, cursor: "pointer", fontFamily: "inherit", display: "flex", alignItems: "baseline", gap: 8,
                     border: `2px solid ${filter === f ? STAT[f].color : "transparent"}`, background: STAT[f].soft }}>
@@ -280,7 +286,7 @@ export default function MeaDashboard({ session, onClose, onOpenClient, onToast }
                   <option value="ca_asc">CA N-1 ↑</option>
                   <option value="name">Nom A→Z</option>
                 </select>
-              </span><span>Prochain RDV</span><span>{filter === "todo" ? "Offre prévue" : "Offre"}</span><span>Note</span>
+              </span><span>Prochain RDV</span><span>{filter === "todo" || filter === "ne" ? "Offre prévue" : "Offre"}</span><span>Note</span><span title="Client qui ne peut pas recevoir cette MEA : retiré du calcul de placement">Non éligible</span>
             </div>
             <div style={{ background: C.white, borderRadius: 14, border: `1px solid ${C.border}`, overflow: "hidden" }}>
               {rows.length === 0 && <div style={{ textAlign: "center" as const, color: C.muted, fontSize: 13, padding: 30 }}>
@@ -326,6 +332,15 @@ export default function MeaDashboard({ session, onClose, onOpenClient, onToast }
                       onBlur={e => save(c.id, { note: e.target.value.trim() })}
                       onKeyDown={e => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
                       style={{ width: "100%", boxSizing: "border-box" as const, height: 32, padding: "0 10px", borderRadius: 8, border: "1px solid transparent", background: C.bg, fontSize: 12.5, fontFamily: "inherit", outline: "none", color: C.text }} />
+                    {t ? <span /> : (
+                      <label title="Ce client ne peut pas recevoir cette MEA : il sort du calcul de placement"
+                        style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11.5, fontWeight: 700, color: plan?.ineligible ? C.textSec : C.muted, cursor: "pointer" }}>
+                        <input type="checkbox" checked={!!plan?.ineligible} disabled={saving === k}
+                          onChange={e => save(c.id, { ineligible: e.target.checked })}
+                          style={{ width: 18, height: 18, accentColor: C.textSec, cursor: "pointer" }} />
+                        Non élig.
+                      </label>
+                    )}
                   </div>
                 );
               })}

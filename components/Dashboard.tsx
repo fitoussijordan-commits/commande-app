@@ -6,7 +6,7 @@ import { useEffect, useState } from "react";
 import { CountUp, Sk } from "@/components/motion";
 import * as odoo from "@/lib/odoo";
 import { loadSalesStats, type SalesStats } from "@/lib/salesStats";
-import { loadMeaData, type MeaData } from "@/lib/meaTracking";
+import { loadMeaData, eligibleCount, type MeaData } from "@/lib/meaTracking";
 import TopFlop from "@/components/TopFlop";
 import VisitPriority from "@/components/VisitPriority";
 import MeaDashboard from "@/components/MeaTracking";
@@ -207,7 +207,7 @@ export default function Dashboard({ session, onClose, onOpenClient, onToast }: {
               {mea && !mea.campaigns.some(c => meaAll || c.active) && <div style={{ fontSize: 13, color: C.muted }}>Aucune MEA active.</div>}
               {mea && mea.campaigns.filter(c => meaAll || c.active).map(c => {
                 const took = Array.from(mea.taken.get(c.key)?.values() || []).filter(t => t.state === "pris").length;
-                const total = mea.clients.length;
+                const total = eligibleCount(mea, c.key);   // « non éligibles » exclus
                 const pct = total ? Math.round((took / total) * 100) : 0;
                 return (
                   <button key={c.key} onClick={() => setShowMea(true)}
