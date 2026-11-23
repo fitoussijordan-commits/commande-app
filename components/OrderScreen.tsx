@@ -3988,7 +3988,11 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
       if (isImplantTemplate(template)) {
         if (orderType === "" && meta?.implantValues.length) setOrderType(meta.implantValues[0]);
       } else {
-        const offer = offerFor(template.name);
+        // L'article MEA du modèle porte déjà son offre (pastille automatique) :
+        // on ne coche rien de plus par rapprochement de nom (c'est ce qui
+        // ajoutait l'offre n° 208 en double).
+        const ownOffer = [...v.items, ...v.gifts].some(i => Array.isArray(i.product?.x_offre_produit_id));
+        const offer = ownOffer ? undefined : offerFor(template.name);
         if (offer) setOfferIds(prev => prev.includes(offer.id) ? prev : [...prev, offer.id]);
         if (parsed.length > 1) setMeaVariants(prev => ({ ...prev, [key]: { current: v.id, variants: parsed } }));
       }
@@ -4039,7 +4043,8 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
       setGiftItems(prev => [...prev.filter(x => x.cond?.label !== cur.name),
         ...best.gifts.map(x => ({ ...x, cond: { label: best.name, required: best.paid } }))]);
       // Offre cochée.
-      const oldOffer = offerFor(cur.name), newOffer = offerFor(best.name);
+      const own = (pm: MeaParsed) => [...pm.items, ...pm.gifts].some(i => Array.isArray(i.product?.x_offre_produit_id));
+      const oldOffer = offerFor(cur.name), newOffer = own(best) ? undefined : offerFor(best.name);
       setOfferIds(prev => {
         const n = prev.filter(id => id !== oldOffer?.id);
         return newOffer && !n.includes(newOffer.id) ? [...n, newOffer.id] : n;
