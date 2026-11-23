@@ -2,8 +2,9 @@
 // Signale clairement une base Odoo de TEST (staging) : toute URL qui ne contient
 // pas « prod-main » n'est pas la production.
 //
-// Affichage : cadre rouge autour de tout l'écran + étiquette « BASE DE TEST » en
-// haut au centre, et « [TEST] » devant le titre de l'onglet (web).
+// Affichage (une fois connecté seulement — pas sur l'écran de connexion) :
+// étiquette rouge « BASE DE TEST » en haut au centre, et « [TEST] » devant le
+// titre de l'onglet (web).
 // En position fixe, z-index maximal et pointer-events: none : visible au-dessus
 // de tous les écrans et modales (eux-mêmes en position fixe), sans jamais
 // bloquer un tap ni décaler la mise en page.
@@ -30,9 +31,7 @@ export default function TestEnvBanner({ url, db }: { url: string | undefined | n
 
   return (
     <div aria-hidden style={{ position: "fixed", inset: 0, zIndex: 2147483000, pointerEvents: "none" }}>
-      {/* Cadre rouge autour de l'écran */}
-      <div style={{ position: "absolute", inset: 0, border: `3px solid ${RED}` }} />
-      {/* Étiquette en haut au centre, accrochée au cadre, sous la barre de statut iOS */}
+      {/* Étiquette en haut au centre, sous la barre de statut iOS */}
       <div style={{
         position: "absolute", top: "env(safe-area-inset-top)", left: "50%", transform: "translateX(-50%)",
         background: RED, color: "#fff", fontFamily: "'DM Sans', sans-serif",

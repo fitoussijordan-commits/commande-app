@@ -1,7 +1,6 @@
 "use client";
 import { useState, useEffect, type FocusEvent } from "react";
 import VersionFooter from "@/components/VersionFooter";
-import TestEnvBanner from "@/components/TestEnvBanner";
 import * as odoo from "@/lib/odoo";
 
 const C = {
@@ -106,8 +105,6 @@ export default function LoginScreen({ onLogin }: Props) {
         </button>
         <VersionFooter style={{ marginTop: 14 }} />
       </form>
-      {/* Suit l'URL saisie : on sait AVANT de se connecter qu'on vise une base de test. */}
-      <TestEnvBanner url={url} db={db.trim()} />
     </div>
   );
 }

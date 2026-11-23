@@ -8,7 +8,7 @@ export const CHANGELOG: ChangelogEntry[] = [
   {
     date: "2026-11-23",
     items: [
-      "Base de test : cadre rouge autour de l'écran et étiquette « BASE DE TEST » en haut dès que l'URL Odoo n'est pas la production (prod-main) — aussi sur l'écran de connexion, et « [TEST] » dans le titre de l'onglet.",
+      "Base de test : étiquette rouge « BASE DE TEST » en haut de l'écran une fois connecté, dès que l'URL Odoo n'est pas la production (prod-main), et « [TEST] » dans le titre de l'onglet.",
       "Connexion : à la première connexion, l'URL Odoo et la base de données sont pré-remplies (base de test wala-prod-test35).",
       "Connexion : l'identifiant est pré-rempli avec « @drhauschka.fr » à la première connexion — il suffit d'ajouter prénom.nom devant.",
       "Palmarès : produits archivés retirés (période et N-1).",
