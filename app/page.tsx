@@ -3,6 +3,7 @@ import { useState, useEffect, useCallback, useRef, Component, type ReactNode } f
 import * as odoo from "@/lib/odoo";
 import LoginScreen from "@/components/LoginScreen";
 import OrderScreen from "@/components/OrderScreen";
+import TestEnvBanner from "@/components/TestEnvBanner";
 import { initIncomingFiles } from "@/lib/incomingFile";
 import { versionLabel, APP_VERSION } from "@/components/VersionFooter";
 import { CHANGELOG } from "@/lib/changelog";
@@ -209,6 +210,7 @@ export default function HomePage() {
         <LoginScreen onLogin={setSession} />
       )}
       <ToastStack toasts={toasts} onDismiss={dismissToast} />
+      {session && <TestEnvBanner url={session.config?.url} db={session.config?.db} />}
       {showSplash && <Splash name={session?.name} hiding={splashHiding} />}
     </ErrorBoundary>
   );
