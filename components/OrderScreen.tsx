@@ -3625,6 +3625,11 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
   useEffect(() => {
     orderMeta(session).then(async m => { setMeta(m); setOffers(await offerOptions(session, m)); }).catch(() => {});
   }, [session]);
+  // Offres sans nom cochées par erreur (ancienne règle de rapprochement) : retirées.
+  useEffect(() => {
+    const bad = offerIds.filter(id => offers.some(o => o.id === id && squash(o.name).length < 4));
+    if (bad.length) setOfferIds(prev => prev.filter(id => !bad.includes(id)));
+  }, [offers, offerIds, setOfferIds]);
   // Offres cochées dont le nom est inconnu (archivées…) : nom réel récupéré.
   useEffect(() => {
     if (!meta) return;
@@ -3922,8 +3927,17 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
     return (i > 0 ? f.slice(0, i) : f).trim();
   };
   const squash = (t: string) => fold(t).replace(/[^a-z0-9]/g, "");
-  const offerFor = (name: string) => offers.find(o => squash(o.name) === squash(name))
-    || offers.find(o => squash(name).includes(squash(o.name)) || squash(o.name).includes(squash(name)));
+  // Offre du même nom que le modèle. Les offres au nom vide ou trop court sont
+  // ignorées : « "" » est contenu dans tous les noms, et l'offre n° 208 (sans
+  // nom) était cochée sur toutes les MEA. Sinon : le nom d'offre le plus long
+  // contenu dans celui du modèle, puis le plus court qui le contient.
+  const offerFor = (name: string) => {
+    const n = squash(name); if (n.length < 4) return undefined;
+    const named = offers.filter(o => squash(o.name).length >= 4);
+    return named.find(o => squash(o.name) === n)
+      || named.filter(o => n.includes(squash(o.name))).sort((a, b) => squash(b.name).length - squash(a.name).length)[0]
+      || named.filter(o => squash(o.name).includes(n)).sort((a, b) => squash(a.name).length - squash(b.name).length)[0];
+  };
   // MEA ajoutées ayant plusieurs variantes : variante en cours, suivie en continu.
   const [meaVariants, setMeaVariants] = useState<Record<string, { current: number; variants: MeaParsed[] }>>({});
 
@@ -4921,7 +4935,7 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
                       onChange={e => { const id = Number(e.target.value); if (id) setOfferIds(prev => prev.includes(id) ? prev : [...prev, id]); }}
                       style={{ flex: 1, minWidth: 120, height: 30, padding: "0 6px", borderRadius: 8, border: "1px solid rgba(255,255,255,0.12)", background: "rgba(255,255,255,0.06)", color: "rgba(255,255,255,0.75)", fontSize: 11.5, fontFamily: "inherit", colorScheme: "dark" as const }}>
                       <option value="">+ Offre commandée…</option>
-                      {offers.filter(o => !allOffers.some(a => a.id === o.id)).map(o => <option key={o.id} value={o.id}>{o.name}</option>)}
+                      {offers.filter(o => o.name.trim() && !allOffers.some(a => a.id === o.id)).map(o => <option key={o.id} value={o.id}>{o.name}</option>)}
                     </select>
                   </div>
                 )}

@@ -9,7 +9,7 @@ export const CHANGELOG: ChangelogEntry[] = [
     date: "2026-11-23",
     items: [
       "Panier : la date de début d'expédition de la MEA est gardée quand la MEA change de variante (ex. passage en « Standard ») et quand on reprend un brouillon — avant, elle disparaissait.",
-      "Panier : noms des offres commandées relus autrement quand la liste complète ne se charge pas (plus de « Offre n° 208 »).",
+      "Offres commandées : l'offre n° 208 (sans nom dans Odoo) n'est plus cochée automatiquement sur chaque MEA — le rapprochement par nom ignore les offres sans nom, et elle est retirée des paniers en cours.",
     ],
   },
   {
