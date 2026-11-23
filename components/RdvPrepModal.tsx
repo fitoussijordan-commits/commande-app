@@ -194,7 +194,8 @@ export default function RdvPrepModal({ session, client, onClose: onCloseProp, on
                             <thead>
                               <tr style={{ color: C.muted, fontSize: 11, textAlign: "right" }}>
                                 <th style={{ textAlign: "left", padding: "4px 6px" }}>Produit</th>
-                                <th style={{ padding: "4px 6px" }}>PU HT remisé MEA</th>
+                                <th style={{ padding: "4px 6px" }}>PU HT</th>
+                                <th style={{ padding: "4px 6px" }}>PU remisé MEA</th>
                                 <th style={{ padding: "4px 6px" }} title="Livré sur toute l'année précédente (mouvements de stock terminés, retours déduits, hors gratuités)">Achats N-1 (année)</th>
                                 <th style={{ padding: "4px 6px" }}>Achats N (à date)</th>
                                 <th style={{ padding: "4px 6px", textAlign: "center" }}>Proposition</th>
@@ -209,11 +210,10 @@ export default function RdvPrepModal({ session, client, onClose: onCloseProp, on
                                       <div style={{ fontWeight: 700, color: C.text }}>{p.name}</div>
                                       <div style={{ fontSize: 10.5, color: C.muted, fontFamily: "ui-monospace, monospace" }}>{p.code}{p.ean ? ` · ${p.ean}` : ""}</div>
                                     </td>
-                                    <td style={{ padding: "6px", textAlign: "right", color: C.textSec, whiteSpace: "nowrap" }}>
-                                      {p.meaPct > 0 ? <>
-                                        <div style={{ fontSize: 10.5, color: C.muted, textDecoration: "line-through" }}>{eur2(p.price)}</div>
-                                        <div style={{ fontWeight: 800, color: C.tealDark }}>{eur2(p.price * (1 - p.meaPct / 100))} <span style={{ fontSize: 10, color: C.orange }}>−{q(p.meaPct)} %</span></div>
-                                      </> : eur2(p.price)}
+                                    <td style={{ padding: "6px", textAlign: "right", color: C.textSec, whiteSpace: "nowrap" }}>{eur2(p.price)}</td>
+                                    <td style={{ padding: "6px", textAlign: "right", whiteSpace: "nowrap", fontWeight: 800, color: p.meaPct > 0 ? C.tealDark : C.textSec }}>
+                                      {eur2(p.price * (1 - (p.meaPct || 0) / 100))}
+                                      {p.meaPct > 0 && <div style={{ fontSize: 10, fontWeight: 700, color: C.orange }}>−{q(p.meaPct)} %</div>}
                                     </td>
                                     <td style={{ padding: "6px", textAlign: "right", fontWeight: 700, color: p.n1 ? C.text : C.muted }}>{q(p.n1)}</td>
                                     <td style={{ padding: "6px", textAlign: "right", color: p.n < p.n1 ? C.orange : C.green }}>{q(p.n)}</td>
