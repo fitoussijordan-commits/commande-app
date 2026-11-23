@@ -3637,6 +3637,11 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
     if (!missing.length) return;
     offerNamesByIds(session, meta, missing).then(found => {
       if (found.length) setOffers(prev => [...prev, ...found.filter(f => !prev.some(p => p.id === f.id))]);
+      // Offre illisible ou sans nom (ex. n° 208) alors que la liste des offres est
+      // chargée : retirée, elle ne doit pas partir sur la commande.
+      const named = new Set(found.filter(f => squash(f.name).length >= 4).map(f => f.id));
+      const drop = missing.filter(id => !named.has(id));
+      if (offers.length && drop.length) setOfferIds(prev => prev.filter(id => !drop.includes(id)));
     });
   }, [offerIds, offers, meta, session]);
   // Vue liste : une ligne par article, le panier prend toute la largeur.
