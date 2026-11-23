@@ -16,6 +16,7 @@ import * as odoo from "@/lib/odoo";
 import { useNetwork } from "@/lib/network";
 import * as sync from "@/lib/sync";
 import { getQueuedOrders, deleteQueuedOrder, QueuedOrder } from "@/lib/localdb";
+import { SHOW_PRODUCT_IMAGES } from "@/lib/features";
 
 function fmtDate(ts?: number): string {
   if (!ts) return "jamais";
@@ -86,10 +87,15 @@ export default function OfflineBar({
       const res = await sync.preloadCatalog(session, setProgress);
       // Rend visible un éventuel échec du chargement MEA (au lieu de l'ignorer).
       if (res.meaError) onToast?.("MEA non chargées : " + res.meaError, "error");
-      onToast?.(`Catalogue prêt : ${res.products} produits, ${res.clients} clients, ${res.mea} offres, ${res.loyalty} remises. Téléchargement des images…`, "success");
-      // Puis les images produit (le plus lourd) — reprend là où c'était si interrompu.
-      const img = await sync.preloadImages(session, setProgress);
-      onToast?.(`Hors-ligne prêt : ${res.products} produits, ${res.clients} clients, ${res.mea} offres, ${img.downloaded} images`, "success");
+      if (SHOW_PRODUCT_IMAGES) {
+        onToast?.(`Catalogue prêt : ${res.products} produits, ${res.clients} clients, ${res.mea} offres, ${res.loyalty} remises. Téléchargement des images…`, "success");
+        // Puis les images produit (le plus lourd) — reprend là où c'était si interrompu.
+        const img = await sync.preloadImages(session, setProgress);
+        onToast?.(`Hors-ligne prêt : ${res.products} produits, ${res.clients} clients, ${res.mea} offres, ${img.downloaded} images`, "success");
+      } else {
+        // Photos désactivées (lib/features.ts) : plus de téléchargement d'images.
+        onToast?.(`Hors-ligne prêt : ${res.products} produits, ${res.clients} clients, ${res.mea} offres, ${res.loyalty} remises`, "success");
+      }
       await refreshStatus();
     } catch (e: any) {
       const msg = e?.message || String(e);

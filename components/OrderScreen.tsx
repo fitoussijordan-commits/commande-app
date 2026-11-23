@@ -39,6 +39,7 @@ import { descToText, routeUrls, stripRouteLinks } from "@/lib/text";
 import { dedupeClients, NOT_SUPPLIER, getMineOnly, setMineOnly, mineDomain, isMine } from "@/lib/clients";
 import { eventOnDay, ALLDAY_FIELDS, linkedPartnerId } from "@/lib/calendar";
 import { pickClientAmong } from "@/lib/clients";
+import { SHOW_PRODUCT_IMAGES } from "@/lib/features";
 
 // ── Palette ───────────────────────────────────────────────────────────────────
 const C = {
@@ -436,7 +437,12 @@ async function getLoyaltyPrograms(session: odoo.OdooSession): Promise<loyalty.Lo
 // ═══════════════════════════════════════════════════════════════════════════
 // Image produit : privilégie l'image préchargée en local (offline), sinon le
 // proxy réseau. Rend le même <img> qu'avant, avec les styles passés en props.
-function ProductImage({ id, networkUrl, style }: { id: number; networkUrl: string; style: React.CSSProperties }) {
+// Photos désactivées (lib/features.ts) : rien n'est rendu ni chargé, le pictogramme
+// ou l'initiale de gamme placés derrière restent visibles.
+function ProductImage(props: { id: number; networkUrl: string; style: React.CSSProperties }) {
+  return SHOW_PRODUCT_IMAGES ? <ProductImageInner {...props} /> : null;
+}
+function ProductImageInner({ id, networkUrl, style }: { id: number; networkUrl: string; style: React.CSSProperties }) {
   const [src, setSrc] = useState<string>("");
   useEffect(() => {
     let alive = true;
@@ -3604,6 +3610,7 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
   const openZoom = async (p: any) => {
     setZoom(p);
     setZoomImg("");
+    if (!SHOW_PRODUCT_IMAGES) return;   // fiche article sans photo : rien à charger
     setZoomLoading(true);
     try {
       const r = await odoo.searchRead(session, "product.product", [["id", "=", p.id]], ["image_1024"], 1);
@@ -4502,7 +4509,7 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
                 const gifted = giftQtyById.get(p.id);
                 return (
                   <div key={p.id} style={{ display: "flex", flexWrap: "wrap" as const, rowGap: 4, alignItems: "center", gap: 10, padding: "6px 10px 6px 8px", borderTop: i ? `1px solid ${C.border}` : "none", borderLeft: `4px solid ${qty > 0 ? C.teal : "transparent"}`, background: qty > 0 ? C.tealSoft : C.white, transition: "background-color 0.25s ease, border-color 0.25s ease" }}>
-                    <div onClick={() => openZoom(p)} title="Agrandir l'image" style={{ width: 42, height: 42, flexShrink: 0, borderRadius: 9, background: C.bg, display: "flex", alignItems: "center", justifyContent: "center", cursor: "zoom-in", position: "relative" as const, overflow: "hidden" }}>
+                    <div onClick={() => openZoom(p)} title={SHOW_PRODUCT_IMAGES ? "Agrandir l'image" : "Détails de l'article"} style={{ width: 42, height: 42, flexShrink: 0, borderRadius: 9, background: C.bg, display: "flex", alignItems: "center", justifyContent: "center", cursor: "zoom-in", position: "relative" as const, overflow: "hidden" }}>
                       <div style={{ position: "absolute" }}><Icon name="package" size={18} color={C.border} /></div>
                       <ProductImage id={p.id} networkUrl={imgUrl(p.id)} style={{ height: 38, objectFit: "contain", position: "relative" as const, zIndex: 1 }} />
                     </div>
@@ -4549,7 +4556,7 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
                 const hasDiscount = priceItems.length > 0 && Math.abs(clientPrice - (p.lst_price || 0)) > 0.01;
                 return (
                   <div key={p.id} style={{ background: C.white, borderRadius: 14, overflow: "hidden", border: `2px solid ${qty > 0 ? C.teal : isFree ? C.green : C.border}`, boxShadow: qty > 0 ? `0 0 0 3px ${C.tealMid}` : C.shadow, transition: "border-color 0.25s ease, box-shadow 0.25s ease" }}>
-                    <div onClick={() => openZoom(p)} title="Agrandir l'image" style={{ height: 80, background: C.bg, display: "flex", alignItems: "center", justifyContent: "center", position: "relative" as const, cursor: "zoom-in" }}>
+                    <div onClick={() => openZoom(p)} title={SHOW_PRODUCT_IMAGES ? "Agrandir l'image" : "Détails de l'article"} style={{ height: 80, background: C.bg, display: "flex", alignItems: "center", justifyContent: "center", position: "relative" as const, cursor: "zoom-in" }}>
                       <div style={{ position: "absolute" }}><Icon name="package" size={30} color={C.border} /></div>
                       <ProductImage id={p.id} networkUrl={imgUrl(p.id)} style={{ height: 72, objectFit: "contain", position: "relative" as const, zIndex: 1 }} />
                       <div style={{ position: "absolute", bottom: 4, right: 4, background: "rgba(255,255,255,0.85)", borderRadius: 6, width: 20, height: 20, display: "flex", alignItems: "center", justifyContent: "center" }}>
@@ -5113,8 +5120,8 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
               style={{ position: "absolute", top: 12, right: 12, width: 32, height: 32, borderRadius: "50%", background: C.bg, border: `1px solid ${C.border}`, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1 }}>
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={C.text} strokeWidth="3"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
             </button>
-            {/* Image */}
-            <div style={{ height: 340, background: C.bg, display: "flex", alignItems: "center", justifyContent: "center", borderRadius: "16px 16px 0 0" }}>
+            {/* Image (masquée quand les photos sont désactivées) */}
+            {SHOW_PRODUCT_IMAGES && <div style={{ height: 340, background: C.bg, display: "flex", alignItems: "center", justifyContent: "center", borderRadius: "16px 16px 0 0" }}>
               {zoomLoading ? (
                 <TubeLoader size={72} />
               ) : zoomImg ? (
@@ -5122,9 +5129,9 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
               ) : (
                 <ProductImage id={zoom.id} networkUrl={imgUrl(zoom.id)} style={{ maxHeight: 200, maxWidth: "90%", objectFit: "contain" }} />
               )}
-            </div>
-            {/* Infos */}
-            <div style={{ padding: "16px 20px 20px" }}>
+            </div>}
+            {/* Infos — sans photo, on descend sous les boutons retour / fermer */}
+            <div style={{ padding: SHOW_PRODUCT_IMAGES ? "16px 20px 20px" : "56px 20px 20px" }}>
               <div style={{ fontSize: 11, color: C.muted, fontFamily: "monospace", marginBottom: 4 }}>{zoom.default_code}{zoom.barcode ? ` · EAN ${zoom.barcode}` : ""}</div>
               <div style={{ fontSize: 16, fontWeight: 700, color: C.text, lineHeight: 1.35, marginBottom: 10 }}>{zoom.name}</div>
               <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
