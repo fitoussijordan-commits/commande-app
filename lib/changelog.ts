@@ -8,6 +8,9 @@ export const CHANGELOG: ChangelogEntry[] = [
   {
     date: "2026-11-23",
     items: [
+      "Préparer le RDV : prix remisé de la MEA (prix barré + −15 %, −20 %…) et total calculé avec la remise de l'offre puis la remise client ; même prix remisé sur le BDC Excel.",
+      "Préparer le RDV : paliers écrits dans le nom (« 24 unités // 20% remise ») pris en compte pour la variante conseillée et la répartition.",
+      "Préparer le RDV : bouton « Créer le devis → » sous la proposition — ouvre le panier du client avec la variante choisie et les quantités proposées (gratuités, remise, offre et date d'expé de la MEA comprises), prêt à valider.",
       "L'app s'appelle maintenant « Flow » (écran d'accueil iPad / PWA, onglet du navigateur, écran de connexion).",
       "Achats N-1 / N (Préparer le RDV, BDC Excel, évolution par produit) et Palmarès : calculés sur les LIVRAISONS — mouvements de stock terminés vers le client, retours déduits, gratuités exclues. Les coffrets en nomenclature « kit » comptent dans leurs produits ; la date est celle de la livraison.",
       "Préparer le RDV : explication de la proposition corrigée — nom d'offre plus coupé (« fre découverte… »), et plus de mot « variante » pour une offre sans paliers.",

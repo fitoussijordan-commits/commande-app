@@ -100,7 +100,8 @@ export async function buildBdc(clients: BdcClient[], images?: BdcImages): Promis
     ws.getCell("G5").font = { italic: true, color: { argb: MUTED }, size: 9 };
 
     const head = ws.getRow(7);
-    head.values = ["", "Code article", "Désignation", "Code EAN", "PU HT €", "PPC TTC €", `Achats ${year - 1}\n(année complète)`, "Proposition commerciale",
+    const pcts = Array.from(new Set(c.products.map(p => p.meaPct || 0)));
+    head.values = ["", "Code article", "Désignation", "Code EAN", pcts.length === 1 && pcts[0] > 0 ? `PU HT €\n(remise MEA −${pcts[0]} %)` : pcts.some(x => x > 0) ? "PU HT €\n(remisé MEA)" : "PU HT €", "PPC TTC €", `Achats ${year - 1}\n(année complète)`, "Proposition commerciale",
       "Date de livraison 1\n…… / …… / ……", "Date de livraison 2\n…… / …… / ……", "Total Remisé HT €"];
     head.height = 36;
     head.eachCell((cell, col) => {
@@ -115,7 +116,7 @@ export async function buildBdc(clients: BdcClient[], images?: BdcImages): Promis
     const first = r;
     for (const p of c.products) {
       const row = ws.getRow(r);
-      row.values = ["", Number(p.code) || p.code, p.name, p.ean ? (Number(p.ean) || p.ean) : "", p.price, p.ppc || null, p.n1 || 0, p.proposal || 0, p.proposal || null, null];
+      row.values = ["", Number(p.code) || p.code, p.name, p.ean ? (Number(p.ean) || p.ean) : "", Math.round(p.price * (1 - (p.meaPct || 0) / 100) * 100) / 100, p.ppc || null, p.n1 || 0, p.proposal || 0, p.proposal || null, null];
       ws.getCell(`K${r}`).value = { formula: `((E${r}*I${r})+(E${r}*J${r}))*(1-$E$5)` } as any;
       for (const col of ["B", "C", "D", "E", "F", "G", "H", "I", "J", "K"]) {
         const cell = ws.getCell(`${col}${r}`);

@@ -754,6 +754,7 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
   // existant pour CE client précisément, puis entre dans le catalogue.
   // (La pricelist est déjà chargée par selectClient — pas de 2ᵉ appel redondant.)
   const enterOrderMode = () => { if (client) beginOrder(client); };
+  const [pendingQuote, setPendingQuote] = useState<{ templateId: number; qtys: Record<number, number> } | null>(null);
   const beginOrder = (client: any) => {
     setCart({});
     setNote("");
@@ -1609,6 +1610,7 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
 
       {step === "catalog" && client && (
         <CatalogStep session={session} cart={cart} onQtyChange={setQty} freeItems={freeItems}
+          pendingQuote={pendingQuote} onPendingQuoteDone={() => setPendingQuote(null)}
           onClearCart={group => {
             // Vider le panier (ou une seule MEA) en une fois.
             setCart(prev => group ? Object.fromEntries(Object.entries(prev).filter(([, i]) => i.group !== group)) as Record<number, CartItem> : {});
@@ -1649,7 +1651,12 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
       )}
 
       {showPrep && client && (
-        <RdvPrepModal session={session} client={client} onClose={() => setShowPrep(false)} onToast={onToast} />
+        <RdvPrepModal session={session} client={client} onClose={() => setShowPrep(false)} onToast={onToast}
+          onCreateQuote={(templateId, qtys) => {
+            // Nouveau panier pour ce client, la MEA y est chargée avec les quantités proposées.
+            setShowPrep(false); beginOrder(client); setResumePrompt(null);
+            setPendingQuote({ templateId, qtys });
+          }} />
       )}
 
       {showAppointment && client && (
@@ -3530,13 +3537,15 @@ function ClientHistory({ session, client }: { session: odoo.OdooSession; client:
 // ═══════════════════════════════════════════════════════════════════════════
 // ÉTAPE 2 — Catalogue + Panier persistant
 // ═══════════════════════════════════════════════════════════════════════════
-function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submitting, note, setNote, client, priceItems, onToast, appliedPromos, giftItems, setGiftItems, freeTypes, eventDiscount, setEventDiscount, shipping, minShipDate, onChangeExpedition, onAddNote, onNoteText, groupDiscounts, setGroupDiscounts, orderType, setOrderType, offerIds, setOfferIds, autoOffers, onTemplateApplied, onRenameGroup, onClearCart }: {
+function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submitting, note, setNote, client, priceItems, onToast, appliedPromos, giftItems, setGiftItems, freeTypes, eventDiscount, setEventDiscount, shipping, minShipDate, onChangeExpedition, onAddNote, onNoteText, groupDiscounts, setGroupDiscounts, orderType, setOrderType, offerIds, setOfferIds, autoOffers, onTemplateApplied, onRenameGroup, onClearCart, pendingQuote, onPendingQuoteDone }: {
   onAddNote: (text: string, kind?: "line_note" | "line_section", group?: string) => void;
   onNoteText: (id: number, text: string) => void;
   groupDiscounts: Record<string, number>; setGroupDiscounts: React.Dispatch<React.SetStateAction<Record<string, number>>>;
   orderType: string | number | ""; setOrderType: (v: string | number | "") => void;
   offerIds: number[]; setOfferIds: React.Dispatch<React.SetStateAction<number[]>>;
   autoOffers: { id: number; name: string }[];
+  pendingQuote?: { templateId: number; qtys: Record<number, number> } | null;   // proposition du RDV à charger
+  onPendingQuoteDone?: () => void;
   onTemplateApplied: (name: string, info: { note?: string; shipDate?: string; code?: string }) => void;
   onRenameGroup: (from: string, to: string) => void;
   onClearCart: (group?: string) => void;
@@ -3692,6 +3701,16 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
   // MEA au panier (brouillon repris…) : modèles chargés pour proposer les variantes.
   const hasMeaGroup = Object.values(cart).some(i => i.group && !/implantation/i.test(i.group));
   useEffect(() => { if (hasMeaGroup && !meaTemplates.length && !meaLoading) void loadMeaTemplates(); }, [hasMeaGroup]); // eslint-disable-line react-hooks/exhaustive-deps
+  // « Préparer le RDV » → « Créer le devis » : la variante choisie est ajoutée
+  // au panier avec les quantités proposées (gratuités, remise, offre comprises).
+  useEffect(() => {
+    if (!pendingQuote) return;
+    if (!meaTemplates.length) { if (!meaLoading) void loadMeaTemplates(); return; }
+    const t = meaTemplates.find((x: any) => x.id === pendingQuote.templateId);
+    onPendingQuoteDone?.();
+    if (!t) { onToast("Modèle de la MEA introuvable (archivé ?)", "error"); return; }
+    void applyMeaTemplate(t, pendingQuote.qtys);
+  }, [pendingQuote, meaTemplates.length, meaLoading]); // eslint-disable-line react-hooks/exhaustive-deps
   // Variantes disponibles d'une MEA du panier (même campagne, dans leur période).
   const variantsOfGroup = (group: string) => {
     const k = campaignKey(group);
@@ -3966,7 +3985,8 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
   // MEA ajoutées ayant plusieurs variantes : variante en cours, suivie en continu.
   const [meaVariants, setMeaVariants] = useState<Record<string, { current: number; variants: MeaParsed[] }>>({});
 
-  const applyMeaTemplate = async (template: any) => {
+  // qtys : quantités imposées (proposition de « Préparer le RDV ») au lieu de celles du modèle.
+  const applyMeaTemplate = async (template: any, qtys?: Record<number, number>) => {
     setApplyingMea(template.id);
     try {
       if (!(template.sale_order_template_line_ids || []).length) { onToast("Aucun produit dans cette offre", "error"); setApplyingMea(null); return; }
@@ -3982,7 +4002,8 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
       for (const row of v.rows) {
         // Rubriques et articles dans l'ordre du modèle.
         if ("note" in row) { onAddNote(row.note.name, row.note.type, template.name); continue; }
-        const it = row.item;
+        const it0 = row.item;
+        const it = qtys && it0.kind === "paid" ? { ...it0, qty: Math.max(0, qtys[it0.product.id] ?? 0) } : it0;
         const have = cart[it.product.id]?.qty || 0;
         if (it.kind === "paid") required[it.product.id] = (required[it.product.id] ?? have) + it.qty;
         // Article déjà dans un devis d'implantation : il passe dans la MEA, au prix

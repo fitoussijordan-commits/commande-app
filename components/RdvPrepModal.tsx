@@ -25,8 +25,9 @@ const STATUS = {
   todo: { label: "À proposer", color: C.red, bg: C.redSoft },
 };
 
-export default function RdvPrepModal({ session, client, onClose: onCloseProp, onToast }: {
+export default function RdvPrepModal({ session, client, onClose: onCloseProp, onToast, onCreateQuote }: {
   session: odoo.OdooSession; client: any; onClose: () => void;
+  onCreateQuote?: (templateId: number, qtys: Record<number, number>) => void;   // proposition → panier
   onToast: (msg: string, type?: "success" | "error" | "info") => void;
 }) {
   const [closing, onClose] = useExit(onCloseProp);
@@ -138,7 +139,8 @@ export default function RdvPrepModal({ session, client, onClose: onCloseProp, on
               const pc = viewOf(pc0);
               const st = STATUS[pc.status];
               const isOpen = open === pc.campaign.key;
-              const total = pc.products.reduce((s, p) => s + qtyOf(pc, p.product.id, p.proposal) * p.price, 0) * (1 - data.discount / 100);
+              // Prix remisé MEA (remise de l'offre), puis remise client.
+              const total = pc.products.reduce((s, p) => s + qtyOf(pc, p.product.id, p.proposal) * p.price * (1 - (p.meaPct || 0) / 100), 0) * (1 - data.discount / 100);
               const units = pc.products.reduce((s, p) => s + qtyOf(pc, p.product.id, p.proposal), 0);
               return (
                 <div key={pc.campaign.key} style={{ background: C.white, border: `1px solid ${C.border}`, borderLeft: `4px solid ${st.color}`, borderRadius: 14, overflow: "hidden" }}>
@@ -192,7 +194,7 @@ export default function RdvPrepModal({ session, client, onClose: onCloseProp, on
                             <thead>
                               <tr style={{ color: C.muted, fontSize: 11, textAlign: "right" }}>
                                 <th style={{ textAlign: "left", padding: "4px 6px" }}>Produit</th>
-                                <th style={{ padding: "4px 6px" }}>PU HT</th>
+                                <th style={{ padding: "4px 6px" }}>PU HT remisé MEA</th>
                                 <th style={{ padding: "4px 6px" }} title="Livré sur toute l'année précédente (mouvements de stock terminés, retours déduits, hors gratuités)">Achats N-1 (année)</th>
                                 <th style={{ padding: "4px 6px" }}>Achats N (à date)</th>
                                 <th style={{ padding: "4px 6px", textAlign: "center" }}>Proposition</th>
@@ -207,7 +209,12 @@ export default function RdvPrepModal({ session, client, onClose: onCloseProp, on
                                       <div style={{ fontWeight: 700, color: C.text }}>{p.name}</div>
                                       <div style={{ fontSize: 10.5, color: C.muted, fontFamily: "ui-monospace, monospace" }}>{p.code}{p.ean ? ` · ${p.ean}` : ""}</div>
                                     </td>
-                                    <td style={{ padding: "6px", textAlign: "right", color: C.textSec }}>{eur2(p.price)}</td>
+                                    <td style={{ padding: "6px", textAlign: "right", color: C.textSec, whiteSpace: "nowrap" }}>
+                                      {p.meaPct > 0 ? <>
+                                        <div style={{ fontSize: 10.5, color: C.muted, textDecoration: "line-through" }}>{eur2(p.price)}</div>
+                                        <div style={{ fontWeight: 800, color: C.tealDark }}>{eur2(p.price * (1 - p.meaPct / 100))} <span style={{ fontSize: 10, color: C.orange }}>−{q(p.meaPct)} %</span></div>
+                                      </> : eur2(p.price)}
+                                    </td>
                                     <td style={{ padding: "6px", textAlign: "right", fontWeight: 700, color: p.n1 ? C.text : C.muted }}>{q(p.n1)}</td>
                                     <td style={{ padding: "6px", textAlign: "right", color: p.n < p.n1 ? C.orange : C.green }}>{q(p.n)}</td>
                                     <td style={{ padding: "6px" }}>
@@ -234,6 +241,13 @@ export default function RdvPrepModal({ session, client, onClose: onCloseProp, on
                           style={{ height: 34, padding: "0 14px", borderRadius: 10, border: "none", background: pc.products.length ? C.teal : "#cbd5e1", color: "#fff", fontSize: 12.5, fontWeight: 800, cursor: pc.products.length ? "pointer" : "not-allowed", fontFamily: "inherit" }}>
                           {pc.products.length ? "Générer le BDC (Excel)" : "Pas de BDC pour cette offre"}
                         </button>
+                        {onCreateQuote && pc.chosen && pc.products.length > 0 && (
+                          <button onClick={() => onCreateQuote(pc.chosen!.id, Object.fromEntries(pc.products.map(p => [p.product.id, qtyOf(pc, p.product.id, p.proposal)])))}
+                            title="Ouvre le panier avec cette variante et ces quantités (gratuités et remise de la MEA comprises) — il reste à vérifier et créer le devis"
+                            style={{ height: 34, padding: "0 14px", borderRadius: 10, border: "none", background: C.tealDark, color: "#fff", fontSize: 12.5, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>
+                            Créer le devis →
+                          </button>
+                        )}
                       </div>
                     </div>
                   )}

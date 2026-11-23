@@ -17,6 +17,7 @@ export interface PrepProduct {
   product: any;
   code: string; name: string; ean: string;
   price: number;          // PU HT catalogue
+  meaPct: number;         // remise de la MEA sur ce produit (ligne du modèle ou « 20% remise » dans le nom)
   ppc: number;            // prix public conseillé TTC (0 si inconnu)
   templateQty: number;    // quantité du modèle (variante conseillée)
   n1: number;             // achats N-1 (année civile précédente)
@@ -149,10 +150,14 @@ const snap = (p: any, q: number) => { const s = saleStep(p); return q <= 0 ? 0 :
 
 // ── Modèles de devis d'une campagne → produits mis en avant, kit, variantes ──
 export interface TemplateCtx { tLines: any[]; tlm: { discount?: string; freeType?: string }; pMap: Map<number, any>; templates: any[] }
-export interface CampaignBase { campaign: MeaCampaign; variants: PrepVariant[]; tpls: any[]; prodLines: any[]; kit: { code: string; name: string }[]; linesOf: (tpl: any) => any[]; isKit: (l: any) => boolean; pMap: Map<number, any> }
+export interface CampaignBase { campaign: MeaCampaign; variants: PrepVariant[]; tpls: any[]; prodLines: any[]; kit: { code: string; name: string }[]; linesOf: (tpl: any) => any[]; isKit: (l: any) => boolean; pMap: Map<number, any>; discountField?: string }
 
 export const templatesOf = (templates: any[], c: MeaCampaign) =>
   fold(c.key) ? templates.filter(t => fold(String(t.name || "")).startsWith(fold(c.key)) && !/implantation/i.test(String(t.name))) : [];
+
+// Palier et remise écrits dans le nom du modèle : « Standard (24 unités // 20% remise) ».
+export const nameUnits = (n: string) => Number((/(\d+)\s*unit[ée]s?/i.exec(n) || [])[1]) || 0;
+export const namePct = (n: string) => Number(((/(\d+(?:[.,]\d+)?)\s*%\s*(?:de\s+)?remise/i.exec(n) || [])[1] || "0").replace(",", ".")) || 0;
 
 // Produit de VENTE (référence en 1…) : seul repris sur le BDC. Les séparateurs
 // (« ----- Éléments de PLV … ----- », S01/S02), testeurs, PLV et kits ne le sont pas.
@@ -165,7 +170,7 @@ export function campaignBase(ctx: TemplateCtx, c: MeaCampaign): CampaignBase {
   const isSaleLine = (l: any) => isSaleProduct(ctx.pMap.get(m2oId(l.product_id)!));
   const variants: PrepVariant[] = tpls.map(tpl => ({
     id: tpl.id, name: String(tpl.name),
-    total: linesOf(tpl).filter(l => !isKit(l) && isSaleLine(l)).reduce((s, l) => s + (Number(l.product_uom_qty) || 0), 0),
+    total: linesOf(tpl).filter(l => !isKit(l) && isSaleLine(l)).reduce((s, l) => s + (Number(l.product_uom_qty) || 0), 0) || nameUnits(String(tpl.name || "")),
   })).sort((a, b) => a.total - b.total);
   const seen = new Set<number>(); const kitSeen = new Set<number>();
   const prodLines: any[] = []; const kit: { code: string; name: string }[] = [];
@@ -175,7 +180,7 @@ export function campaignBase(ctx: TemplateCtx, c: MeaCampaign): CampaignBase {
     if (!isSaleProduct(p)) continue;
     if (!seen.has(pid)) { seen.add(pid); prodLines.push(p); }
   }
-  return { campaign: c, variants, tpls, prodLines, kit, linesOf, isKit, pMap: ctx.pMap };
+  return { campaign: c, variants, tpls, prodLines, kit, linesOf, isKit, pMap: ctx.pMap, discountField: ctx.tlm.discount };
 }
 
 // Proposition pour UNE variante (modèle de devis) : ses produits de vente,
@@ -186,20 +191,26 @@ function proposeFor(base: CampaignBase, chosen: PrepVariant, n1Map: Map<number, 
   const tpl = tpls.find(tp => tp.id === chosen.id);
   const lines = tpl ? linesOf(tpl) : [];
   const qtyBy = new Map<number, number>(); const order: number[] = [];
+  const pctBy = new Map<number, number>();
+  const tplPct = namePct(String(tpl?.name || ""));
   const freeBy = new Map<number, number>(); const freeOrder: number[] = [];
   for (const l of lines) {
     const pid = m2oId(l.product_id)!; const p = pMap.get(pid);
     if (!p || !isSaleProduct(p)) continue;
     const qn = Number(l.product_uom_qty) || 0;
     if (isKit(l)) { if (!freeBy.has(pid)) freeOrder.push(pid); freeBy.set(pid, (freeBy.get(pid) || 0) + qn); }
-    else { if (!qtyBy.has(pid)) order.push(pid); qtyBy.set(pid, (qtyBy.get(pid) || 0) + qn); }
+    else {
+      if (!qtyBy.has(pid)) order.push(pid); qtyBy.set(pid, (qtyBy.get(pid) || 0) + qn);
+      const d = base.discountField ? Number(l[base.discountField]) || 0 : 0;
+      pctBy.set(pid, d > 0 && d < 99.99 ? d : tplPct);
+    }
   }
   const products: PrepProduct[] = order.map(pid => {
     const p = pMap.get(pid);
     const { code, name } = splitCode(String(p.name || ""));
     return {
       product: p, code: String(p.default_code || code), name: name.replace(/\u200b/g, ""), ean: String(p.barcode || ""),
-      price: Number(p.lst_price) || 0, ppc: ppcOf(p), templateQty: qtyBy.get(pid) || 0,
+      price: Number(p.lst_price) || 0, meaPct: pctBy.get(pid) || 0, ppc: ppcOf(p), templateQty: qtyBy.get(pid) || 0,
       n1: n1Map.get(pid)?.qty || 0, n: nMap.get(pid)?.qty || 0, proposal: 0,
     };
   });
