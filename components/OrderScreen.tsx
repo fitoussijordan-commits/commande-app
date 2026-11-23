@@ -3667,15 +3667,37 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
     setGiftItems([]); setGroupDiscounts({}); setOfferIds([]); setMeaVariants({}); setEventDiscount(0);
     onToast("Panier vidé", "info");
   };
-  const removeGroup = (group: string) => {
-    if (!window.confirm(`Retirer « ${group} » du panier ?\n\nSes articles, rubriques et gratuités seront retirés.`)) return;
+  const removeGroup = (group: string, silent = false) => {
+    if (!silent && !window.confirm(`Retirer « ${group} » du panier ?\n\nSes articles, rubriques et gratuités seront retirés.`)) return;
     onClearCart(group);
     setGiftItems(prev => prev.filter(g => g.cond?.label !== group));
     setGroupDiscounts(prev => { const n = { ...prev }; delete n[group]; return n; });
     const offer = offerFor(group);
     if (offer) setOfferIds(prev => prev.filter(id => id !== offer.id));
     setMeaVariants(prev => Object.fromEntries(Object.entries(prev).filter(([, g]) => !g.variants.some(v => v.name === group))));
-    onToast(`${group} retiré du panier`, "info");
+    if (!silent) onToast(`${group} retiré du panier`, "info");
+  };
+  // Changer de variante depuis le panier : la MEA est retirée puis la variante
+  // choisie est ajoutée (une fois le panier mis à jour, pour repartir de zéro).
+  const [pendingVariant, setPendingVariant] = useState<{ from: string; template: any } | null>(null);
+  const switchVariant = (group: string, template: any) => {
+    if (template.name === group) return;
+    removeGroup(group, true);
+    setPendingVariant({ from: group, template });
+  };
+  useEffect(() => {
+    if (!pendingVariant || Object.values(cart).some(i => i.group === pendingVariant.from)) return;
+    const t = pendingVariant.template; setPendingVariant(null);
+    void applyMeaTemplate(t);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cart, pendingVariant]);
+  // MEA au panier (brouillon repris…) : modèles chargés pour proposer les variantes.
+  const hasMeaGroup = Object.values(cart).some(i => i.group && !/implantation/i.test(i.group));
+  useEffect(() => { if (hasMeaGroup && !meaTemplates.length && !meaLoading) void loadMeaTemplates(); }, [hasMeaGroup]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Variantes disponibles d'une MEA du panier (même campagne, dans leur période).
+  const variantsOfGroup = (group: string) => {
+    const k = campaignKey(group);
+    return meaTemplates.filter((t: any) => !isImplantTemplate(t) && inPeriod(t) && campaignKey(String(t.name || "")) === k);
   };
   const toggleRecap = () => setRecapOpen(o => { try { localStorage.setItem("wms_recap_open", o ? "0" : "1"); } catch {} return !o; });
   // Type de gratuité appliqué à toutes les gratuités (Coffre DC par défaut).
@@ -4643,6 +4665,19 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
                       {sepLabel}
                     </span>
                     <span style={{ flex: 1, height: 1, background: item.group ? C.tealMid : C.border }} />
+                    {/* Plusieurs variantes pour cette MEA : liste pour en changer */}
+                    {item.group && !/implantation/i.test(item.group) && (() => {
+                      const vs = variantsOfGroup(item.group);
+                      if (vs.length < 2) return null;
+                      return (
+                        <select value={vs.find((t: any) => t.name === item.group)?.id ?? ""} title="Changer de variante"
+                          onChange={e => { const t = vs.find((x: any) => x.id === Number(e.target.value)); if (t) switchVariant(item.group!, t); }}
+                          style={{ flexShrink: 0, maxWidth: 170, height: 26, padding: "0 6px", borderRadius: 999, border: `1px solid ${C.teal}55`, background: C.tealSoft, color: C.tealDark, fontSize: 11, fontWeight: 700, fontFamily: "inherit", cursor: "pointer" }}>
+                          {!vs.some((t: any) => t.name === item.group) && <option value="">Variante…</option>}
+                          {vs.map((t: any) => <option key={t.id} value={t.id}>{String(t.name).slice(String(t.name).lastIndexOf(" - ") + 3) || t.name}</option>)}
+                        </select>
+                      );
+                    })()}
                     {/* Retirer toute la MEA en un tap */}
                     {item.group && (
                       <button onClick={() => removeGroup(item.group!)} title={`Retirer « ${item.group} » du panier`}
