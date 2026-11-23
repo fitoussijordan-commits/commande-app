@@ -8,7 +8,7 @@ export const CHANGELOG: ChangelogEntry[] = [
   {
     date: "2026-11-23",
     items: [
-      "Catalogue : cartes articles plus compactes (prix barré sur la même ligne, bouton Offrir 🎁 à côté des quantités) — au moins 12 articles visibles à l'écran.",
+      "Catalogue : cartes articles plus compactes (prix barré sur la même ligne, bouton Offrir 🎁 à côté des quantités) — au moins 12 articles visibles à l'écran ; prix plus petit et plus de pastille « min » sur les cartes.",
       "Saisie de commande : le code EAN s'affiche dans une pastille bleue (texte normal, pas en gras), bien distinct de la référence (catalogue et panier).",
       "Catalogue : nouvelle gamme « Produit vente » (Visage, Régénérant, Corps, Hygiène, Med, Maquillage), sélectionnée par défaut.",
       "Catalogue : articles triés par référence (code article), ordre croissant — sauf les Favoris.",

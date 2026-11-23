@@ -4635,9 +4635,8 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
                     <div style={{ padding: "6px 8px 8px" }}>
                       <div style={{ fontSize: 10, color: C.textSec, fontFamily: "monospace", marginBottom: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>{p.default_code}{p.barcode ? <>{p.default_code ? " " : ""}<Ean code={p.barcode} /></> : null}</div>
                       <div style={{ fontSize: 12, fontWeight: 600, color: C.text, lineHeight: 1.25, height: 30, overflow: "hidden" }}>{p.name}</div>
-                      {saleStep(p) > 1 && (
-                        <div style={{ fontSize: 10, fontWeight: 700, color: C.tealDark, background: C.tealSoft, borderRadius: 5, padding: "1px 6px", marginTop: 2, display: "inline-block" }}>min {saleStep(p)}</div>
-                      )}
+                      {/* Pas de pastille « min N » en mode carte (place) : le pas de vente
+                           reste appliqué par les boutons − / + et le pavé numérique. */}
                       {activeCatId === FAV_CAT_ID && p.totalQty != null && (
                         <div style={{ fontSize: 10, fontWeight: 700, color: C.orange, background: C.orangeSoft, borderRadius: 5, padding: "2px 6px", marginTop: 3, display: "inline-block" }}>
                           {Math.round(p.totalQty)} commandé{Math.round(p.totalQty) > 1 ? "s" : ""} · {p.times} fois
@@ -4647,8 +4646,8 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
                       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 4, marginTop: 3, marginBottom: 4 }}>
                         <div style={{ minWidth: 0 }}>
                           <div style={{ display: "flex", alignItems: "baseline", gap: 5, whiteSpace: "nowrap" as const }}>
-                            <span style={{ fontSize: 14, fontWeight: 800, color: hasDiscount ? C.green : C.tealDark }}>{clientPrice > 0 ? fmtPrice(clientPrice) : "—"}</span>
-                            {hasDiscount && <span style={{ fontSize: 10, color: C.muted, textDecoration: "line-through" }}>{fmtPrice(p.lst_price)}</span>}
+                            <span style={{ fontSize: 12, fontWeight: 800, color: hasDiscount ? C.green : C.tealDark }}>{clientPrice > 0 ? fmtPrice(clientPrice) : "—"}</span>
+                            {hasDiscount && <span style={{ fontSize: 9.5, color: C.muted, textDecoration: "line-through" }}>{fmtPrice(p.lst_price)}</span>}
                           </div>
                           {ppcOf(p) > 0 && <div title="Prix public conseillé" style={{ fontSize: 9.5, color: C.muted, lineHeight: 1.2 }}>PPC {fmtPrice(ppcOf(p))}</div>}
                         </div>
