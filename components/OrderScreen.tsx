@@ -4593,7 +4593,7 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
               })}
             </div>
           ) : (
-            <div className="stagger" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(172px, 1fr))", gap: 10 }}>
+            <div className="stagger" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(172px, 1fr))", gap: 8 }}>
               {displayedProducts.map(p => {
                 const qty = cart[p.id]?.qty || 0;
                 const isFree = freeProductIds.has(p.id);
@@ -4622,7 +4622,7 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
                     ) : (isFree || Array.isArray(p.x_offre_produit_id)) && (
                       // Sans photo : seuls les badges « OFFERT » et offre restent, en tête de carte.
                       // (La quantité est déjà dans le stepper et la bordure de la carte.)
-                      <div style={{ display: "flex", gap: 4, padding: "8px 10px 0", minWidth: 0 }}>
+                      <div style={{ display: "flex", gap: 4, padding: "6px 8px 0", minWidth: 0 }}>
                         {isFree && <div className="badge-in" style={{ flexShrink: 0, background: C.green, color: "#fff", fontSize: 9, fontWeight: 700, borderRadius: 5, padding: "2px 5px" }}>OFFERT</div>}
                         {Array.isArray(p.x_offre_produit_id) && (
                           <div title={`Offre : ${p.x_offre_produit_id[1]}`} style={{ flex: 1, minWidth: 0, background: C.orange, color: "#fff", fontSize: 9.5, fontWeight: 800, borderRadius: 5, padding: "2px 6px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const, textAlign: "center" as const }}>
@@ -4631,38 +4631,45 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
                         )}
                       </div>
                     )}
-                    <div style={{ padding: "8px 10px 10px" }}>
-                      <div style={{ fontSize: 10.5, color: C.textSec, fontFamily: "monospace", marginBottom: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>{p.default_code}{p.barcode ? <>{p.default_code ? " " : ""}<Ean code={p.barcode} /></> : null}</div>
-                      <div style={{ fontSize: 12.5, fontWeight: 600, color: C.text, lineHeight: 1.3, height: 33, overflow: "hidden" }}>{p.name}</div>
+                    {/* Carte compacte : 12 articles et plus visibles sur un écran d'iPad / PC */}
+                    <div style={{ padding: "6px 8px 8px" }}>
+                      <div style={{ fontSize: 10, color: C.textSec, fontFamily: "monospace", marginBottom: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>{p.default_code}{p.barcode ? <>{p.default_code ? " " : ""}<Ean code={p.barcode} /></> : null}</div>
+                      <div style={{ fontSize: 12, fontWeight: 600, color: C.text, lineHeight: 1.25, height: 30, overflow: "hidden" }}>{p.name}</div>
                       {saleStep(p) > 1 && (
-                        <div style={{ fontSize: 10, fontWeight: 700, color: C.tealDark, background: C.tealSoft, borderRadius: 5, padding: "1px 6px", marginTop: 3, display: "inline-block" }}>min {saleStep(p)}</div>
+                        <div style={{ fontSize: 10, fontWeight: 700, color: C.tealDark, background: C.tealSoft, borderRadius: 5, padding: "1px 6px", marginTop: 2, display: "inline-block" }}>min {saleStep(p)}</div>
                       )}
                       {activeCatId === FAV_CAT_ID && p.totalQty != null && (
                         <div style={{ fontSize: 10, fontWeight: 700, color: C.orange, background: C.orangeSoft, borderRadius: 5, padding: "2px 6px", marginTop: 3, display: "inline-block" }}>
                           {Math.round(p.totalQty)} commandé{Math.round(p.totalQty) > 1 ? "s" : ""} · {p.times} fois
                         </div>
                       )}
-                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 5, marginBottom: 6 }}>
-                        <div style={{ display: "flex", flexDirection: "column" as const, gap: 1 }}>
-                          <span style={{ fontSize: 15, fontWeight: 800, color: hasDiscount ? C.green : C.tealDark }}>{clientPrice > 0 ? fmtPrice(clientPrice) : "—"}</span>
-                          {hasDiscount && <span style={{ fontSize: 10, color: C.muted, textDecoration: "line-through" }}>{fmtPrice(p.lst_price)}</span>}
-                          {ppcOf(p) > 0 && <span title="Prix public conseillé" style={{ fontSize: 9.5, color: C.muted }}>PPC {fmtPrice(ppcOf(p))}</span>}
+                      {/* Prix client + prix barré sur une seule ligne */}
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 4, marginTop: 3, marginBottom: 4 }}>
+                        <div style={{ minWidth: 0 }}>
+                          <div style={{ display: "flex", alignItems: "baseline", gap: 5, whiteSpace: "nowrap" as const }}>
+                            <span style={{ fontSize: 14, fontWeight: 800, color: hasDiscount ? C.green : C.tealDark }}>{clientPrice > 0 ? fmtPrice(clientPrice) : "—"}</span>
+                            {hasDiscount && <span style={{ fontSize: 10, color: C.muted, textDecoration: "line-through" }}>{fmtPrice(p.lst_price)}</span>}
+                          </div>
+                          {ppcOf(p) > 0 && <div title="Prix public conseillé" style={{ fontSize: 9.5, color: C.muted, lineHeight: 1.2 }}>PPC {fmtPrice(ppcOf(p))}</div>}
                         </div>
-                        <span style={{ fontSize: 10.5, fontWeight: 600, color: stock > 0 ? C.green : C.red, background: stock > 0 ? C.greenSoft : C.redSoft, borderRadius: 5, padding: "2px 6px" }}>{stock > 0 ? stock : "Rupture"}</span>
+                        <span style={{ flexShrink: 0, fontSize: 10.5, fontWeight: 600, color: stock > 0 ? C.green : C.red, background: stock > 0 ? C.greenSoft : C.redSoft, borderRadius: 5, padding: "2px 6px" }}>{stock > 0 ? stock : "Rupture"}</span>
                       </div>
-                      {/* Stepper tactile : boutons 44px (norme Apple), chiffre TAPABLE → pavé numérique */}
-                      <div style={{ display: "flex", background: qty > 0 ? C.tealSoft : C.bg, borderRadius: 10, overflow: "hidden", border: `1px solid ${qty > 0 ? C.tealMid : C.border}` }}>
-                        <button onClick={() => onQtyChange(p, qty - 1, clientPrice)} style={{ flex: 1, height: 44, background: "transparent", border: "none", cursor: "pointer", fontSize: 20, fontWeight: 700, color: qty > 0 ? C.red : C.muted, lineHeight: 1 }}>−</button>
-                        <button onClick={() => setPad({ product: p, price: clientPrice })} title="Saisir une quantité"
-                          style={{ flex: 1.2, height: 44, background: "transparent", border: "none", borderLeft: `1px solid ${qty > 0 ? C.tealMid : C.border}`, borderRight: `1px solid ${qty > 0 ? C.tealMid : C.border}`, cursor: "pointer", fontSize: 16, fontWeight: 800, color: qty > 0 ? C.tealDark : C.muted, fontFamily: "inherit" }}>
-                          <span key={qty} className="qty-pop">{qty}</span>
+                      {/* Stepper (36 px) + bouton Offrir sur la même ligne. Chiffre TAPABLE → pavé numérique */}
+                      <div style={{ display: "flex", gap: 5 }}>
+                        <div style={{ flex: 1, minWidth: 0, display: "flex", background: qty > 0 ? C.tealSoft : C.bg, borderRadius: 9, overflow: "hidden", border: `1px solid ${qty > 0 ? C.tealMid : C.border}` }}>
+                          <button onClick={() => onQtyChange(p, qty - 1, clientPrice)} aria-label="Moins" style={{ flex: 1, height: 36, background: "transparent", border: "none", cursor: "pointer", fontSize: 18, fontWeight: 700, color: qty > 0 ? C.red : C.muted, lineHeight: 1, padding: 0 }}>−</button>
+                          <button onClick={() => setPad({ product: p, price: clientPrice })} title="Saisir une quantité"
+                            style={{ flex: 1.2, height: 36, background: "transparent", border: "none", borderLeft: `1px solid ${qty > 0 ? C.tealMid : C.border}`, borderRight: `1px solid ${qty > 0 ? C.tealMid : C.border}`, cursor: "pointer", fontSize: 15, fontWeight: 800, color: qty > 0 ? C.tealDark : C.muted, fontFamily: "inherit", padding: 0 }}>
+                            <span key={qty} className="qty-pop">{qty}</span>
+                          </button>
+                          <button onClick={() => onQtyChange(p, qty + 1, clientPrice)} aria-label="Plus" style={{ flex: 1, height: 36, background: "transparent", border: "none", cursor: "pointer", fontSize: 18, fontWeight: 700, color: C.teal, lineHeight: 1, padding: 0 }}>+</button>
+                        </div>
+                        <button onClick={() => offerGift(p)} title={giftQtyById.has(p.id) ? `Offert ×${giftQtyById.get(p.id)} — offrir une unité de plus` : "Offrir une unité (type de gratuité choisi dans le panier)"}
+                          aria-label="Offrir"
+                          style={{ flexShrink: 0, minWidth: 36, height: 38, padding: "0 6px", background: giftQtyById.has(p.id) ? C.green : C.greenSoft, color: giftQtyById.has(p.id) ? "#fff" : C.green, border: `1px solid ${C.green}44`, borderRadius: 9, cursor: "pointer", fontFamily: "inherit", fontSize: 11, fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center", gap: 3 }}>
+                          <Icon name="gift" size={15} />{giftQtyById.has(p.id) && <span>×{giftQtyById.get(p.id)}</span>}
                         </button>
-                        <button onClick={() => onQtyChange(p, qty + 1, clientPrice)} style={{ flex: 1, height: 44, background: "transparent", border: "none", cursor: "pointer", fontSize: 20, fontWeight: 700, color: C.teal, lineHeight: 1 }}>+</button>
                       </div>
-                      <button onClick={() => offerGift(p)} title="Offrir une unité (type de gratuité choisi dans le panier)"
-                        style={{ width: "100%", marginTop: 6, padding: "6px 0", background: giftQtyById.has(p.id) ? C.green : C.greenSoft, color: giftQtyById.has(p.id) ? "#fff" : C.green, border: `1px solid ${C.green}44`, borderRadius: 8, cursor: "pointer", fontFamily: "inherit", fontSize: 11, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", gap: 5 }}>
-                        <Icon name="gift" size={12} /> {giftQtyById.has(p.id) ? `Offert ×${giftQtyById.get(p.id)}` : "Offrir"}
-                      </button>
                     </div>
                   </div>
                 );
