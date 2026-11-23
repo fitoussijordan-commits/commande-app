@@ -20,9 +20,13 @@ interface Props {
   onLogin: (session: odoo.OdooSession) => void;
 }
 
+// Valeurs proposées à la toute première connexion (aucune config enregistrée).
+const DEFAULT_URL = "https://wala-prod-test35-40892627.dev.odoo.com";
+const DEFAULT_DB = "wala-prod-test35-40892627";
+
 export default function LoginScreen({ onLogin }: Props) {
-  const [url, setUrl] = useState("");
-  const [db, setDb] = useState("");
+  const [url, setUrl] = useState(DEFAULT_URL);
+  const [db, setDb] = useState(DEFAULT_DB);
   const [login, setLogin] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
@@ -33,8 +37,8 @@ export default function LoginScreen({ onLogin }: Props) {
       const raw = localStorage.getItem(LS_CONFIG);
       if (raw) {
         const cfg = JSON.parse(raw);
-        setUrl(cfg.url || "");
-        setDb(cfg.db || "");
+        setUrl(cfg.url || DEFAULT_URL);
+        setDb(cfg.db || DEFAULT_DB);
         setLogin(cfg.login || "");
       }
     } catch {}
