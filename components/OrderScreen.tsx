@@ -2561,6 +2561,14 @@ function eventTitle(e: any): string {
 }
 
 // Étiquette « Offre produit » d'un article dans le panier.
+// Code EAN : pastille bleue, pour le distinguer d'un coup d'œil de la référence
+// (gris) pendant la saisie de commande.
+function Ean({ code }: { code: string }) {
+  return (
+    <span title={`EAN ${code}`} style={{ display: "inline-block", fontFamily: "monospace", fontWeight: 600, color: "#1d4ed8", background: "#eff6ff", border: "1px solid #bfdbfe", borderRadius: 5, padding: "0 4px", lineHeight: 1.35, verticalAlign: "baseline" }}>{code}</span>
+  );
+}
+
 function OfferTag({ name }: { name: string }) {
   return (
     <span title={`Offre : ${name}`} style={{ flexShrink: 1, minWidth: 0, maxWidth: 150, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const, fontSize: 10, fontWeight: 800, color: "#fff", background: C.orange, borderRadius: 5, padding: "2px 6px" }}>
@@ -4518,7 +4526,7 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
                     <div style={{ flex: "1 1 190px", minWidth: 0 }}>
                       <div style={{ fontSize: 13, fontWeight: 600, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>{p.name}</div>
                       <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 1, minWidth: 0 }}>
-                        <span style={{ fontSize: 10.5, color: C.textSec, fontFamily: "monospace", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>{p.default_code}{p.barcode ? ` · ${p.barcode}` : ""}</span>
+                        <span style={{ fontSize: 10.5, color: C.textSec, fontFamily: "monospace", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>{p.default_code}{p.barcode ? <>{p.default_code ? " " : ""}<Ean code={p.barcode} /></> : null}</span>
                         {saleStep(p) > 1 && <span style={{ flexShrink: 0, fontSize: 10, fontWeight: 700, color: C.tealDark, background: C.tealMid, borderRadius: 5, padding: "0 5px" }}>min {saleStep(p)}</span>}
                         {Array.isArray(p.x_offre_produit_id) && <OfferTag name={p.x_offre_produit_id[1]} />}
                       </div>
@@ -4586,7 +4594,7 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
                       </div>
                     )}
                     <div style={{ padding: "8px 10px 10px" }}>
-                      <div style={{ fontSize: 10.5, color: C.textSec, fontFamily: "monospace", marginBottom: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>{p.default_code}{p.barcode ? ` · ${p.barcode}` : ""}</div>
+                      <div style={{ fontSize: 10.5, color: C.textSec, fontFamily: "monospace", marginBottom: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>{p.default_code}{p.barcode ? <>{p.default_code ? " " : ""}<Ean code={p.barcode} /></> : null}</div>
                       <div style={{ fontSize: 12.5, fontWeight: 600, color: C.text, lineHeight: 1.3, height: 33, overflow: "hidden" }}>{p.name}</div>
                       {saleStep(p) > 1 && (
                         <div style={{ fontSize: 10, fontWeight: 700, color: C.tealDark, background: C.tealSoft, borderRadius: 5, padding: "1px 6px", marginTop: 3, display: "inline-block" }}>min {saleStep(p)}</div>
@@ -4754,7 +4762,7 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
                     <span title={stockOk ? "En stock" : `Stock insuffisant : ${Math.floor(item.product.virtual_available || 0)} dispo`}
                       style={{ width: 8, height: 8, borderRadius: "50%", flexShrink: 0, background: stockOk ? C.green : C.red }} />
                     <span style={{ width: 78, flexShrink: 0, fontSize: 11, fontFamily: "monospace", color: C.muted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>{item.product.default_code}</span>
-                    <span style={{ width: 108, flexShrink: 0, fontSize: 11, fontFamily: "monospace", color: C.muted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>{item.product.barcode || ""}</span>
+                    <span style={{ width: 108, flexShrink: 0, fontSize: 11, fontFamily: "monospace", color: C.muted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>{item.product.barcode ? <Ean code={item.product.barcode} /> : ""}</span>
                     <span style={{ flex: 1, minWidth: 0, fontSize: 12.5, fontWeight: 600, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>{item.product.name}</span>
                     {Array.isArray(item.product.x_offre_produit_id) && <OfferTag name={item.product.x_offre_produit_id[1]} />}
                     <div style={{ display: "flex", alignItems: "center", gap: 3, flexShrink: 0 }}>
@@ -4773,7 +4781,9 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
                 (() => {
                   const dot = <span title={stockOk ? "En stock" : `Stock insuffisant : ${Math.floor(item.product.virtual_available || 0)} dispo`}
                     style={{ width: 8, height: 8, borderRadius: "50%", flexShrink: 0, background: stockOk ? C.green : C.red }} />;
-                  const refs = [item.product.default_code, item.product.barcode].filter(Boolean).join(" · ");
+                  const refs = (item.product.default_code || item.product.barcode)
+                    ? <>{item.product.default_code}{item.product.barcode ? <>{item.product.default_code ? " " : ""}<Ean code={item.product.barcode} /></> : null}</>
+                    : null;
                   const disc = (pricelistPct > 0 || pct + groupPct > 0) && (
                     <span style={{ flexShrink: 0, fontSize: 10.5, fontWeight: 700, color: C.orange }}>−{Math.min(100, pricelistPct + pct + groupPct)}%</span>
                   );
@@ -5146,7 +5156,7 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
             </div>}
             {/* Infos — sans photo, on descend sous les boutons retour / fermer */}
             <div style={{ padding: SHOW_PRODUCT_IMAGES ? "16px 20px 20px" : "56px 20px 20px" }}>
-              <div style={{ fontSize: 11, color: C.muted, fontFamily: "monospace", marginBottom: 4 }}>{zoom.default_code}{zoom.barcode ? ` · EAN ${zoom.barcode}` : ""}</div>
+              <div style={{ fontSize: 11, color: C.muted, fontFamily: "monospace", marginBottom: 4 }}>{zoom.default_code}{zoom.barcode ? <> <Ean code={zoom.barcode} /></> : null}</div>
               <div style={{ fontSize: 16, fontWeight: 700, color: C.text, lineHeight: 1.35, marginBottom: 10 }}>{zoom.name}</div>
               <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
                 <span style={{ fontSize: 18, fontWeight: 800, color: C.tealDark }}>

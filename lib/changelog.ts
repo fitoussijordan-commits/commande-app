@@ -8,6 +8,7 @@ export const CHANGELOG: ChangelogEntry[] = [
   {
     date: "2026-11-23",
     items: [
+      "Saisie de commande : le code EAN s'affiche dans une pastille bleue, bien distinct de la référence (catalogue et panier).",
       "Flow dans Odoo : module Odoo 19 « flow_app » — la même app, ouverte depuis le menu Flow d'Odoo (adresse /flow/), sans écran de connexion (on utilise la session Odoo).",
       "Hors ligne (navigateur) : l'app s'ouvre maintenant sans réseau, même après avoir fermé et relancé le navigateur — il faut l'avoir ouverte une fois avec du réseau. Avant : erreur du navigateur (NS_ERROR_OFFLINE sous Firefox).",
       "Articles sans photo : plus aucune image produit chargée ni d'emplacement photo (catalogue en grille et en liste, gammes, « Télécharger les données ») — l'app est plus rapide et les cartes plus compactes. Les photos du BDC Excel restent.",
