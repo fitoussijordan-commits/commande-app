@@ -4204,10 +4204,10 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
 
   const viewProducts = activeCatId === FAV_CAT_ID
       ? favProducts
-      // « Produit vente » : vue par défaut. Une RECHERCHE y porte sur tout le
-      // catalogue (testeurs, PLV… inclus) — sinon une réf. hors gamme serait introuvable.
+      // « Produit vente » (vue par défaut) : comme les autres gammes, la recherche
+      // reste dans la gamme affichée.
       : activeCatId === VENTE_CAT_ID
-        ? (isSearching ? allProducts : allProducts.filter(isVenteProduct))
+        ? allProducts.filter(isVenteProduct)
       : activeCatId?.startsWith(TYPE_CAT_PREFIX)
         ? allProducts.filter(p => matchesTypeGroup(p, activeCatId.slice(TYPE_CAT_PREFIX.length)))
       : activeCatId

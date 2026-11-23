@@ -9,7 +9,7 @@ export const CHANGELOG: ChangelogEntry[] = [
     date: "2026-11-23",
     items: [
       "Saisie de commande : le code EAN s'affiche dans une pastille bleue (texte normal, pas en gras), bien distinct de la référence (catalogue et panier).",
-      "Catalogue : nouvelle gamme « Produit vente » (Visage, Régénérant, Corps, Hygiène, Med, Maquillage), sélectionnée par défaut ; une recherche depuis cette gamme porte sur tout le catalogue.",
+      "Catalogue : nouvelle gamme « Produit vente » (Visage, Régénérant, Corps, Hygiène, Med, Maquillage), sélectionnée par défaut.",
       "Catalogue : articles triés par référence (code article), ordre croissant — sauf les Favoris.",
       "Flow dans Odoo : module Odoo 19 « flow_app » — la même app, ouverte depuis le menu Flow d'Odoo (adresse /flow/), sans écran de connexion (on utilise la session Odoo).",
       "Hors ligne (navigateur) : l'app s'ouvre maintenant sans réseau, même après avoir fermé et relancé le navigateur — il faut l'avoir ouverte une fois avec du réseau. Avant : erreur du navigateur (NS_ERROR_OFFLINE sous Firefox).",
