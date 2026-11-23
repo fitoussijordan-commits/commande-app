@@ -4674,7 +4674,7 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
                           onChange={e => { const t = vs.find((x: any) => x.id === Number(e.target.value)); if (t) switchVariant(item.group!, t); }}
                           style={{ flexShrink: 0, maxWidth: 170, height: 26, padding: "0 6px", borderRadius: 999, border: `1px solid ${C.teal}55`, background: C.tealSoft, color: C.tealDark, fontSize: 11, fontWeight: 700, fontFamily: "inherit", cursor: "pointer" }}>
                           {!vs.some((t: any) => t.name === item.group) && <option value="">Variante…</option>}
-                          {vs.map((t: any) => <option key={t.id} value={t.id}>{String(t.name).slice(String(t.name).lastIndexOf(" - ") + 3) || t.name}</option>)}
+                          {vs.map((t: any) => <option key={t.id} value={t.id}>{String(t.name).includes(" - ") ? String(t.name).slice(String(t.name).lastIndexOf(" - ") + 3) || t.name : t.name}</option>)}
                         </select>
                       );
                     })()}

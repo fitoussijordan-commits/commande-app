@@ -55,6 +55,9 @@ const fold = (t: string) => t.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCa
 const m2oId = (v: any): number | null => (Array.isArray(v) ? Number(v[0]) : null);
 const ymd = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 
+// « MEA Noël 2026 - Premium » → « Premium » ; sans « - », le nom entier.
+export const variantLabel = (name: string) => { const i = name.lastIndexOf(" - "); return i >= 0 ? name.slice(i + 3) || name : name; };
+
 // Remise client lue dans le nom du tarif : « Tarif 2026 17% (EUR) » → 17.
 export function pricelistDiscount(name: string | null | undefined): number {
   const m = /(\d+(?:[.,]\d+)?)\s*%/.exec(String(name || ""));
@@ -144,20 +147,23 @@ function proposeFor(base: CampaignBase, chosen: PrepVariant, n1Map: Map<number, 
     return { product: p, code: String(p.default_code || code), name: name.replace(/\u200b/g, ""), ean: String(p.barcode || ""), qty: freeBy.get(pid) || 0 };
   }).filter(f => f.qty > 0);
   const n1Total = products.reduce((s, x) => s + x.n1, 0);
-  const vName = chosen.name.slice(chosen.name.lastIndexOf(" - ") + 3) || chosen.name;
+  // Nom de la variante = ce qui suit le dernier « - » (sans « - » : nom entier ;
+  // avant, la recherche ratée coupait les 2 premières lettres : « fre découverte… »).
+  const vName = variantLabel(chosen.name);
+  const single = base.variants.length <= 1;   // offre sans paliers : on ne parle pas de « variante »
   let reason: string;
   if (n1Total > 0 && chosen.total > 0) {
     products.forEach(x => { x.proposal = snap(x.product, (chosen.total * x.n1) / n1Total); });
     let diff = chosen.total - products.reduce((s, x) => s + x.proposal, 0);
     const byN1 = [...products].sort((a, b) => b.n1 - a.n1);
     for (let i = 0; diff > 0 && i < 200; i++) { const x = byN1[i % byN1.length]; const st = saleStep(x.product); x.proposal += st; diff -= st; }
-    reason = `${auto ? "Variante conseillée" : "Variante"} « ${vName} » (${chosen.total} u.)${auto ? ` : le client a acheté ${Math.round(n1Total)} u. de ces produits en ${y - 1} (année complète) — c'est le plus grand palier atteint par ses achats` : ""}. Quantités réparties selon ses achats ${y - 1}.`;
+    reason = `${single ? "Offre" : auto ? "Variante conseillée" : "Variante"} « ${vName} » (${chosen.total} u.)${auto && !single ? ` : le client a acheté ${Math.round(n1Total)} u. de ces produits en ${y - 1} (année complète) — c'est le plus grand palier atteint par ses achats` : ""}. Quantités réparties selon ses achats ${y - 1}.`;
   } else if (chosen.total > 0) {
     products.forEach(x => { x.proposal = x.templateQty; });
-    reason = `Variante « ${vName} » (${chosen.total} u.) : pas d'achat de ces produits en ${y - 1}, quantités du modèle.`;
+    reason = `${single ? "Offre" : "Variante"} « ${vName} » (${chosen.total} u.) : pas d'achat de ces produits en ${y - 1}, quantités du modèle.`;
   } else {
     products.forEach(x => { x.proposal = x.templateQty || snap(x.product, x.n1); });
-    reason = `Variante « ${vName} » : quantités libres, d'après les achats ${y - 1}.`;
+    reason = single ? `Quantités libres (pas de palier dans l'offre) : proposition d'après les achats ${y - 1} du client.` : `Variante « ${vName} » : quantités libres, d'après les achats ${y - 1}.`;
   }
   return { chosen, reason, products, free };
 }
@@ -262,7 +268,7 @@ export async function loadRdvPrep(session: odoo.OdooSession, client: any): Promi
       const t = taken.get(key) || { state: "devis" as const, orders: [], variants: [] };
       if (o.state === "sale" || o.state === "done") t.state = "pris";
       if (!t.orders.includes(o.name)) t.orders.push(o.name);
-      const n = offerName.get(oid) || ""; const v = n.slice(n.lastIndexOf(" - ") + 3) || n;
+      const v = variantLabel(offerName.get(oid) || "");
       if (!t.variants.includes(v)) t.variants.push(v);
       taken.set(key, t);
     }
