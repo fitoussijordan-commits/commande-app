@@ -1,5 +1,5 @@
 "use client";
-import { useState, useEffect } from "react";
+import { useState, useEffect, type FocusEvent } from "react";
 import VersionFooter from "@/components/VersionFooter";
 import * as odoo from "@/lib/odoo";
 
@@ -23,11 +23,12 @@ interface Props {
 // Valeurs proposées à la toute première connexion (aucune config enregistrée).
 const DEFAULT_URL = "https://wala-prod-test35-40892627.dev.odoo.com";
 const DEFAULT_DB = "wala-prod-test35-40892627";
+const DEFAULT_LOGIN = "@drhauschka.fr";
 
 export default function LoginScreen({ onLogin }: Props) {
   const [url, setUrl] = useState(DEFAULT_URL);
   const [db, setDb] = useState(DEFAULT_DB);
-  const [login, setLogin] = useState("");
+  const [login, setLogin] = useState(DEFAULT_LOGIN);
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -39,7 +40,7 @@ export default function LoginScreen({ onLogin }: Props) {
         const cfg = JSON.parse(raw);
         setUrl(cfg.url || DEFAULT_URL);
         setDb(cfg.db || DEFAULT_DB);
-        setLogin(cfg.login || "");
+        setLogin(cfg.login || DEFAULT_LOGIN);
       }
     } catch {}
     // iOS/WKWebView peut ouvrir le clavier en mettant le focus sur un champ au
@@ -89,7 +90,13 @@ export default function LoginScreen({ onLogin }: Props) {
 
         <Field label="URL Odoo" value={url} onChange={setUrl} placeholder="https://monentreprise.odoo.com" />
         <Field label="Base de données" value={db} onChange={setDb} placeholder="monentreprise" />
-        <Field label="Identifiant" value={login} onChange={setLogin} placeholder="prenom.nom@entreprise.fr" />
+        <Field label="Identifiant" value={login} onChange={setLogin} placeholder="prenom.nom@entreprise.fr"
+          onFocus={e => {
+            // Identifiant encore vide (« @drhauschka.fr » seul) : curseur devant le @
+            // pour taper directement prénom.nom. setTimeout : iOS replace le curseur après le focus.
+            const el = e.currentTarget;
+            if (el.value === DEFAULT_LOGIN) setTimeout(() => { try { el.setSelectionRange(0, 0); } catch {} }, 0);
+          }} />
         <Field label="Mot de passe" value={password} onChange={setPassword} placeholder="••••••••" type="password" />
 
         <button type="submit" disabled={loading}
@@ -102,7 +109,7 @@ export default function LoginScreen({ onLogin }: Props) {
   );
 }
 
-function Field({ label, value, onChange, placeholder, type = "text" }: { label: string; value: string; onChange: (v: string) => void; placeholder: string; type?: string }) {
+function Field({ label, value, onChange, placeholder, type = "text", onFocus }: { label: string; value: string; onChange: (v: string) => void; placeholder: string; type?: string; onFocus?: (e: FocusEvent<HTMLInputElement>) => void }) {
   return (
     <div style={{ marginBottom: 14 }}>
       <label style={{ display: "block", fontSize: 12, fontWeight: 600, color: C.textSec, marginBottom: 6 }}>{label}</label>
@@ -110,6 +117,7 @@ function Field({ label, value, onChange, placeholder, type = "text" }: { label: 
         type={type}
         value={value}
         onChange={e => onChange(e.target.value)}
+        onFocus={onFocus}
         placeholder={placeholder}
         style={{ width: "100%", boxSizing: "border-box", padding: "12px 14px", border: `1.5px solid ${C.border}`, borderRadius: 10, fontSize: 14, fontFamily: "inherit", color: C.text, outline: "none" }}
       />

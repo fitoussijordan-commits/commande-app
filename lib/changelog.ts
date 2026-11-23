@@ -9,6 +9,7 @@ export const CHANGELOG: ChangelogEntry[] = [
     date: "2026-11-23",
     items: [
       "Connexion : à la première connexion, l'URL Odoo et la base de données sont pré-remplies (base de test wala-prod-test35).",
+      "Connexion : l'identifiant est pré-rempli avec « @drhauschka.fr » à la première connexion — il suffit d'ajouter prénom.nom devant.",
       "Palmarès : produits archivés retirés (période et N-1).",
       "Préparer le RDV : deux colonnes « PU HT » et « PU remisé MEA » dans la proposition.",
       "Préparer le RDV : prix remisé de la MEA (prix barré + −15 %, −20 %…) et total calculé avec la remise de l'offre puis la remise client ; même prix remisé sur le BDC Excel.",
