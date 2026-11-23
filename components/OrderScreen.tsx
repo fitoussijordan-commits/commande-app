@@ -209,6 +209,23 @@ function matchesCat(product: any, cat: SmartCat): boolean {
   return getCatCode(product) === cat.code;
 }
 
+// Gamme « Produit vente » : Visage + Régénérant + Corps + Hygiène + Med +
+// Maquillage (produits de vente seulement). Sélectionnée par défaut à l'ouverture
+// du catalogue (avant : « Tous »).
+const VENTE_CAT_ID = "__vente__";
+const VENTE_CODES = new Set(["01", "02", "03", "04", "05", "06"]);
+function isVenteProduct(product: any): boolean {
+  return VENTE_CODES.has(getCatCode(product)) && isSaleProduct(product);
+}
+
+// Liste des articles : triée par référence (code article), ordre croissant ;
+// sans référence en fin de liste.
+function byRef(a: any, b: any): number {
+  const ra = String(a?.default_code || "").trim(), rb = String(b?.default_code || "").trim();
+  if (!ra || !rb) return ra ? -1 : rb ? 1 : 0;
+  return ra.localeCompare(rb, "fr", { numeric: true });
+}
+
 // ── Type de produit Odoo (x_type_de_produit_id sur product.template) ──────────
 // Volontairement PAS la liste brute des types Odoo : seulement les six catégories
 // utiles en visite. « Accessoires » regroupe plusieurs types Odoo (sacs, éponges).
@@ -2565,7 +2582,7 @@ function eventTitle(e: any): string {
 // (gris) pendant la saisie de commande.
 function Ean({ code }: { code: string }) {
   return (
-    <span title={`EAN ${code}`} style={{ display: "inline-block", fontFamily: "monospace", fontWeight: 600, color: "#1d4ed8", background: "#eff6ff", border: "1px solid #bfdbfe", borderRadius: 5, padding: "0 4px", lineHeight: 1.35, verticalAlign: "baseline" }}>{code}</span>
+    <span title={`EAN ${code}`} style={{ display: "inline-block", fontFamily: "monospace", fontWeight: 400, color: "#1d4ed8", background: "#eff6ff", border: "1px solid #bfdbfe", borderRadius: 5, padding: "0 4px", lineHeight: 1.35, verticalAlign: "baseline" }}>{code}</span>
   );
 }
 
@@ -3581,7 +3598,7 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
   eventDiscount: number; setEventDiscount: React.Dispatch<React.SetStateAction<number>>;
 }) {
   const [smartCats, setSmartCats] = useState<SmartCat[]>([]);
-  const [activeCatId, setActiveCatId] = useState<string | null>(null);
+  const [activeCatId, setActiveCatId] = useState<string | null>(VENTE_CAT_ID);
   const [allProducts, setAllProducts] = useState<any[]>([]); // cache complet des produits en stock
   const [loading, setProdLoading] = useState(false);
   const [search, setSearch] = useState("");
@@ -4187,6 +4204,10 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
 
   const viewProducts = activeCatId === FAV_CAT_ID
       ? favProducts
+      // « Produit vente » : vue par défaut. Une RECHERCHE y porte sur tout le
+      // catalogue (testeurs, PLV… inclus) — sinon une réf. hors gamme serait introuvable.
+      : activeCatId === VENTE_CAT_ID
+        ? (isSearching ? allProducts : allProducts.filter(isVenteProduct))
       : activeCatId?.startsWith(TYPE_CAT_PREFIX)
         ? allProducts.filter(p => matchesTypeGroup(p, activeCatId.slice(TYPE_CAT_PREFIX.length)))
       : activeCatId
@@ -4196,7 +4217,9 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
           })
         : allProducts;
   const baseProducts = isSearching ? viewProducts.filter(p => matchesSearch(p, searchWords)) : viewProducts;
-  const displayedProducts = stockOnly ? baseProducts.filter(inStock) : baseProducts;
+  const stockFiltered = stockOnly ? baseProducts.filter(inStock) : baseProducts;
+  // Tri par référence croissante — sauf les Favoris, classés par quantités commandées.
+  const displayedProducts = activeCatId === FAV_CAT_ID ? stockFiltered : [...stockFiltered].sort(byRef);
 
   // Les catégories de type, avec leur nombre d'articles. Une catégorie sans
   // aucun produit n'est pas affichée (inutile de proposer un filtre vide).
@@ -4282,6 +4305,21 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
           style={{ width: "100%", padding: "10px 10px", background: !activeCatId ? C.tealSoft : "transparent", border: "none", borderLeft: `3px solid ${!activeCatId ? C.teal : "transparent"}`, cursor: "pointer", textAlign: "left" as const, fontSize: 12, fontWeight: !activeCatId ? 700 : 400, color: !activeCatId ? C.tealDark : C.textSec, fontFamily: "inherit", display: "flex", alignItems: "center", gap: 7 }}>
           <Icon name="home" size={13} /> Tous
         </button>
+
+        {/* Produit vente (défaut) : les six gammes de vente réunies */}
+        {(() => {
+          const active = activeCatId === VENTE_CAT_ID;
+          const count = allProducts.filter(p => isVenteProduct(p) && (!stockOnly || inStock(p))).length;
+          return (
+            <button onClick={() => setActiveCatId(VENTE_CAT_ID)}
+              style={{ width: "100%", padding: "10px 10px", background: active ? C.tealSoft : "transparent", border: "none", borderLeft: `3px solid ${active ? C.teal : "transparent"}`, cursor: "pointer", textAlign: "left" as const, fontFamily: "inherit", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6, transition: "all 0.1s" }}>
+              <span style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: active ? 700 : 400, color: active ? C.tealDark : C.textSec }}>
+                <Icon name="cart" size={13} /> Produit vente
+              </span>
+              {count > 0 && <span style={{ fontSize: 10, fontWeight: 700, color: active ? C.teal : C.muted, background: active ? C.tealMid : C.bg, borderRadius: 5, padding: "1px 5px", flexShrink: 0 }}>{count}</span>}
+            </button>
+          );
+        })()}
 
         {/* Favoris du client */}
         <button onClick={() => { setActiveCatId(FAV_CAT_ID); loadFavorites(); }}
