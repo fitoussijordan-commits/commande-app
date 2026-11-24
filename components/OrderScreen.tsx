@@ -3893,7 +3893,7 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
       // Hors ligne → favoris préchargés pour ce client (si dispo)
       const cached = await sync.getCachedFavorites(client.id).catch(() => undefined);
       if (cached) { setFavProducts(cached); setFavLoaded(true); }
-      else onToast("Favoris indisponibles hors ligne pour ce client", "info");
+      else onToast("« Les + achetés » indisponibles hors ligne pour ce client", "info");
     }
     setFavLoading(false);
   };
@@ -4348,11 +4348,11 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
           );
         })()}
 
-        {/* Favoris du client */}
+        {/* « Les + achetés » (ex-Favoris) du client */}
         <button onClick={() => { setActiveCatId(FAV_CAT_ID); loadFavorites(); }}
           style={{ width: "100%", padding: "10px 10px", background: activeCatId === FAV_CAT_ID ? C.orangeSoft : "transparent", border: "none", borderLeft: `3px solid ${activeCatId === FAV_CAT_ID ? C.orange : "transparent"}`, cursor: "pointer", textAlign: "left" as const, fontFamily: "inherit", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6, transition: "all 0.1s" }}>
           <span style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: activeCatId === FAV_CAT_ID ? 700 : 400, color: activeCatId === FAV_CAT_ID ? C.orange : C.textSec }}>
-            <Icon name="star" size={13} /> Favoris
+            <Icon name="star" size={13} /> Les + achetés
           </span>
           {favLoaded && favProducts.length > 0 && <span style={{ fontSize: 10, fontWeight: 700, color: activeCatId === FAV_CAT_ID ? C.orange : C.muted, background: activeCatId === FAV_CAT_ID ? C.orangeSoft : C.bg, borderRadius: 5, padding: "1px 5px", flexShrink: 0 }}>{favProducts.length}</span>}
         </button>
@@ -4559,7 +4559,7 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
           ) : activeCatId === FAV_CAT_ID && favLoaded && displayedProducts.length === 0 ? (
             <div style={{ textAlign: "center", padding: 60, color: C.muted }}>
               <div style={{ marginBottom: 10 }}><Icon name="star" size={32} color={C.border} /></div>
-              <div>{favProducts.length === 0 ? "Aucun article de vente (code 10…) livré à ce client sur les 12 derniers mois" : "Aucun favori en stock — désactive « Stock dispo » pour tout voir"}</div>
+              <div>{favProducts.length === 0 ? "Aucun article de vente (code 10…) livré à ce client sur les 12 derniers mois" : "Aucun article « Les + achetés » en stock — désactive « Stock dispo » pour tout voir"}</div>
             </div>
           ) : loading && allProducts.length === 0 ? (
             <CatalogSkeleton dense={dense} />
