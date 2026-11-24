@@ -21,6 +21,11 @@ function isEndpointAllowed(endpoint: string): boolean {
   return ALLOWED_ENDPOINTS.some(allowed => endpoint.startsWith(allowed));
 }
 
+// Lecture d'un bon de commande par Odoo (« Charger la commande » : Odoo appelle
+// Claude avec sa propre clé) : jusqu'à ~1 min — délai allongé pour ce seul appel.
+export const maxDuration = 90;
+const LONG_METHODS = new Set(["flow_read_document"]);
+
 export async function POST(req: NextRequest) {
   const origin = req.headers.get("origin");
   const J = (body: any, init?: ResponseInit) => withCors(NextResponse.json(body, init), origin);
@@ -119,7 +124,7 @@ export async function POST(req: NextRequest) {
       method: "POST",
       headers,
       body: JSON.stringify({ jsonrpc: "2.0", method: "call", id: Date.now(), params }),
-    }, 15_000);
+    }, LONG_METHODS.has(String(params?.method || "")) ? 85_000 : 15_000);
 
     const setCookies = odooRes.headers.getSetCookie?.() || [];
     let newSessionId = null;

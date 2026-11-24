@@ -2,8 +2,9 @@
 // « Charger la commande » : import d'un bon de commande client (PDF, Excel, Word,
 // JPG, PNG…), sur le modèle du module Odoo « sale_order_ocr_import ».
 //
-// 1. Le document est lu par /api/bon-commande (Claude Haiku 5.5, ou lecture
-//    directe pour les « Accord périmés ») → lignes brutes : code article, EAN,
+// 1. Le document est lu par ODOO (méthode flow_read_document du module, avec sa
+//    clé API et son modèle Claude ; lecture directe pour les « Accord périmés »)
+//    → lignes brutes : code article, EAN,
 //    désignation, quantité, unités gratuites (UG). Aucun prix ni remise du bon.
 // 2. Chaque ligne est cherchée dans le catalogue Odoo avec les règles du module
 //    (lib/bonMatch.ts) : code, EAN, miniatures / échantillons → lots, article
@@ -16,7 +17,6 @@
 import { useState, useEffect, useRef } from "react";
 import * as odoo from "@/lib/odoo";
 import * as sync from "@/lib/sync";
-import { apiUrl } from "@/lib/apiBase";
 import QtyPad from "@/components/QtyPad";
 import BonLoader from "@/components/BonLoader";
 import { PriceItem, applyPricelist } from "@/lib/pricing";
@@ -361,8 +361,6 @@ export default function BonCommandeScreen({ session, client, priceItems, onApply
     setPreview(null); setOnlyToCheck(false); setSearchFor(null);
     setCandidates([]); setClientReasons(null); setPickingClient(false);
     setLoading("lecture");
-    const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), 65_000);
     try {
       let payload: { data: string; mediaType: string };
       const kind = await sniffKind(file);
@@ -380,14 +378,21 @@ export default function BonCommandeScreen({ session, client, priceItems, onApply
       }
       // Fichier joint au devis : celui envoyé à la lecture (photo réduite en JPEG).
       const original = payload.data;
-      const res = await fetch(apiUrl("/api/bon-commande"), {
-        method: "POST",
-        signal: ctrl.signal,
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...payload, fileName: file.name, odooUrl: session.config.url, sessionId: session.sessionId }),
-      });
-      const data = await res.json().catch(() => ({ error: `Réponse invalide (${res.status})` }));
-      if (data.error) throw new Error(data.error);
+      // Lecture par Odoo (module « Import de commandes clients par Claude ») : Odoo
+      // utilise sa propre clé API et son modèle Claude (paramètres système).
+      const sentName = kind === "image" ? `${(file.name || "photo").replace(/\.[^.]+$/, "")}.jpg` : (file.name || "commande");
+      let data: any;
+      try {
+        data = await odoo.callMethod(session, "sale.order.ocr.import", "flow_read_document", [payload.data, sentName, payload.mediaType]);
+      } catch (e: any) {
+        const msg = String(e?.message || e);
+        if (/sale\.order\.ocr\.import|flow_read_document|does not exist|n'existe pas/i.test(msg)) {
+          throw new Error("Module Odoo « Import de commandes clients par Claude » (version 19.0.1.46.0 ou plus) non installé sur cette base.");
+        }
+        if (/abort|délai|timeout|timed out/i.test(msg)) throw new Error("Lecture trop longue. Réessaie, ou envoie une photo plus nette.");
+        if (e?.network) throw new TypeError(msg);
+        throw new Error(msg);
+      }
       const lu: BonLu = data.bon;
       if (data.previewHtml) setPreview({ url: "", kind: "html", html: data.previewHtml });
       setBon(lu);
@@ -412,13 +417,10 @@ export default function BonCommandeScreen({ session, client, priceItems, onApply
         else setPickingClient(true);
       }
     } catch (e: any) {
-      setError(e?.name === "AbortError"
-        ? "Lecture trop longue. Réessaie, ou envoie une photo plus nette."
-        : e instanceof TypeError
+      setError(e instanceof TypeError
           ? "Réseau indisponible — la lecture d'un bon nécessite une connexion."
           : e?.message || "Erreur inconnue");
     } finally {
-      clearTimeout(timer);
       setLoading("");
     }
   };
