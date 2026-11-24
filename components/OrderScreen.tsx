@@ -3818,8 +3818,11 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
     </button>
   );
 
-  // ── Favoris : produits déjà commandés par le client, triés par quantité ───
+  // ── Favoris : top 30 des articles de vente (code « 10… ») LIVRÉS au client ──
+  // Source : transferts de stock sortants (OUT) validés, pas les commandes ni les
+  // factures — c'est ce que le client a réellement reçu. 12 derniers mois.
   const FAV_CAT_ID = "__fav__";
+  const FAV_MAX = 30;
   const [favProducts, setFavProducts] = useState<any[]>([]);
   const [favLoading, setFavLoading] = useState(false);
   const [favLoaded, setFavLoaded] = useState(false);
@@ -3828,32 +3831,56 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
     if (favLoaded || !client?.id) return;
     setFavLoading(true);
     try {
-      // 12 derniers mois pour rester pertinent et rapide
       const since = new Date();
       since.setFullYear(since.getFullYear() - 1);
       const sinceStr = since.toISOString().slice(0, 10);
-      const lines = await odoo.searchRead(session, "sale.order.line",
-        [["order_partner_id", "=", client.id], ["product_id", "!=", false], ["create_date", ">=", sinceStr], ["state", "in", ["sale", "done"]]],
-        ["product_id", "product_uom_qty", "create_date"],
-        2000, "create_date desc");
-      // Agrégation par produit : quantité totale, nb de commandes, dernière date
-      const agg = new Map<number, { totalQty: number; times: number; lastDate: string }>();
-      for (const l of lines) {
-        const pid = l.product_id?.[0];
+      const domain = [
+        ["state", "=", "done"],
+        ["picking_id.picking_type_id.code", "=", "outgoing"],
+        ["picking_id.partner_id", "child_of", client.id],
+        ["product_id.default_code", "=like", "10%"],
+        ["date", ">=", sinceStr],
+      ];
+      // Quantité livrée : `quantity` (Odoo 17+) ou `quantity_done` (16) — un champ
+      // inconnu fait échouer toute la requête, d'où le repli.
+      let moves: any[];
+      try {
+        moves = (await odoo.searchRead(session, "stock.move", domain,
+          ["product_id", "quantity", "picking_id", "date"], 5000, "date desc"))
+          .map((m: any) => ({ ...m, _qty: Number(m.quantity) || 0 }));
+      } catch (e) {
+        if (odoo.isNetworkError(e)) throw e;
+        moves = (await odoo.searchRead(session, "stock.move", domain,
+          ["product_id", "quantity_done", "picking_id", "date"], 5000, "date desc"))
+          .map((m: any) => ({ ...m, _qty: Number(m.quantity_done) || 0 }));
+      }
+      // Agrégation par produit : quantité livrée, nb de livraisons, dernière date
+      const agg = new Map<number, { totalQty: number; times: number; lastDate: string; pickings: Set<number> }>();
+      for (const m of moves) {
+        const pid = m.product_id?.[0];
         if (!pid) continue;
-        const cur = agg.get(pid) || { totalQty: 0, times: 0, lastDate: "" };
-        cur.totalQty += l.product_uom_qty || 0;
-        cur.times += 1;
-        if ((l.create_date || "") > cur.lastDate) cur.lastDate = l.create_date || "";
+        const cur = agg.get(pid) || { totalQty: 0, times: 0, lastDate: "", pickings: new Set<number>() };
+        cur.totalQty += m._qty;
+        const pk = m.picking_id?.[0];
+        if (pk && !cur.pickings.has(pk)) { cur.pickings.add(pk); cur.times += 1; }
+        if ((m.date || "") > cur.lastDate) cur.lastDate = m.date || "";
         agg.set(pid, cur);
       }
-      const ids = Array.from(agg.keys());
+      for (const [pid, a] of Array.from(agg.entries())) if (a.totalQty <= 0) agg.delete(pid);
+      // Top 30 par quantité livrée
+      const ids = Array.from(agg.entries())
+        .sort((a, b) => b[1].totalQty - a[1].totalQty)
+        .slice(0, FAV_MAX)
+        .map(([pid]) => pid);
       if (ids.length) {
         const prods = await odoo.searchRead(session, "product.product",
           [["id", "in", ids]],
           ["id", "name", "default_code", "barcode", "lst_price", "product_tmpl_id", "virtual_available", ...await optionalProductFields(session)],
           ids.length);
-        const enriched = prods.map((p: any) => ({ ...p, ...agg.get(p.id) }));
+        const enriched = prods.map((p: any) => {
+          const a = agg.get(p.id)!;
+          return { ...p, totalQty: a.totalQty, times: a.times, lastDate: a.lastDate };
+        });
         enriched.sort((a: any, b: any) => (b.totalQty || 0) - (a.totalQty || 0));
         setFavProducts(enriched);
         sync.cacheClientData(client.id, { favorites: enriched }).catch(() => {});
@@ -4532,7 +4559,7 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
           ) : activeCatId === FAV_CAT_ID && favLoaded && displayedProducts.length === 0 ? (
             <div style={{ textAlign: "center", padding: 60, color: C.muted }}>
               <div style={{ marginBottom: 10 }}><Icon name="star" size={32} color={C.border} /></div>
-              <div>{favProducts.length === 0 ? "Ce client n'a passé aucune commande sur les 12 derniers mois" : "Aucun favori en stock — désactive « Stock dispo » pour tout voir"}</div>
+              <div>{favProducts.length === 0 ? "Aucun article de vente (code 10…) livré à ce client sur les 12 derniers mois" : "Aucun favori en stock — désactive « Stock dispo » pour tout voir"}</div>
             </div>
           ) : loading && allProducts.length === 0 ? (
             <CatalogSkeleton dense={dense} />
@@ -4639,7 +4666,7 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
                            reste appliqué par les boutons − / + et le pavé numérique. */}
                       {activeCatId === FAV_CAT_ID && p.totalQty != null && (
                         <div style={{ fontSize: 10, fontWeight: 700, color: C.orange, background: C.orangeSoft, borderRadius: 5, padding: "2px 6px", marginTop: 3, display: "inline-block" }}>
-                          {Math.round(p.totalQty)} commandé{Math.round(p.totalQty) > 1 ? "s" : ""} · {p.times} fois
+                          {Math.round(p.totalQty)} livré{Math.round(p.totalQty) > 1 ? "s" : ""} · {p.times} livraison{p.times > 1 ? "s" : ""}
                         </div>
                       )}
                       {/* Prix client + prix barré sur une seule ligne */}

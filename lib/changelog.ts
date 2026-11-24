@@ -6,6 +6,12 @@ export interface ChangelogEntry { date: string; items: string[] }
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    date: "2026-11-24",
+    items: [
+      "Favoris du client : désormais le top 30 des articles de vente (code commençant par 10) réellement LIVRÉS au client sur 12 mois (bons de livraison validés), classés par quantité livrée — et non plus les commandes.",
+    ],
+  },
+  {
     date: "2026-11-23",
     items: [
       "Catalogue : cartes articles plus compactes (prix barré sur la même ligne, bouton Offrir 🎁 à côté des quantités) — au moins 12 articles visibles à l'écran ; prix plus petit et plus de pastille « min » sur les cartes.",
