@@ -8,7 +8,7 @@ export const CHANGELOG: ChangelogEntry[] = [
   {
     date: "2026-11-24",
     items: [
-      "Frais de port (sous le franco de 250 € HT) : le devis utilise toujours l'article [982040] « Frais de port - Transporteurs ».",
+      "Frais de port (sous le franco de 250 € HT) : le devis utilise toujours l'article [982040] « Frais de port - Transporteurs », aussi chargé par « Préparer le hors-ligne » pour les commandes passées sans réseau.",
       "« Favoris » devient « Top 40 » : les 40 premiers des articles de vente (code commençant par 10) achetés par le client sur 18 mois (bons de livraison validés, et non plus les commandes), classés par quantité achetée, articles Maquillage (106…) en fin de liste.",
     ],
   },

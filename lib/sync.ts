@@ -5,6 +5,7 @@
 //  2. Lecture cache-first : renvoie les données locales quand on est hors ligne.
 //  3. Rejeu de la file de commandes créées hors ligne vers Odoo au retour réseau.
 
+import { refreshShippingProduct } from "@/lib/franco";
 import * as odoo from "@/lib/odoo";
 import { optionalProductFields } from "@/lib/productFields";
 import * as db from "@/lib/localdb";
@@ -64,6 +65,8 @@ export async function preloadCatalog(
     0, "name"
   );
   await db.kvSet(db.STORES.products, KEY, products);
+  // Article frais de port [982040] : gardé aussi pour les devis passés hors ligne.
+  await refreshShippingProduct(session).catch(() => null);
 
   // 2. Clients (res.partner de type contact/société ; on garde large et on filtre côté UI)
   onProgress?.({ step: "Clients", done: 1, total: steps });

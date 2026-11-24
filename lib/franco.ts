@@ -27,3 +27,10 @@ export async function shippingProduct(session: odoo.OdooSession): Promise<{ id: 
     try { return JSON.parse(localStorage.getItem(LS_KEY) || "null"); } catch { return null; }
   }
 }
+
+// Préchargement hors ligne (« Préparer le hors-ligne ») : relit l'article dans
+// Odoo, même s'il est déjà en mémoire, et le garde sur l'appareil.
+export async function refreshShippingProduct(session: odoo.OdooSession) {
+  _product = undefined;
+  return shippingProduct(session);
+}
