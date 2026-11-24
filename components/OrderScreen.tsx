@@ -147,7 +147,9 @@ function matchesSearch(p: any, words: string[]): boolean {
 // cond : gratuité d'un modèle (MEA) — valable tant que le TOTAL des articles
 // payants du modèle est atteint, répartition libre (« 48 coffrets + 8 offerts » :
 // 13 + 25 + 16 = 54 ≥ 48 → offert).
-interface GiftItem { product: any; qty: number; type: string; cond?: { label: string; required: Record<number, number> }; highlight?: string }
+// fullDiscountPrice : UG d'un bon chargé — comme le module Odoo d'import, ligne au
+// prix client avec 100 % de remise (au lieu d'un prix à 0 €).
+interface GiftItem { product: any; qty: number; type: string; cond?: { label: string; required: Record<number, number> }; highlight?: string; fullDiscountPrice?: number }
 function giftActive(g: GiftItem, cart: Record<number, { qty: number }>): boolean {
   if (!g.cond) return true;
   const ids = Object.keys(g.cond.required).map(Number);
@@ -822,7 +824,7 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
     setCart(next);
     const giftType = freeTypes.find(t => t.value === "geste_co_hors_quota")?.value
       || freeTypes.find(t => fold(t.label) === fold("Geste Co. - hors Coffre"))?.value || "geste_co_hors_quota";
-    setGiftItems(res.gifts.map(g => ({ product: g.product, qty: g.qty, type: giftType, highlight: "green" })));
+    setGiftItems(res.gifts.map(g => ({ product: g.product, qty: g.qty, type: giftType, highlight: "green", fullDiscountPrice: g.unitPrice })));
     setNote(res.note);
     setImportMeta(res.meta);
   };
@@ -1075,7 +1077,7 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
           ...giftItems.filter(g => giftActive(g, cart) && g.qty > 0).map(g => [0, 0, {
             product_id: g.product.id,
             product_uom_qty: g.qty,
-            price_unit: 0,
+            ...(g.fullDiscountPrice != null ? { price_unit: g.fullDiscountPrice, discount: 100 } : { price_unit: 0 }),
             ...(g.type ? { type_gratuit: g.type } : {}),
             ...(g.highlight && imp?.line.has("ocr_highlight") ? { ocr_highlight: g.highlight } : {}),
           }]),

@@ -69,7 +69,7 @@ export interface ImportMeta {
 }
 export interface ImportResult {
   lines: ImportedLine[];
-  gifts: { product: any; qty: number }[];
+  gifts: { product: any; qty: number; unitPrice: number }[];
   note: string;
   meta: ImportMeta;
 }
@@ -454,7 +454,7 @@ export default function BonCommandeScreen({ session, client, priceItems, onApply
   const apply = () => {
     if (!canApply || !bon) return;
     const lines: ImportedLine[] = [];
-    const gifts: { product: any; qty: number }[] = [];
+    const gifts: { product: any; qty: number; unitPrice: number }[] = [];
     const imported: string[] = [], byName: string[] = [], lots: string[] = [], ruptures: string[] = [], issues: string[] = [], freeLines: string[] = [];
     for (const l of lignes) {
       if (!l.include) continue;
@@ -464,7 +464,7 @@ export default function BonCommandeScreen({ session, client, priceItems, onApply
           imported.push(`[${l.product.default_code || "-"}] ${l.product.name} × ${fmtQty(l.qty)}`);
         }
         if (l.freeQty > 0) {
-          gifts.push({ product: l.product, qty: l.freeQty });
+          gifts.push({ product: l.product, qty: l.freeQty, unitPrice: clientPrice(l.product, l.freeQty) });
           freeLines.push(`[${l.product.default_code || "-"}] ${l.product.name} : ${fmtQty(l.freeQty)} UG`);
         }
         if (l.byName) byName.push(l.byName);
@@ -486,7 +486,7 @@ export default function BonCommandeScreen({ session, client, priceItems, onApply
       `<li>${info.model ? `Modèle Claude : ${esc(info.model)}` : "Modèle Claude : aucun (fichier lu directement, sans appel à Claude)"}</li>`,
       `<li>${imported.length} ligne(s) importée(s) sur ${lignes.length}${info.skipped ? ` — ${info.skipped} ligne(s) sans quantité ignorée(s)` : ""}</li></ul>`,
       list("Articles trouvés par leur libellé — à vérifier :", byName),
-      list("Unités gratuites (UG) — Geste Co. - hors Coffre :", freeLines),
+      list("Unités gratuites (UG) — 2e ligne à 100 % de remise, Geste Co. - hors Coffre :", freeLines),
       list("Miniatures et échantillons convertis en lots :", lots),
       list("Articles archivés ou non vendables, sans équivalent (ligne de note) :", ruptures),
       list("Lignes à compléter :", issues),
