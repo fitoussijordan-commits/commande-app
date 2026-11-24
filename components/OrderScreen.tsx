@@ -76,6 +76,8 @@ const ICON_PATHS: Record<string, React.ReactNode> = {
   home: <><path d="M3 11 12 3l9 8"/><path d="M5 10v10h14V10"/></>,
   tag: <><path d="M20.6 13.4 13.4 20.6a2 2 0 0 1-2.8 0l-7-7V4h9.6l7.4 7.4a2 2 0 0 1 0 2Z"/><circle cx="8" cy="8" r="1.5"/></>,
   file: <><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><path d="M14 2v6h6M9 13h6M9 17h4"/></>,
+  // Baguette magique (« Charger la commande »)
+  wand: <><path d="m21.64 3.64-1.28-1.28a1.21 1.21 0 0 0-1.72 0L2.36 18.64a1.21 1.21 0 0 0 0 1.72l1.28 1.28a1.2 1.2 0 0 0 1.72 0L21.64 5.36a1.2 1.2 0 0 0 0-1.72"/><path d="m14 7 3 3M5 6v4M19 14v4M10 2v2M7 8H3M21 16h-4M11 3H9"/></>,
   inbox: <><path d="M22 13h-6l-2 3h-4l-2-3H2"/><path d="M5 4h14l3 9v7H2v-7Z"/></>,
   check: <path d="M20 6 9 17l-5-5"/>,
   list: <path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/>,
@@ -2949,14 +2951,14 @@ function ClientHub({ session, client, hasDraft, onPrep, onOrder, onHistory, onAp
   const caN1 = caDateN1 != null ? fmtPrice(caDateN1) : typeof client.x_ca_n_1 === "number" ? fmtPrice(client.x_ca_n_1) : null;
   const evoLabel = caDateN1 != null ? "vs CA à date N-1" : "Évolution CA N-1";
 
-  // Prospect : seules la prise de commande, la prise de RDV et la note client restent actives.
+  // Prospect : prise de commande, prise de RDV, note client et chargement de commande actifs.
   const prospect = isProspect(client);
-  const PROSPECT_OK = new Set(["order", "rdv", "note"]);
+  const PROSPECT_OK = new Set(["order", "rdv", "note", "bon"]);
   // Refonte : une seule carte accentuée (l'action principale), les autres en blanc.
   const cards = [
     { key: "order", icon: "cart", title: "Prise de commande", subtitle: hasDraft ? "Brouillon en attente" : "Nouveau devis", primary: true, badge: hasDraft, onClick: onOrder },
     { key: "prep", icon: "list", title: "Préparer le RDV", subtitle: "CA, offres du cycle, propositions", primary: false, badge: false, onClick: onPrep },
-    { key: "bon", icon: "file", title: "Importer un bon", subtitle: "PDF ou photo du client", primary: false, badge: false, onClick: onImportBon },
+    { key: "bon", icon: "wand", title: "Charger la commande", subtitle: "PDF ou photo du client", primary: false, badge: false, onClick: onImportBon },
     { key: "history", icon: "clock", title: "Historique", subtitle: "Commandes passées", primary: false, badge: false, onClick: onHistory },
     { key: "rdv", icon: "calendar", title: "Prendre un RDV", subtitle: "Agenda Odoo", primary: false, badge: false, onClick: onAppointment },
     { key: "note", icon: "note", title: "Note client", subtitle: "Compte rendu, vocal ou écrit", primary: false, badge: false, onClick: onNote },
