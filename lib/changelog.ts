@@ -8,6 +8,7 @@ export const CHANGELOG: ChangelogEntry[] = [
   {
     date: "2026-11-24",
     items: [
+      "Correctif « Mes prospects » : la recherche ne donnait aucun résultat (les codes XX-… étaient encore écartés comme fournisseurs).",
       "Recherche client (accueil) : pour les commerciaux (Ventes « mes documents seulement »), le bouton bascule entre « Mes clients » (Type de compte = Client) et « Mes prospects » (Type de compte = Prospect, code XX-…), toujours ceux dont on est le vendeur. Les autres utilisateurs voient « Tous ». Les prospects sont aussi chargés pour le hors ligne.",
       "Gammes : « Tous » et « Top 40 » retirés de la liste ; « Produit vente » sans icône.",
       "File d'envoi (hors ligne) : une commande synchronisée affiche son numéro de commande Odoo (S…) au lieu de son identifiant technique.",

@@ -2646,7 +2646,7 @@ function ClientStep({ session, onSelect, onImportBon, onOpenPlanning, onToast, d
         // Nom, référence OU ville — aligné sur la recherche hors ligne (et sur le
         // sous-titre de l'écran, qui promettait déjà la ville).
         const r = await odoo.searchRead(session, "res.partner",
-          ["|", "|", ["name", "ilike", q], ["ref", "ilike", q], ["city", "ilike", q], ["active", "=", true], NOT_SUPPLIER, ...scopeDomain(session.uid, scope)],
+          ["|", "|", ["name", "ilike", q], ["ref", "ilike", q], ["city", "ilike", q], ["active", "=", true], ...scopeDomain(session.uid, scope)],
           CLIENT_FIELDS, 30);
         setResults(r);
       } catch {
@@ -2672,7 +2672,7 @@ function ClientStep({ session, onSelect, onImportBon, onOpenPlanning, onToast, d
       let rows: any[];
       try {
         rows = await odoo.searchRead(session, "res.partner",
-          [["active", "=", true], ["partner_latitude", "!=", 0], ["partner_longitude", "!=", 0], NOT_SUPPLIER, ...scopeDomain(session.uid, scope)],
+          [["active", "=", true], ["partner_latitude", "!=", 0], ["partner_longitude", "!=", 0], ...scopeDomain(session.uid, scope)],
           [...CLIENT_FIELDS, "partner_latitude", "partner_longitude"], 3000);
       } catch {
         // Hors ligne → clients géolocalisés depuis le cache préchargé.
@@ -2695,7 +2695,7 @@ function ClientStep({ session, onSelect, onImportBon, onOpenPlanning, onToast, d
   // Dédoublonnage à l'affichage : couvre d'un seul coup la recherche en ligne, le
   // repli sur le cache hors ligne et la liste « clients proches ».
   const nearbyShown = nearby.filter(r => r._distKm <= radius);
-  const displayed = dedupeClients(q.length >= 2 ? results : (locMode ? nearbyShown : []))
+  const displayed = dedupeClients(q.length >= 2 ? results : (locMode ? nearbyShown : []), scope === "prospects")
     .filter(c => matchesScope(c, session.uid, scope));
 
   // Agenda + clients prioritaires : affichés tant qu'on ne cherche pas.

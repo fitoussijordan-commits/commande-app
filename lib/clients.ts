@@ -87,12 +87,14 @@ function clientScore(c: any): number {
 //
 // Deux passes : on écarte les adresses enfants, puis, en filet de sécurité, on ne
 // garde qu'une fiche par couple (code, nom).
-// Codes « XX-… » : fournisseurs, jamais proposés comme clients.
+// Codes « XX-… » : jamais proposés comme clients (fournisseurs, prospects) — sauf
+// dans le mode « Mes prospects » de l'accueil (voir scopeDomain).
 export const NOT_SUPPLIER: any[] = ["ref", "not =ilike", "XX-%"];
 export const isSupplier = (c: any) => /^xx-/i.test(String(c?.ref || "").trim());
 
-export function dedupeClients(rows: any[]): any[] {
-  rows = rows.filter(c => !isSupplier(c));
+// `keepXX` : mode « Mes prospects », où les fiches XX-… sont justement celles cherchées.
+export function dedupeClients(rows: any[], keepXX = false): any[] {
+  if (!keepXX) rows = rows.filter(c => !isSupplier(c));
   // Passe 1 — adresses enfants. Repli sur la liste brute si le filtre vide tout
   // (instance Odoo sans champ `type`, ou cache préchargé avant cette version).
   const roots = rows.filter(c => !(c.parent_id && ADDRESS_TYPES.has(c.type)));
@@ -150,7 +152,12 @@ export function setScopeChoice(v: "clients" | "prospects") { try { localStorage.
 export const PROSPECT_REF_PREFIX = "XX-";
 // Domaine Odoo du mode (remplace customer_rank / vendeur dans les recherches).
 export function scopeDomain(uid: number, scope: ClientScope): any[] {
+  if (scope !== "prospects") return [NOT_SUPPLIER, ...scopeBase(uid, scope)];
+  return scopeBase(uid, scope);
+}
+function scopeBase(uid: number, scope: ClientScope): any[] {
   if (scope === "clients") return [["customer_rank", ">", 0], ["user_id", "=", uid], ["x_type_de_compte_id", "=", "Client"]];
+  // Pas de NOT_SUPPLIER ici : il exclut justement les références XX-.
   if (scope === "prospects") return [["user_id", "=", uid], ["x_type_de_compte_id", "=", "Prospect"], ["ref", "=like", PROSPECT_REF_PREFIX + "%"]];
   return [["customer_rank", ">", 0]];
 }
