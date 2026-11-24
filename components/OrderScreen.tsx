@@ -3652,6 +3652,8 @@ function ClientHistory({ session, client }: { session: odoo.OdooSession; client:
 // ═══════════════════════════════════════════════════════════════════════════
 // ÉTAPE 2 — Catalogue + Panier persistant
 // ═══════════════════════════════════════════════════════════════════════════
+// Vue liste du panier : largeurs des colonnes, partagées par l'en-tête et les lignes.
+const LV = { code: 78, ean: 108, qty: 125, brut: 72, remise: 58, net: 72, total: 80, x: 42 };
 function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submitting, note, setNote, client, priceItems, onToast, appliedPromos, giftItems, setGiftItems, freeTypes, eventDiscount, setEventDiscount, shipping, minShipDate, onChangeExpedition, onAddNote, onNoteText, groupDiscounts, setGroupDiscounts, orderType, setOrderType, offerIds, setOfferIds, autoOffers, onTemplateApplied, onRenameGroup, onClearCart, pendingQuote, onPendingQuoteDone }: {
   onAddNote: (text: string, kind?: "line_note" | "line_section", group?: string) => void;
   onNoteText: (id: number, text: string) => void;
@@ -4834,8 +4836,28 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
               <div style={{ marginBottom: 8 }}><Icon name="cart" size={28} color={C.border} /></div>
               <div style={{ fontSize: 12 }}>Ajoute des produits</div>
             </div>
-          ) : (
-            shownCartItems.map((item, idx) => {
+          ) : (<>
+            {/* Vue liste : intitulés des colonnes */}
+            {listView && (() => {
+              const h = (w: number | undefined, label: string, right = false) => (
+                <span style={{ width: w, flex: w ? undefined : 1, minWidth: 0, flexShrink: 0, textAlign: right ? "right" as const : "left" as const, fontSize: 10.5, fontWeight: 800, color: C.muted, textTransform: "uppercase" as const, letterSpacing: "0.04em", whiteSpace: "nowrap" as const }}>{label}</span>
+              );
+              return (
+                <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "4px 6px 6px", borderBottom: `1.5px solid ${C.border}`, position: "sticky" as const, top: -10, background: C.white, zIndex: 1 }}>
+                  <span style={{ width: 8, flexShrink: 0 }} />
+                  {h(LV.code, "Code")}
+                  {h(LV.ean, "EAN")}
+                  {h(undefined, "Article")}
+                  <span style={{ width: LV.qty, flexShrink: 0, textAlign: "center" as const, fontSize: 10.5, fontWeight: 800, color: C.muted, textTransform: "uppercase" as const, letterSpacing: "0.04em" }}>Qté</span>
+                  {h(LV.brut, "PU brut", true)}
+                  {h(LV.remise, "Remise", true)}
+                  {h(LV.net, "PU net", true)}
+                  {h(LV.total, "Total", true)}
+                  <span style={{ width: LV.x, flexShrink: 0 }} />
+                </div>
+              );
+            })()}
+            {shownCartItems.map((item, idx) => {
               const prevGroup = idx > 0 ? shownCartItems[idx - 1].group : undefined;
               // Séparateur quand on change de MEA ; « Autres articles » après une MEA.
               const sepLabel = item.group !== prevGroup && (idx > 0 || item.group)
@@ -4905,18 +4927,29 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
                   <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "5px 6px", borderBottom: `1px solid ${C.border}` }}>
                     <span title={stockOk ? "En stock" : `Stock insuffisant : ${Math.floor(item.product.virtual_available || 0)} dispo`}
                       style={{ width: 8, height: 8, borderRadius: "50%", flexShrink: 0, background: stockOk ? C.green : C.red }} />
-                    <span style={{ width: 78, flexShrink: 0, fontSize: 11, fontFamily: "monospace", color: C.muted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>{item.product.default_code}</span>
-                    <span style={{ width: 108, flexShrink: 0, fontSize: 11, fontFamily: "monospace", color: C.muted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>{item.product.barcode ? <Ean code={item.product.barcode} /> : ""}</span>
+                    <span style={{ width: LV.code, flexShrink: 0, fontSize: 11, fontFamily: "monospace", color: C.muted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>{item.product.default_code}</span>
+                    <span style={{ width: LV.ean, flexShrink: 0, fontSize: 11, fontFamily: "monospace", color: C.muted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>{item.product.barcode ? <Ean code={item.product.barcode} /> : ""}</span>
                     <span style={{ flex: 1, minWidth: 0, fontSize: 12.5, fontWeight: 600, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>{item.product.name}</span>
                     {Array.isArray(item.product.x_offre_produit_id) && <OfferTag name={item.product.x_offre_produit_id[1]} />}
-                    <div style={{ display: "flex", alignItems: "center", gap: 3, flexShrink: 0 }}>
+                    <div style={{ width: LV.qty, justifyContent: "center", display: "flex", alignItems: "center", gap: 3, flexShrink: 0 }}>
                       <button onClick={() => onQtyChange(item.product, item.qty - 1)} style={{ width: 36, height: 36, borderRadius: 9, background: C.redSoft, border: "none", cursor: "pointer", color: C.red, fontSize: 17, fontWeight: 700 }}>−</button>
                       <button onClick={() => setPad({ product: item.product })} style={{ minWidth: 44, height: 36, borderRadius: 9, background: "#fff", border: `1px solid ${C.border}`, cursor: "pointer", fontSize: 13, fontWeight: 800, color: C.text, fontFamily: "inherit" }}><span key={item.qty} className="qty-pop">{item.qty}</span></button>
                       <button onClick={() => onQtyChange(item.product, item.qty + 1)} style={{ width: 36, height: 36, borderRadius: 9, background: C.tealSoft, border: "none", cursor: "pointer", color: C.teal, fontSize: 17, fontWeight: 700 }}>+</button>
                     </div>
-                    <span style={{ width: 70, flexShrink: 0, textAlign: "right" as const, fontSize: 11.5, color: C.textSec }}>{fmtPrice(item.unitPrice)}</span>
-                    <span style={{ width: 44, flexShrink: 0, textAlign: "right" as const, fontSize: 11, fontWeight: 700, color: C.orange }}>{pct + groupPct > 0 ? `−${Math.min(100, pct + groupPct)}%` : ""}</span>
-                    <span style={{ width: 80, flexShrink: 0, textAlign: "right" as const, fontSize: 13, fontWeight: 800, color: C.text }}>{fmtPrice(net)}</span>
+                    {(() => {
+                      // PU brut = prix catalogue (avant liste de prix du client) ;
+                      // remise = liste de prix + promos + remises de groupe, cumulées ;
+                      // PU net = prix réellement facturé à l'unité.
+                      const unitNet = item.qty ? net / item.qty : item.unitPrice * (1 - Math.min(100, pct + groupPct) / 100);
+                      const brut = catalog > 0 ? Math.max(catalog, item.unitPrice) : item.unitPrice;
+                      const remise = brut > 0 ? Math.round((1 - unitNet / brut) * 1000) / 10 : 0;
+                      return <>
+                        <span style={{ width: LV.brut, flexShrink: 0, textAlign: "right" as const, fontSize: 11.5, color: C.textSec }}>{fmtPrice(brut)}</span>
+                        <span style={{ width: LV.remise, flexShrink: 0, textAlign: "right" as const, fontSize: 11.5, fontWeight: 700, color: remise > 0.04 ? C.orange : C.muted }}>{remise > 0.04 ? `${String(remise).replace(".", ",")} %` : "—"}</span>
+                        <span style={{ width: LV.net, flexShrink: 0, textAlign: "right" as const, fontSize: 11.5, fontWeight: 700, color: C.text }}>{fmtPrice(unitNet)}</span>
+                      </>;
+                    })()}
+                    <span style={{ width: LV.total, flexShrink: 0, textAlign: "right" as const, fontSize: 13, fontWeight: 800, color: C.text }}>{fmtPrice(net)}</span>
                     <button onClick={() => removeLine(item.product)} title="Retirer" style={{ flexShrink: 0, width: 36, height: 36, marginLeft: 6, background: "transparent", border: "none", cursor: "pointer", color: C.muted, fontSize: 14 }}>✕</button>
                   </div>
                 ) : (
@@ -4978,8 +5011,8 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
                 )}
                 </div>
               );
-            })
-          )}
+            })}
+          </>)}
 
           {/* Gratuités saisies manuellement (produit à 0€ + type de gratuité) */}
           {giftItems.length > 0 && (
