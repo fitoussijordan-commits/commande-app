@@ -3820,7 +3820,8 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
 
   // ── Favoris : top 30 des articles de vente (code « 10… ») LIVRÉS au client ──
   // Source : transferts de stock sortants (OUT) validés, pas les commandes ni les
-  // factures — c'est ce que le client a réellement reçu. 12 derniers mois.
+  // factures — c'est ce que le client a réellement reçu. 18 derniers mois.
+  // Tri : quantité décroissante, articles Maquillage (code « 106… ») en fin de liste.
   const FAV_CAT_ID = "__fav__";
   const FAV_MAX = 30;
   const [favProducts, setFavProducts] = useState<any[]>([]);
@@ -3832,7 +3833,7 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
     setFavLoading(true);
     try {
       const since = new Date();
-      since.setFullYear(since.getFullYear() - 1);
+      since.setMonth(since.getMonth() - 18);
       const sinceStr = since.toISOString().slice(0, 10);
       const domain = [
         ["state", "=", "done"],
@@ -3881,7 +3882,9 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
           const a = agg.get(p.id)!;
           return { ...p, totalQty: a.totalQty, times: a.times, lastDate: a.lastDate };
         });
-        enriched.sort((a: any, b: any) => (b.totalQty || 0) - (a.totalQty || 0));
+        const isMaq = (p: any) => String(p.default_code || "").trim().startsWith("106");
+        enriched.sort((a: any, b: any) =>
+          (Number(isMaq(a)) - Number(isMaq(b))) || ((b.totalQty || 0) - (a.totalQty || 0)));
         setFavProducts(enriched);
         sync.cacheClientData(client.id, { favorites: enriched }).catch(() => {});
       } else {
@@ -4559,7 +4562,7 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
           ) : activeCatId === FAV_CAT_ID && favLoaded && displayedProducts.length === 0 ? (
             <div style={{ textAlign: "center", padding: 60, color: C.muted }}>
               <div style={{ marginBottom: 10 }}><Icon name="star" size={32} color={C.border} /></div>
-              <div>{favProducts.length === 0 ? "Aucun article de vente (code 10…) livré à ce client sur les 12 derniers mois" : "Aucun article « Les + achetés » en stock — désactive « Stock dispo » pour tout voir"}</div>
+              <div>{favProducts.length === 0 ? "Aucun article de vente (code 10…) acheté par ce client sur les 18 derniers mois" : "Aucun article « Les + achetés » en stock — désactive « Stock dispo » pour tout voir"}</div>
             </div>
           ) : loading && allProducts.length === 0 ? (
             <CatalogSkeleton dense={dense} />
@@ -4666,7 +4669,7 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
                            reste appliqué par les boutons − / + et le pavé numérique. */}
                       {activeCatId === FAV_CAT_ID && p.totalQty != null && (
                         <div style={{ fontSize: 10, fontWeight: 700, color: C.orange, background: C.orangeSoft, borderRadius: 5, padding: "2px 6px", marginTop: 3, display: "inline-block" }}>
-                          {Math.round(p.totalQty)} livré{Math.round(p.totalQty) > 1 ? "s" : ""} · {p.times} livraison{p.times > 1 ? "s" : ""}
+                          {Math.round(p.totalQty)} acheté{Math.round(p.totalQty) > 1 ? "s" : ""}
                         </div>
                       )}
                       {/* Prix client + prix barré sur une seule ligne */}
