@@ -125,7 +125,7 @@ export const isMine = (c: any, uid: number) => !Array.isArray(c?.user_id) || c.u
 // ── Écran d'accueil : « Mes clients » / « Mes prospects » / « Tous » ─────────
 // Commerciaux (droits Ventes « Utilisateur : mes documents seulement ») : deux
 // modes, Mes clients (Type de compte = Client, vendeur = moi) et Mes prospects
-// (Type de compte = Prospect, référence XX-…). Autres utilisateurs : un seul mode,
+// (Type de compte = Prospect, référence XX-…, vendeur = moi). Autres utilisateurs : un seul mode,
 // Tous (tous les clients, comme avant).
 export type ClientScope = "clients" | "prospects" | "all";
 const OWN_DOCS_KEY = "wms_sales_own_docs_only";
@@ -151,7 +151,7 @@ export const PROSPECT_REF_PREFIX = "XX-";
 // Domaine Odoo du mode (remplace customer_rank / vendeur dans les recherches).
 export function scopeDomain(uid: number, scope: ClientScope): any[] {
   if (scope === "clients") return [["customer_rank", ">", 0], ["user_id", "=", uid], ["x_type_de_compte_id", "=", "Client"]];
-  if (scope === "prospects") return [["x_type_de_compte_id", "=", "Prospect"], ["ref", "=like", PROSPECT_REF_PREFIX + "%"]];
+  if (scope === "prospects") return [["user_id", "=", uid], ["x_type_de_compte_id", "=", "Prospect"], ["ref", "=like", PROSPECT_REF_PREFIX + "%"]];
   return [["customer_rank", ">", 0]];
 }
 // Même filtre en local (cache hors ligne). Type de compte absent du cache (préchargé
@@ -159,6 +159,6 @@ export function scopeDomain(uid: number, scope: ClientScope): any[] {
 export function matchesScope(c: any, uid: number, scope: ClientScope): boolean {
   const t = Array.isArray(c?.x_type_de_compte_id) ? String(c.x_type_de_compte_id[1] || "").trim().toLowerCase() : null;
   if (scope === "clients") return isMine(c, uid) && (t === null || t === "client") && (c?.customer_rank ?? 1) > 0;
-  if (scope === "prospects") return (t === null || t === "prospect") && String(c?.ref || "").startsWith(PROSPECT_REF_PREFIX);
+  if (scope === "prospects") return isMine(c, uid) && (t === null || t === "prospect") && String(c?.ref || "").startsWith(PROSPECT_REF_PREFIX);
   return (c?.customer_rank ?? 1) > 0;
 }
