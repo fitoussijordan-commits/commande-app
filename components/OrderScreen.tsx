@@ -5,7 +5,8 @@ import AppointmentModal from "@/components/AppointmentModal";
 import ClientNoteModal from "@/components/ClientNoteModal";
 import OfflineBar from "@/components/OfflineBar";
 import PerimeScreen from "@/components/PerimeScreen";
-import BonCommandeScreen, { ImportedLine } from "@/components/BonCommandeScreen";
+import BonCommandeScreen, { ImportResult, ImportMeta } from "@/components/BonCommandeScreen";
+import { importFields } from "@/lib/bonMatch";
 import QtyPad from "@/components/QtyPad";
 import PerimesReportScreen from "@/components/PerimesReportScreen";
 import VisitPriority from "@/components/VisitPriority";
@@ -108,7 +109,9 @@ interface Props {
 // seq : ordre d'ajout (l'objet panier, indexé par id produit, se trie tout seul
 // par id). group : MEA d'origine, pour regrouper ses lignes sous un séparateur.
 // note : ligne de commentaire (display_type Odoo) — product = { id négatif, name = texte }.
-interface CartItem { product: any; qty: number; unitPrice: number; priceLocked?: boolean; bonBrut?: number; bonRemise?: number; seq?: number; group?: string; note?: "line_note" | "line_section"; }
+// lineName / highlight : ligne venue de « Charger la commande » (libellé « … * RUPTURE
+// DEFINITIVE * », couleur ocr_highlight du module Odoo d'import).
+interface CartItem { product: any; qty: number; unitPrice: number; priceLocked?: boolean; bonBrut?: number; bonRemise?: number; seq?: number; group?: string; note?: "line_note" | "line_section"; lineName?: string; highlight?: string; }
 
 // Lignes du panier dans l'ordre d'ajout (paniers anciens sans seq : en tête).
 function orderedCart(cart: Record<number, CartItem>): CartItem[] {
@@ -144,7 +147,7 @@ function matchesSearch(p: any, words: string[]): boolean {
 // cond : gratuité d'un modèle (MEA) — valable tant que le TOTAL des articles
 // payants du modèle est atteint, répartition libre (« 48 coffrets + 8 offerts » :
 // 13 + 25 + 16 = 54 ≥ 48 → offert).
-interface GiftItem { product: any; qty: number; type: string; cond?: { label: string; required: Record<number, number> } }
+interface GiftItem { product: any; qty: number; type: string; cond?: { label: string; required: Record<number, number> }; highlight?: string }
 function giftActive(g: GiftItem, cart: Record<number, { qty: number }>): boolean {
   if (!g.cond) return true;
   const ids = Object.keys(g.cond.required).map(Number);
@@ -782,6 +785,7 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
   const enterOrderMode = () => { if (client) beginOrder(client); };
   const [pendingQuote, setPendingQuote] = useState<{ templateId: number; qtys: Record<number, number> } | null>(null);
   const beginOrder = (client: any) => {
+    setImportMeta(null);
     setCart({});
     setNote("");
     setAppliedPromos({});
@@ -798,12 +802,29 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
 
   // Depuis l'import d'un bon de commande : même point de départ qu'une nouvelle
   // commande, mais panier pré-rempli avec les lignes vérifiées par le commercial.
-  const enterOrderModeWithLines = (lines: ImportedLine[], importNote: string) => {
+  // Commande chargée : lignes dans l'ordre du bon (notes « À SAISIR » / rupture
+  // comprises), unités gratuites (UG) en gratuités « Geste Co. - hors Coffre ».
+  const [importMeta, setImportMeta] = useState<ImportMeta | null>(null);
+  const enterOrderModeWithLines = (res: ImportResult) => {
     if (!client) return;
     enterOrderMode();
     setResumePrompt(null); // le bon importé remplace un éventuel brouillon
-    setCart(Object.fromEntries(lines.map((l, i) => [l.product.id, { ...l, seq: i + 1 }])));
-    setNote(importNote);
+    const next: Record<number, CartItem> = {};
+    let noteId = -1;
+    res.lines.forEach((l, i) => {
+      const seq = i + 1;
+      if ("note" in l) { next[noteId] = { product: { id: noteId, name: l.note }, qty: 0, unitPrice: 0, seq, note: "line_note", highlight: l.highlight }; noteId--; return; }
+      const prev = next[l.product.id];
+      next[l.product.id] = prev
+        ? { ...prev, qty: prev.qty + l.qty }
+        : { product: l.product, qty: l.qty, unitPrice: l.unitPrice, seq, lineName: l.lineName, highlight: l.highlight };
+    });
+    setCart(next);
+    const giftType = freeTypes.find(t => t.value === "geste_co_hors_quota")?.value
+      || freeTypes.find(t => fold(t.label) === fold("Geste Co. - hors Coffre"))?.value || "geste_co_hors_quota";
+    setGiftItems(res.gifts.map(g => ({ product: g.product, qty: g.qty, type: giftType, highlight: "green" })));
+    setNote(res.note);
+    setImportMeta(res.meta);
   };
 
   // Sauvegarde auto du brouillon du client courant dès que le panier ou la note change —
@@ -936,6 +957,18 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
         if (m?.joinedField) joinVals = { [m.joinedField]: m.joinedKind === "text" ? joined.map(o => o.name).join(", ") : [[6, 0, joined.map(o => o.id)]] };
       }
 
+      // Commande chargée depuis un bon (« Charger la commande ») : champs du module
+      // Odoo d'import s'ils existent sur la base (n° de commande client, source
+      // « Email - BDC Client », Lu par Claude, BDC Offline, couleur des lignes).
+      const imp = importMeta ? await importFields(session).catch(() => null) : null;
+      const importVals: any = {};
+      if (importMeta && imp) {
+        if (importMeta.clientRef && imp.order.has("client_order_ref")) importVals.client_order_ref = importMeta.clientRef;
+        if (imp.sourceId) importVals.source_id = imp.sourceId;
+        if (importMeta.readByClaude && imp.order.has("read_by_claude")) importVals.read_by_claude = true;
+        if (importMeta.bdcOffline && imp.order.has("bdc_offline")) importVals.bdc_offline = true;
+      }
+
       // Type de commande / Offres commandées : champs repérés dans Odoo (orderMeta).
       const metaVals: any = {};
       const m = await orderMeta(session).catch(() => null);
@@ -977,6 +1010,7 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
       // au lieu d'un appel par ligne — c'est ça qui rendait les gros devis lents.
       const mainPayload: any = {
         partner_id: client.id, state: "draft",
+        ...importVals,
         ...(pricelistId ? { pricelist_id: pricelistId } : {}),
         [sync.CHATTER_KEY]: orderNote,   // note de la commande → chatter (cf. sync.createOrder)
         ...tagVals,
@@ -986,7 +1020,8 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
         order_line: [
           // Ordre d'ajout : les lignes d'une même MEA restent groupées dans le devis.
           ...orderedCart(cart).filter(item => item.note ? !!String(item.product.name || "").trim() : item.qty > 0).flatMap(item => {
-            if (item.note) return [[0, 0, { display_type: item.note, name: String(item.product.name).trim() }]];
+            const hl = item.highlight && imp?.line.has("ocr_highlight") ? { ocr_highlight: item.highlight } : {};
+            if (item.note) return [[0, 0, { display_type: item.note, name: String(item.product.name).trim(), ...hl }]];
             // Remise ligne = promo Odoo + remise événement Co + remise du devis
             // d'implantation (cumul, plafonné à 100%).
             const promoDisc = Math.min(100, (lineDiscounts[item.product.id] || 0) + (eventDiscount || 0)
@@ -1009,6 +1044,8 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
               product_uom_qty: qty,
               price_unit: price,
               ...(disc > 0 ? { discount: disc } : {}),
+              ...(item.lineName ? { name: item.lineName } : {}),
+              ...hl,
               ...extra,
             }];
             // Libellé de la ligne rupture : référence, EAN et nom écrits séparément.
@@ -1040,6 +1077,7 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
             product_uom_qty: g.qty,
             price_unit: 0,
             ...(g.type ? { type_gratuit: g.type } : {}),
+            ...(g.highlight && imp?.line.has("ocr_highlight") ? { ocr_highlight: g.highlight } : {}),
           }]),
           // Franco non atteint : frais de livraison.
           ...(feeProduct ? [[0, 0, { product_id: feeProduct.id, product_uom_qty: 1, price_unit: SHIPPING_FEE_HT }]] : []),
@@ -1134,6 +1172,26 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
         onToast("Odoo a refusé le devis : " + (e?.message || e), "error");
         setSubmitting(false);
         return;
+      }
+
+      // Commande chargée : récapitulatif + fichier du bon joints au chatter.
+      if (importMeta) {
+        (async () => {
+          let attachmentIds: number[] = [];
+          if (importMeta.file) {
+            try {
+              const aid = await odoo.create(session, "ir.attachment", {
+                name: importMeta.file.name, datas: importMeta.file.data, res_model: "sale.order", res_id: mainId,
+              });
+              attachmentIds = [aid];
+            } catch { /* fichier non joint : le récapitulatif part quand même */ }
+          }
+          await odoo.callMethod(session, "sale.order", "message_post", [[mainId]], {
+            body: importMeta.summaryHtml, message_type: "comment", subtype_xmlid: "mail.mt_note",
+            ...(attachmentIds.length ? { attachment_ids: attachmentIds } : {}),
+          });
+        })().catch(() => {});
+        setImportMeta(null);
       }
 
       // Ruptures et notes de campagne : note interne dans le chatter.
@@ -2958,7 +3016,7 @@ function ClientHub({ session, client, hasDraft, onPrep, onOrder, onHistory, onAp
   const cards = [
     { key: "order", icon: "cart", title: "Prise de commande", subtitle: hasDraft ? "Brouillon en attente" : "Nouveau devis", primary: true, badge: hasDraft, onClick: onOrder },
     { key: "prep", icon: "list", title: "Préparer le RDV", subtitle: "CA, offres du cycle, propositions", primary: false, badge: false, onClick: onPrep },
-    { key: "bon", icon: "wand", title: "Charger la commande", subtitle: "PDF ou photo du client", primary: false, badge: false, onClick: onImportBon },
+    { key: "bon", icon: "wand", title: "Charger la commande", subtitle: "PDF, Excel, Word, JPG, PNG, etc.", primary: false, badge: false, onClick: onImportBon },
     { key: "history", icon: "clock", title: "Historique", subtitle: "Commandes passées", primary: false, badge: false, onClick: onHistory },
     { key: "rdv", icon: "calendar", title: "Prendre un RDV", subtitle: "Agenda Odoo", primary: false, badge: false, onClick: onAppointment },
     { key: "note", icon: "note", title: "Note client", subtitle: "Compte rendu, vocal ou écrit", primary: false, badge: false, onClick: onNote },

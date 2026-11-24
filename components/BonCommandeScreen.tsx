@@ -1,16 +1,18 @@
 "use client";
-// Import d'un bon de commande client (PDF ou photo).
+// « Charger la commande » : import d'un bon de commande client (PDF, Excel, Word,
+// JPG, PNG…), sur le modèle du module Odoo « sale_order_ocr_import ».
 //
-// 1. Le document est lu par /api/bon-commande (Claude) → lignes brutes
-//    (EAN, référence, désignation, quantité, prix).
-// 2. Chaque ligne est rapprochée du catalogue Odoo par recherche EXACTE sur
-//    l'EAN (barcode) puis la référence (default_code). Aucune correspondance
-//    « approchante » n'est RETENUE automatiquement : une ligne sans code reconnu
-//    reçoit des suggestions par le nom, mais le commercial doit en toucher une —
-//    un produit n'est jamais deviné.
-// 3. Le commercial vérifie, corrige, puis les lignes retenues remplissent le
-//    panier habituel — prix client, remises et validation restent ceux de la
-//    prise de commande normale.
+// 1. Le document est lu par /api/bon-commande (Claude Haiku 5.5, ou lecture
+//    directe pour les « Accord périmés ») → lignes brutes : code article, EAN,
+//    désignation, quantité, unités gratuites (UG). Aucun prix ni remise du bon.
+// 2. Chaque ligne est cherchée dans le catalogue Odoo avec les règles du module
+//    (lib/bonMatch.ts) : code, EAN, miniatures / échantillons → lots, article
+//    archivé ou non vendable → remplaçant ou note de rupture, recherche par le nom,
+//    « ⚠ À SAISIR » sinon.
+// 3. Le commercial vérifie, corrige, puis les lignes remplissent le panier
+//    habituel : prix de la liste de prix du client, UG en gratuités « Geste Co. -
+//    hors Coffre », notes à leur place. Le fichier et un récapitulatif sont joints
+//    au chatter du devis à sa création.
 import { useState, useEffect, useRef } from "react";
 import * as odoo from "@/lib/odoo";
 import * as sync from "@/lib/sync";
@@ -19,6 +21,7 @@ import QtyPad from "@/components/QtyPad";
 import BonLoader from "@/components/BonLoader";
 import { PriceItem, applyPricelist } from "@/lib/pricing";
 import { pickClientAmong } from "@/lib/clients";
+import { loadCatalog, resolveLines, saisirNote, type Resolved, type Highlight, type BonLine } from "@/lib/bonMatch";
 
 const C = {
   bg: "#f8fafc", white: "#fff", text: "#0f172a", textSec: "#334155",
@@ -30,19 +33,12 @@ const C = {
   shadow: "0 1px 3px rgba(0,0,0,0.08), 0 1px 2px rgba(0,0,0,0.05)",
 };
 
-// sale_ok : le rapprochement par EAN/référence trouve aussi les produits dont
-// « Peut être vendu » est décoché (absents du catalogue de l'app) → signalés.
 const PRODUCT_FIELDS = ["id", "name", "display_name", "default_code", "barcode", "lst_price", "product_tmpl_id", "virtual_available", "sale_ok"];
 // Photo iPad : 3 à 6 Mo en JPEG. Réduite à 2000 px de côté, elle reste très
 // lisible pour la lecture et passe sous la limite de taille des requêtes Vercel.
 const MAX_IMAGE_SIDE = 2000;
 const MAX_FILE_BYTES = 3_000_000;
 
-interface LigneLue {
-  ean: string; reference: string; designation: string;
-  quantite: number; prix_unitaire_ht: number | null;
-  prix_brut_ht?: number | null; remise_pct?: number | null;
-}
 interface ClientLu {
   nom: string; adresse: string; code_postal: string; ville: string;
   telephone: string; email: string; siret: string; numero_client: string;
@@ -50,36 +46,32 @@ interface ClientLu {
 interface BonLu {
   client: ClientLu;
   numero_commande: string; date_livraison: string; commentaire: string;
-  lignes: LigneLue[];
+  lignes: BonLine[];
+  lignes_ignorees: string[];
+  remarques: string;
+  code_client: string | null;
 }
-interface Ligne {
-  key: number;
-  lue: LigneLue;
-  product: any | null;
-  matchedBy: "ean" | "reference" | "manuel" | null;
-  qty: number;
+interface Ligne extends Resolved {
   include: boolean;
-  // Prix retenu : grille Odoo du client, prix écrit sur le bon, ou saisi à la main.
-  priceMode: "odoo" | "bon" | "manuel";
-  manualPrice: string;
-  // Ligne sans code reconnu : produits proposés d'après la désignation.
-  suggestions: any[];
+  suggestions: any[];      // ligne « À SAISIR » : articles proposés d'après la désignation
 }
 
-// priceLocked : le prix a été choisi par le commercial (bon ou saisie) — la prise
-// de commande ne doit pas le recalculer depuis la grille quand la quantité change.
-// bonBrut / bonRemise : prix du bon exprimé comme dans le logiciel du client
-// (brut + % de remise), pour qu'Odoo retombe sur les mêmes totaux au centime.
-export interface ImportedLine {
-  product: any; qty: number; unitPrice: number; priceLocked?: boolean;
-  bonBrut?: number; bonRemise?: number;
+// Résultat transmis à la prise de commande.
+export type ImportedLine =
+  | { product: any; qty: number; unitPrice: number; lineName?: string; highlight?: Highlight }
+  | { note: string; highlight?: Highlight };
+export interface ImportMeta {
+  clientRef: string;
+  readByClaude: boolean;
+  bdcOffline: boolean;
+  summaryHtml: string;
+  file: { name: string; data: string } | null;
 }
-
-// Prix net du bon, NON arrondi : brut × (1 − remise) quand le bon donne les deux,
-// sinon le net écrit. Le net imprimé (22,90) est un arrondi de 22,8997.
-function bonNetPrice(l: LigneLue): number | null {
-  if (l.prix_brut_ht != null && l.remise_pct) return l.prix_brut_ht * (1 - l.remise_pct / 100);
-  return l.prix_unitaire_ht;
+export interface ImportResult {
+  lines: ImportedLine[];
+  gifts: { product: any; qty: number }[];
+  note: string;
+  meta: ImportMeta;
 }
 
 function readAsBase64(file: Blob): Promise<string> {
@@ -113,8 +105,8 @@ async function shrinkImage(file: File): Promise<{ data: string; mediaType: strin
 }
 
 // Type réel du fichier, lu dans ses premiers octets. Un bon enregistré depuis un
-// mail ou un logiciel de pharmacie arrive souvent SANS extension (« BC Phi
-// GERBAUD ») : le navigateur ne lui donne alors aucun type, alors que c'est un PDF.
+// mail ou un logiciel de pharmacie arrive souvent SANS extension : le navigateur
+// ne lui donne alors aucun type, alors que c'est un PDF.
 type FileKind = "pdf" | "image" | "docx" | "xlsx" | "csv" | "old-office";
 const OFFICE_MIME: Record<"docx" | "xlsx" | "csv", string> = {
   docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -127,17 +119,15 @@ async function sniffKind(file: File): Promise<FileKind | null> {
   const ascii = String.fromCharCode(...Array.from(b));
   const name = file.name.toLowerCase();
   if (ascii.startsWith("%PDF-")) return "pdf";
-  // Word / Excel récents = archive ZIP : on regarde ce qu'elle contient.
   if (ascii.startsWith("PK\x03\x04")) {
     const head = new TextDecoder("latin1").decode(await file.slice(0, Math.min(file.size, 4_000_000)).arrayBuffer());
     if (head.includes("word/")) return "docx";
     if (head.includes("xl/")) return "xlsx";
     if (name.endsWith(".docx")) return "docx";
-    if (name.endsWith(".xlsx")) return "xlsx";
+    if (name.endsWith(".xlsx") || name.endsWith(".xlsm")) return "xlsx";
   }
-  // .doc / .xls (ancien format Office) : non lisibles, on le dit.
   if (b[0] === 0xd0 && b[1] === 0xcf && b[2] === 0x11 && b[3] === 0xe0) return "old-office";
-  if (name.endsWith(".csv") || file.type === "text/csv") return "csv";
+  if (/\.(csv|tsv|txt)$/.test(name) || file.type === "text/csv") return "csv";
   if (b[0] === 0xff && b[1] === 0xd8) return "image";                 // JPEG
   if (ascii.startsWith("\x89PNG")) return "image";                    // PNG
   if (ascii.startsWith("RIFF") && ascii.slice(8, 12) === "WEBP") return "image";
@@ -149,8 +139,10 @@ async function sniffKind(file: File): Promise<FileKind | null> {
 }
 
 const digits = (s: string) => (s || "").replace(/\D/g, "");
+const esc = (s: any) => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+function fmtPrice(n: number) { return new Intl.NumberFormat("fr-FR", { style: "currency", currency: "EUR" }).format(n); }
+const fmtQty = (n: number) => String(Math.round(n * 1000) / 1000).replace(".", ",");
 
-// Rapprochement exact avec le catalogue : EAN d'abord (le plus sûr), puis référence.
 // ── Recherche par désignation (lignes sans code, recherche manuelle) ──────
 // Les bons écrivent « LOTION TONIFIANTE VISAGE - 30ML », Odoo « Lotion
 // tonifiante 30 ml » : majuscules, accents absents, contenance collée, mots en
@@ -212,43 +204,6 @@ async function searchByDesignation(session: odoo.OdooSession, text: string, limi
     .map(x => x.p);
 }
 
-async function matchProducts(session: odoo.OdooSession, lignes: LigneLue[]): Promise<Ligne[]> {
-  const eans = Array.from(new Set(lignes.map(l => digits(l.ean)).filter(e => e.length >= 8)));
-  const refs = Array.from(new Set(lignes.map(l => (l.reference || "").trim()).filter(Boolean)));
-  let products: any[] = [];
-  if (eans.length || refs.length) {
-    const domain: any[] = eans.length && refs.length
-      ? ["|", ["barcode", "in", eans], ["default_code", "in", refs]]
-      : eans.length ? [["barcode", "in", eans]] : [["default_code", "in", refs]];
-    try {
-      products = await odoo.searchRead(session, "product.product", domain, PRODUCT_FIELDS, 0);
-    } catch (e) {
-      if (!odoo.isNetworkError(e)) throw e;
-      const eanSet = new Set(eans), refSet = new Set(refs);
-      products = (await sync.getCachedProducts())
-        .filter((p: any) => eanSet.has(p.barcode) || refSet.has(p.default_code));
-    }
-  }
-  const byEan = new Map<string, any>(), byRef = new Map<string, any>();
-  for (const p of products) {
-    if (p.barcode) byEan.set(String(p.barcode), p);
-    if (p.default_code) byRef.set(String(p.default_code), p);
-  }
-  return Promise.all(lignes.map(async (lue, i): Promise<Ligne> => {
-    const pe = byEan.get(digits(lue.ean));
-    const pr = byRef.get((lue.reference || "").trim());
-    const product = pe || pr || null;
-    const qty = Math.max(0, Math.round(lue.quantite || 0));
-    const suggestions = product ? [] : await searchByDesignation(session, lue.designation, 4).catch(() => []);
-    return {
-      key: i, lue, product,
-      matchedBy: pe ? "ean" : pr ? "reference" : null,
-      qty, include: !!product && qty > 0,
-      priceMode: "odoo", manualPrice: "",
-      suggestions,
-    };
-  }));
-}
 
 // ── Recherche du client émetteur dans Odoo ────────────────────────────────
 // Chaque indice lu sur le bon donne des points ; les identifiants uniques
@@ -366,42 +321,36 @@ function chipBtn(active: boolean): React.CSSProperties {
   };
 }
 
-// Prix unitaire : jusqu'à 3 décimales si le bon en a (« 13,917 »), sinon 2.
-function fmtUnit(n: number) {
-  return new Intl.NumberFormat("fr-FR", { style: "currency", currency: "EUR", minimumFractionDigits: 2, maximumFractionDigits: 3 }).format(n);
-}
 
-function fmtPrice(n: number) { return new Intl.NumberFormat("fr-FR", { style: "currency", currency: "EUR" }).format(n); }
+const STRIPE: Record<string, string> = { red: C.red, orange: C.orange, green: C.green };
 
 export default function BonCommandeScreen({ session, client, priceItems, onApply, onToast, onSelectClient, initialFile }: {
   session: odoo.OdooSession;
   // null = import lancé depuis l'accueil : le client est retrouvé d'après le bon.
   client: any | null;
-  // Fourni seulement quand le client peut être choisi ici (import depuis l'accueil).
   onSelectClient?: (c: any) => void;
   // Fichier reçu depuis une autre app (Mail → partager → Commande) : analysé d'office.
   initialFile?: File | null;
   priceItems: PriceItem[];
-  onApply: (lines: ImportedLine[], note: string) => void;
+  onApply: (res: ImportResult) => void;
   onToast: (msg: string, type?: "success" | "error" | "info") => void;
 }) {
   const [fileName, setFileName] = useState("");
   const [loading, setLoading] = useState<"" | "lecture" | "catalogue" | "client">("");
   const [candidates, setCandidates] = useState<ClientCandidate[]>([]);
-  const [clientReasons, setClientReasons] = useState<string[] | null>(null); // client retenu d'office : pourquoi
+  const [clientReasons, setClientReasons] = useState<string[] | null>(null);
   const [pickingClient, setPickingClient] = useState(false);
   const [error, setError] = useState("");
   const [bon, setBon] = useState<BonLu | null>(null);
+  const [info, setInfo] = useState<{ model: string | null; bdcOffline: boolean; skipped: number; file: { name: string; data: string } | null }>({ model: null, bdcOffline: false, skipped: 0, file: null });
   const [lignes, setLignes] = useState<Ligne[]>([]);
   const [searchFor, setSearchFor] = useState<number | null>(null);
-  // Aperçu du document d'origine, pour vérifier les lignes sans changer d'app.
   const [preview, setPreview] = useState<{ url: string; kind: "pdf" | "image" | "html"; html?: string } | null>(null);
-  const [showPreview, setShowPreview] = useState(false);   // plein écran (portrait)
+  const [showPreview, setShowPreview] = useState(false);
   const [onlyToCheck, setOnlyToCheck] = useState(false);
-  const [padFor, setPadFor] = useState<number | null>(null);
+  const [padFor, setPadFor] = useState<{ key: number; field: "qty" | "freeQty" } | null>(null);
   const wide = useWide();
 
-  // Libère l'URL d'aperçu quand on change de document ou quitte l'écran.
   useEffect(() => () => { if (preview?.url) URL.revokeObjectURL(preview.url); }, [preview]);
 
   const clientPrice = (p: any, qty: number) =>
@@ -417,40 +366,46 @@ export default function BonCommandeScreen({ session, client, priceItems, onApply
     try {
       let payload: { data: string; mediaType: string };
       const kind = await sniffKind(file);
-      // Blob retypé : un PDF sans extension n'a pas de type, et l'aperçu ne s'afficherait pas.
       if (kind === "pdf" || kind === "image") {
         setPreview({ url: URL.createObjectURL(new Blob([file], { type: kind === "pdf" ? "application/pdf" : file.type || "image/jpeg" })), kind });
       }
-      if (kind === "pdf") {
-        if (file.size > MAX_FILE_BYTES) throw new Error("PDF trop volumineux (3 Mo maximum)");
-        payload = { data: await readAsBase64(file), mediaType: "application/pdf" };
-      } else if (kind === "image") {
-        payload = await shrinkImage(file);
-      } else if (kind === "docx" || kind === "xlsx" || kind === "csv") {
+      if (kind === "image") payload = await shrinkImage(file);
+      else if (kind === "pdf" || kind === "docx" || kind === "xlsx" || kind === "csv") {
         if (file.size > MAX_FILE_BYTES) throw new Error("Fichier trop volumineux (3 Mo maximum)");
-        payload = { data: await readAsBase64(file), mediaType: OFFICE_MIME[kind] };
+        payload = { data: await readAsBase64(file), mediaType: kind === "pdf" ? "application/pdf" : OFFICE_MIME[kind] };
       } else if (kind === "old-office") {
         throw new Error("Ancien format Word / Excel (.doc, .xls) : enregistre-le en .docx ou .xlsx, ou en PDF.");
       } else {
-        throw new Error("Format non reconnu — PDF, photo, Word (.docx), Excel (.xlsx) ou CSV");
+        throw new Error("Format non reconnu — PDF, Excel, Word, CSV, JPG, PNG…");
       }
+      // Fichier joint au devis : celui envoyé à la lecture (photo réduite en JPEG).
+      const original = payload.data;
       const res = await fetch(apiUrl("/api/bon-commande"), {
         method: "POST",
         signal: ctrl.signal,
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...payload, odooUrl: session.config.url, sessionId: session.sessionId }),
+        body: JSON.stringify({ ...payload, fileName: file.name, odooUrl: session.config.url, sessionId: session.sessionId }),
       });
       const data = await res.json().catch(() => ({ error: `Réponse invalide (${res.status})` }));
       if (data.error) throw new Error(data.error);
       const lu: BonLu = data.bon;
-      // Word / Excel : le navigateur ne sait pas les afficher ; aperçu converti par le serveur.
       if (data.previewHtml) setPreview({ url: "", kind: "html", html: data.previewHtml });
       setBon(lu);
       setLoading("catalogue");
-      setLignes(await matchProducts(session, lu.lignes || []));
+      const cat = await loadCatalog(session);
+      const { lines, skipped } = resolveLines(cat, lu.lignes || []);
+      setInfo({
+        model: data.model || null, bdcOffline: !!data.bdcOffline, skipped,
+        file: { name: kind === "image" && !/\.(jpe?g)$/i.test(file.name) ? `${file.name.replace(/\.[^.]+$/, "")}.jpg` : file.name || "commande", data: original },
+      });
+      setLignes(await Promise.all(lines.map(async (l): Promise<Ligne> => ({
+        ...l, include: true,
+        suggestions: l.kind === "saisir" && l.lue.label ? await searchByDesignation(session, l.lue.label, 4).catch(() => []) : [],
+      }))));
+      if (cat.offline) onToast("Hors ligne : recherche sur le catalogue préchargé (articles archivés non vérifiés)", "info");
       if (onSelectClient) {
         setLoading("client");
-        const cands = await findClientCandidates(session, lu.client);
+        const cands = await findClientCandidates(session, { ...lu.client, numero_client: lu.client.numero_client || lu.code_client || "" });
         setCandidates(cands);
         const best = autoPick(cands);
         if (best) { onSelectClient(best.row); setClientReasons(best.reasons); }
@@ -475,73 +430,89 @@ export default function BonCommandeScreen({ session, client, priceItems, onApply
 
   const update = (key: number, patch: Partial<Ligne>) =>
     setLignes(prev => prev.map(l => l.key === key ? { ...l, ...patch } : l));
+  const pickProduct = (l: Ligne, p: any) => update(l.key, {
+    kind: "product", product: p, matchedBy: "manuel", include: true, note: undefined, highlight: undefined, description: undefined,
+    qty: l.qty || l.lue.qty, freeQty: l.freeQty || l.lue.free,
+  });
 
-  const manualValue = (l: Ligne): number | null => {
-    const n = parseFloat(l.manualPrice.replace(",", "."));
-    return isFinite(n) && n >= 0 ? n : null;
-  };
-  const linePrice = (l: Ligne): number => {
-    if (l.priceMode === "bon") { const b = bonNetPrice(l.lue); if (b != null) return b; }
-    if (l.priceMode === "manuel") { const m = manualValue(l); if (m != null) return m; }
-    return clientPrice(l.product, l.qty);
-  };
-  // Écart relatif entre le prix du bon et la grille Odoo (null si incomparable).
-  const ecartPct = (l: Ligne): number | null => {
-    const bonPrice = bonNetPrice(l.lue);
-    if (!l.product || bonPrice == null) return null;
-    const odooPrice = clientPrice(l.product, l.qty);
-    if (odooPrice <= 0) return null;
-    const pct = (bonPrice - odooPrice) / odooPrice * 100;
-    return Math.abs(pct) > 2 ? pct : null;
-  };
-  const setAllPriceModes = (mode: "odoo" | "bon") =>
-    setLignes(prev => prev.map(l =>
-      mode === "bon" && bonNetPrice(l.lue) == null ? l : { ...l, priceMode: mode, manualPrice: "" }));
-
-  const retenues = lignes.filter(l => l.include && l.product && l.qty > 0);
-  const nonTrouvees = lignes.filter(l => !l.product).length;
-  const avecEcart = lignes.filter(l => ecartPct(l) != null).length;
-  const nonVendable = (l: Ligne) => !!l.product && l.product.sale_ok === false;
-  const aVerifier = (l: Ligne) => !l.product || ecartPct(l) != null || nonVendable(l);
+  const isProduct = (l: Ligne) => l.kind === "product" && !!l.product;
+  const nonVendable = (l: Ligne) => isProduct(l) && l.product.sale_ok === false;
+  const aVerifier = (l: Ligne) => l.kind !== "product" || !!l.byName || nonVendable(l) || !!l.description;
+  const retenues = lignes.filter(l => l.include && isProduct(l) && (l.qty > 0 || l.freeQty > 0));
+  const nbSaisir = lignes.filter(l => l.kind === "saisir").length;
+  const nbRupture = lignes.filter(l => l.kind === "rupture").length;
+  const nbNom = lignes.filter(l => isProduct(l) && !!l.byName).length;
   const nbAVerifier = lignes.filter(aVerifier).length;
   const visibles = onlyToCheck ? lignes.filter(aVerifier) : lignes;
-  const total = retenues.reduce((s, l) => s + l.qty * linePrice(l), 0);
+  const total = retenues.reduce((s, l) => s + l.qty * clientPrice(l.product, l.qty), 0);
   const autreClient = bon?.client?.nom && client && !onSelectClient ? !sameClientHint(bon.client.nom, client.name) : false;
-  const canApply = !!client && !pickingClient && retenues.length > 0;
+  // « Accord périmés » : code client du fichier ≠ client du devis.
+  const clientRef = String(client?.ref || "").trim();
+  const codeClientDiff = !!bon?.code_client && !!clientRef && bon.code_client.trim().toLowerCase() !== clientRef.toLowerCase();
+  const canApply = !!client && !pickingClient && lignes.some(l => l.include);
 
   const apply = () => {
-    if (!canApply) return;
-    // Plusieurs lignes du bon peuvent pointer sur le même produit : on cumule.
-    const merged = new Map<number, ImportedLine>();
-    for (const l of retenues) {
-      const prev = merged.get(l.product.id);
-      const qty = (prev?.qty || 0) + l.qty;
-      const locked = l.priceMode !== "odoo" && linePrice(l) !== clientPrice(l.product, l.qty);
-      const asBon = l.priceMode === "bon" && l.lue.prix_brut_ht != null && !!l.lue.remise_pct;
-      merged.set(l.product.id, locked
-        ? { product: l.product, qty, unitPrice: linePrice(l), priceLocked: true,
-            ...(asBon ? { bonBrut: l.lue.prix_brut_ht!, bonRemise: l.lue.remise_pct! } : {}) }
-        : { product: l.product, qty, unitPrice: clientPrice(l.product, qty) });
+    if (!canApply || !bon) return;
+    const lines: ImportedLine[] = [];
+    const gifts: { product: any; qty: number }[] = [];
+    const imported: string[] = [], byName: string[] = [], lots: string[] = [], ruptures: string[] = [], issues: string[] = [], freeLines: string[] = [];
+    for (const l of lignes) {
+      if (!l.include) continue;
+      if (isProduct(l)) {
+        if (l.qty > 0) {
+          lines.push({ product: l.product, qty: l.qty, unitPrice: clientPrice(l.product, l.qty), lineName: l.description, highlight: l.highlight });
+          imported.push(`[${l.product.default_code || "-"}] ${l.product.name} × ${fmtQty(l.qty)}`);
+        }
+        if (l.freeQty > 0) {
+          gifts.push({ product: l.product, qty: l.freeQty });
+          freeLines.push(`[${l.product.default_code || "-"}] ${l.product.name} : ${fmtQty(l.freeQty)} UG`);
+        }
+        if (l.byName) byName.push(l.byName);
+        if (l.lotNote) lots.push(l.lotNote);
+      } else if (l.kind === "rupture" && l.note) {
+        lines.push({ note: l.note, highlight: "red" });
+        ruptures.push(l.note);
+      } else {
+        const n = l.note || saisirNote(l, l.reason || "");
+        lines.push({ note: n, highlight: "orange" });
+        issues.push(n);
+      }
     }
+    const list = (title: string, items: string[]) => items.length
+      ? `<p><b>${esc(title)}</b></p><ul>${items.map(i => `<li>${esc(i)}</li>`).join("")}</ul>` : "";
+    const remarques = [bon.remarques, codeClientDiff ? `⚠ Code client du fichier (${bon.code_client}) différent de celui du client (${clientRef}).` : ""].filter(Boolean).join(" ");
+    const summaryHtml = [
+      `<p><b>Commande chargée depuis « ${esc(info.file?.name || fileName)} » (app Flow)</b></p><ul>`,
+      `<li>${info.model ? `Modèle Claude : ${esc(info.model)}` : "Modèle Claude : aucun (fichier lu directement, sans appel à Claude)"}</li>`,
+      `<li>${imported.length} ligne(s) importée(s) sur ${lignes.length}${info.skipped ? ` — ${info.skipped} ligne(s) sans quantité ignorée(s)` : ""}</li></ul>`,
+      list("Articles trouvés par leur libellé — à vérifier :", byName),
+      list("Unités gratuites (UG) — Geste Co. - hors Coffre :", freeLines),
+      list("Miniatures et échantillons convertis en lots :", lots),
+      list("Articles archivés ou non vendables, sans équivalent (ligne de note) :", ruptures),
+      list("Lignes à compléter :", issues),
+      bon.lignes_ignorees?.length ? `<p>Lignes ignorées : ${esc(bon.lignes_ignorees.join("; "))}</p>` : "",
+      remarques ? `<p>Remarques : ${esc(remarques)}</p>` : "",
+    ].join("");
     const note = [
-      bon?.numero_commande && `Bon de commande client n° ${bon.numero_commande}`,
-      bon?.date_livraison && `Livraison souhaitée le ${fmtDay(bon.date_livraison)}`,
-      bon?.commentaire,
+      bon.date_livraison && `Livraison souhaitée le ${fmtDay(bon.date_livraison)}`,
+      bon.commentaire,
     ].filter(Boolean).join(" — ");
-    onApply(Array.from(merged.values()), note);
-    onToast(`${merged.size} produit${merged.size > 1 ? "s" : ""} ajouté${merged.size > 1 ? "s" : ""} au panier`, "success");
+    onApply({
+      lines, gifts, note,
+      meta: { clientRef: bon.numero_commande || "", readByClaude: !!info.model, bdcOffline: info.bdcOffline, summaryHtml, file: info.file },
+    });
+    const n = lines.filter(x => !("note" in x)).length;
+    onToast(`${n} article${n > 1 ? "s" : ""} ajouté${n > 1 ? "s" : ""} au panier`
+      + (gifts.length ? ` · ${gifts.length} ligne${gifts.length > 1 ? "s" : ""} UG` : "")
+      + (issues.length ? ` · ${issues.length} à saisir` : ""), issues.length ? "info" : "success");
   };
 
   const fileInput = (
-    // Pas d'attribut accept : il masquerait les PDF sans extension. Le type est
-    // vérifié sur le contenu (sniffKind). Sur iPad, le sélecteur propose quand
-    // même Photothèque, Appareil photo et Fichiers.
     <input type="file" disabled={!!loading} style={{ display: "none" }}
       onChange={e => { const f = e.target.files?.[0]; e.target.value = ""; if (f) void analyse(f); }} />
   );
-  const padLine = padFor != null ? lignes.find(l => l.key === padFor) : null;
+  const padLine = padFor ? lignes.find(l => l.key === padFor.key) : null;
 
-  // ── Avant analyse : grande zone de dépôt centrée ──────────────────────────
   if (loading) {
     return (
       <div style={{ flex: 1, overflowY: "auto" as const, display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}>
@@ -556,21 +527,20 @@ export default function BonCommandeScreen({ session, client, priceItems, onApply
     return (
       <div style={{ flex: 1, overflowY: "auto" as const, display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}>
         <div style={{ width: "100%", maxWidth: 560, textAlign: "center" as const }}>
-          <div style={{ fontSize: 22, fontWeight: 800, color: C.text }}>Importer un bon de commande</div>
+          <div style={{ fontSize: 22, fontWeight: 800, color: C.text }}>Charger la commande</div>
           <div style={{ fontSize: 14, color: C.muted, marginTop: 6, marginBottom: 24, lineHeight: 1.5 }}>
-            PDF, Word, Excel ou photo du bon papier. {onSelectClient ? "Le client et les produits sont retrouvés d'après le bon" : "Les produits sont retrouvés par EAN ou référence"} ; tu vérifies avant d'ajouter au panier.
+            PDF, Excel, Word, JPG, PNG, etc. {onSelectClient ? "Le client et les articles sont retrouvés d'après le bon" : "Les articles et les quantités sont retrouvés d'après le bon"} ; les prix viennent de la liste de prix du client. Tu vérifies avant d'ajouter au panier.
           </div>
           <label style={{
             display: "flex", flexDirection: "column" as const, alignItems: "center", justifyContent: "center", gap: 10,
             minHeight: 180, padding: 24, borderRadius: 20, border: `2px dashed ${C.teal}`,
-            background: C.tealSoft, color: C.tealDark, fontWeight: 800, fontSize: 17,
-            cursor: "pointer",
+            background: C.tealSoft, color: C.tealDark, fontWeight: 800, fontSize: 17, cursor: "pointer",
           }}>
             {fileInput}
             <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><path d="M14 2v6h6M12 18v-6M9 15l3-3 3 3"/>
+              <path d="m21.64 3.64-1.28-1.28a1.21 1.21 0 0 0-1.72 0L2.36 18.64a1.21 1.21 0 0 0 0 1.72l1.28 1.28a1.2 1.2 0 0 0 1.72 0L21.64 5.36a1.2 1.2 0 0 0 0-1.72"/><path d="m14 7 3 3M5 6v4M19 14v4M10 2v2M7 8H3M21 16h-4M11 3H9"/>
             </svg>
-            Choisir un PDF ou prendre une photo
+            Choisir le fichier ou prendre une photo
           </label>
           {error && (
             <div style={{ marginTop: 16, padding: "12px 14px", borderRadius: 12, background: C.redSoft, color: C.red, fontSize: 14, fontWeight: 600, textAlign: "left" as const }}>
@@ -582,23 +552,24 @@ export default function BonCommandeScreen({ session, client, priceItems, onApply
     );
   }
 
-  // ── Après analyse : aperçu du bon à gauche (paysage), lignes à droite ─────
+  const tag = (text: string, color: string, bg: string) => (
+    <span style={{ fontSize: 11, fontWeight: 700, color, background: bg, borderRadius: 6, padding: "2px 7px", whiteSpace: "nowrap" as const }}>{text}</span>
+  );
+
   return (
     <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" as const }}>
-      {/* En-tête compact : document + infos du bon sur une ligne */}
       <div style={{ padding: "12px 20px", background: C.white, borderBottom: `1px solid ${C.border}`, display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" as const }}>
         <div style={{ flex: 1, minWidth: 240, fontSize: 13, color: C.textSec, lineHeight: 1.5 }}>
-          <span style={{ fontWeight: 800, color: C.text, fontSize: 15 }}>{bon.client.nom || "Émetteur inconnu"}</span>
+          <span style={{ fontWeight: 800, color: C.text, fontSize: 15 }}>{bon.client.nom || fileName}</span>
           {bon.client.ville && <span style={{ color: C.muted }}> · {bon.client.ville}</span>}
           <div style={{ display: "flex", gap: 14, flexWrap: "wrap" as const, color: C.muted, fontSize: 12.5 }}>
-            {bon.numero_commande && <span>N° <b style={{ color: C.textSec }}>{bon.numero_commande}</b></span>}
+            {bon.numero_commande && <span>Réf. client <b style={{ color: C.textSec }}>{bon.numero_commande}</b></span>}
             {bon.date_livraison && <span>Livraison <b style={{ color: C.textSec }}>{fmtDay(bon.date_livraison)}</b></span>}
             {bon.commentaire && <span>« {bon.commentaire} »</span>}
+            <span>{info.model ? `Lu par Claude (${info.model})` : "Lu directement (sans Claude)"}{info.bdcOffline ? " · BDC Offline" : ""}</span>
           </div>
         </div>
-        {!wide && preview && (
-          <button onClick={() => setShowPreview(true)} style={toolBtn(false)}>Voir le bon</button>
-        )}
+        {!wide && preview && <button onClick={() => setShowPreview(true)} style={toolBtn(false)}>Voir le bon</button>}
         <label style={{ ...toolBtn(false), display: "inline-flex", alignItems: "center" }}>
           {fileInput}
           Changer de document
@@ -607,6 +578,11 @@ export default function BonCommandeScreen({ session, client, priceItems, onApply
       {autreClient && (
         <div style={{ padding: "10px 20px", background: C.orangeSoft, color: C.orange, fontSize: 13.5, fontWeight: 700, borderBottom: `1px solid ${C.border}` }}>
           Ce bon semble venir de « {bon.client.nom} », pas de {client.name}. Vérifie le client avant de continuer.
+        </div>
+      )}
+      {codeClientDiff && (
+        <div style={{ padding: "10px 20px", background: C.orangeSoft, color: C.orange, fontSize: 13.5, fontWeight: 700, borderBottom: `1px solid ${C.border}` }}>
+          Code client du fichier ({bon.code_client}) différent de celui du client ({clientRef}).
         </div>
       )}
       {onSelectClient && (
@@ -624,23 +600,21 @@ export default function BonCommandeScreen({ session, client, priceItems, onApply
         )}
 
         <div style={{ flex: 1, minWidth: 0, overflowY: "auto" as const, padding: "14px 20px 20px", WebkitOverflowScrolling: "touch" as any }}>
-          {/* Barre d'état + actions groupées */}
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" as const, alignItems: "center", marginBottom: 12 }}>
-            <span style={badge(C.greenSoft, C.green)}>{lignes.length - nonTrouvees} trouvée{lignes.length - nonTrouvees > 1 ? "s" : ""}</span>
-            {nonTrouvees > 0 && <span style={badge(C.orangeSoft, C.orange)}>{nonTrouvees} à choisir</span>}
-            {avecEcart > 0 && <span style={badge(C.orangeSoft, C.orange)}>{avecEcart} écart{avecEcart > 1 ? "s" : ""} de prix</span>}
+            <span style={badge(C.greenSoft, C.green)}>{lignes.filter(isProduct).length} trouvée{lignes.filter(isProduct).length > 1 ? "s" : ""}</span>
+            {nbNom > 0 && <span style={badge(C.orangeSoft, C.orange)}>{nbNom} par le nom</span>}
+            {nbRupture > 0 && <span style={badge(C.redSoft, C.red)}>{nbRupture} rupture{nbRupture > 1 ? "s" : ""}</span>}
+            {nbSaisir > 0 && <span style={badge(C.orangeSoft, C.orange)}>{nbSaisir} à saisir</span>}
+            {info.skipped > 0 && <span style={badge(C.bg, C.muted)}>{info.skipped} sans quantité ignorée{info.skipped > 1 ? "s" : ""}</span>}
             <span style={{ flex: 1 }} />
             {nbAVerifier > 0 && (
-              <button onClick={() => setOnlyToCheck(v => !v)} style={toolBtn(onlyToCheck)}>
-                À vérifier ({nbAVerifier})
-              </button>
+              <button onClick={() => setOnlyToCheck(v => !v)} style={toolBtn(onlyToCheck)}>À vérifier ({nbAVerifier})</button>
             )}
-            {avecEcart > 0 && <button onClick={() => setAllPriceModes("bon")} style={toolBtn(false)}>Tout au prix du bon</button>}
-            {avecEcart > 0 && <button onClick={() => setAllPriceModes("odoo")} style={toolBtn(false)}>Tout au prix Odoo</button>}
           </div>
+          {bon.remarques && <div style={{ fontSize: 12, color: C.muted, marginBottom: 10 }}>{bon.remarques}</div>}
 
           {lignes.length === 0 && (
-            <div style={{ padding: 24, fontSize: 14, color: C.muted, textAlign: "center" as const }}>Aucune ligne de produit trouvée sur ce document.</div>
+            <div style={{ padding: 24, fontSize: 14, color: C.muted, textAlign: "center" as const }}>Aucune ligne d'article avec une quantité dans ce fichier.</div>
           )}
           {onlyToCheck && visibles.length === 0 && (
             <div style={{ padding: 24, fontSize: 14, color: C.green, fontWeight: 700, textAlign: "center" as const }}>Tout est vérifié.</div>
@@ -648,56 +622,64 @@ export default function BonCommandeScreen({ session, client, priceItems, onApply
 
           <div style={{ display: "flex", flexDirection: "column" as const, gap: 8 }}>
             {visibles.map(l => {
-              const prixClient = l.product ? clientPrice(l.product, l.qty) : null;
-              const ecart = ecartPct(l);
-              const manualInvalid = l.priceMode === "manuel" && manualValue(l) == null;
-              const actif = !!l.product && l.include;
-              const stripe = !l.product || nonVendable(l) ? C.orange : !l.include ? C.border : ecart != null && l.priceMode === "odoo" ? C.orange : C.green;
+              const prod = isProduct(l);
+              const stripe = !l.include ? C.border : l.kind === "rupture" ? C.red : l.kind === "saisir" ? C.orange
+                : l.highlight ? STRIPE[l.highlight] : l.byName || nonVendable(l) ? C.orange : C.green;
+              const price = prod ? clientPrice(l.product, l.qty) : 0;
               return (
                 <div key={l.key} style={{
                   display: "flex", background: C.white, borderRadius: 14, boxShadow: C.shadow,
                   border: `1px solid ${C.border}`, borderLeft: `5px solid ${stripe}`, overflow: "hidden",
                 }}>
-                  {/* Colonne case à cocher : toute la hauteur est tapable (≥ 44 px) */}
-                  <button onClick={() => l.product && update(l.key, { include: !l.include })} disabled={!l.product}
+                  <button onClick={() => update(l.key, { include: !l.include })}
                     aria-label={l.include ? "Retirer la ligne" : "Garder la ligne"}
-                    style={{ width: 52, flexShrink: 0, border: "none", background: "transparent", cursor: l.product ? "pointer" : "default", display: "flex", alignItems: "flex-start", justifyContent: "center", paddingTop: 14 }}>
+                    style={{ width: 52, flexShrink: 0, border: "none", background: "transparent", cursor: "pointer", display: "flex", alignItems: "flex-start", justifyContent: "center", paddingTop: 14 }}>
                     <span style={{
                       width: 26, height: 26, borderRadius: 8, display: "flex", alignItems: "center", justifyContent: "center",
-                      border: `2px solid ${actif ? C.teal : C.border}`, background: actif ? C.teal : C.white, color: "#fff",
+                      border: `2px solid ${l.include ? C.teal : C.border}`, background: l.include ? C.teal : C.white, color: "#fff",
                     }}>
-                      {actif && <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6 9 17l-5-5"/></svg>}
+                      {l.include && <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6 9 17l-5-5"/></svg>}
                     </span>
                   </button>
 
-                  <div style={{ flex: 1, minWidth: 0, padding: "12px 14px 12px 0", opacity: l.product && !l.include ? 0.5 : 1 }}>
+                  <div style={{ flex: 1, minWidth: 0, padding: "12px 14px 12px 0", opacity: l.include ? 1 : 0.5 }}>
                     <div style={{ display: "flex", alignItems: "flex-start", gap: 12 }}>
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <div style={{ fontSize: 12, color: C.muted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>
-                          {l.lue.designation}
-                          {(l.lue.ean || l.lue.reference) && ` · ${[l.lue.ean, l.lue.reference].filter(Boolean).join(" / ")}`}
+                          {[l.lue.code && `Réf. ${l.lue.code}`, l.lue.ean && `EAN ${l.lue.ean}`, l.lue.label, `qté ${fmtQty(l.lue.qty)}`, l.lue.free ? `UG ${fmtQty(l.lue.free)}` : ""].filter(Boolean).join(" · ")}
                         </div>
-                        {l.product ? (
+                        {prod ? (
                           <div style={{ fontSize: 15, fontWeight: 700, color: C.text, marginTop: 2, lineHeight: 1.3 }}>
                             {l.product.display_name || l.product.name}
-                            <span style={{ fontSize: 11, fontWeight: 700, color: l.matchedBy === "manuel" ? C.teal : C.green, marginLeft: 8, whiteSpace: "nowrap" as const }}>
-                              {l.matchedBy === "ean" ? "EAN ✓" : l.matchedBy === "reference" ? "Réf ✓" : "choisi à la main"}
+                            <span style={{ marginLeft: 8, display: "inline-flex", gap: 4, flexWrap: "wrap" as const, verticalAlign: "middle" }}>
+                              {l.matchedBy === "code" && tag("Réf ✓", C.green, C.greenSoft)}
+                              {l.matchedBy === "ean" && tag("EAN ✓", C.green, C.greenSoft)}
+                              {l.matchedBy === "nom" && tag("par le nom — à vérifier", C.orange, C.orangeSoft)}
+                              {l.matchedBy === "remplacement" && tag("remplacé", l.highlight === "red" ? C.red : C.orange, l.highlight === "red" ? C.redSoft : C.orangeSoft)}
+                              {l.matchedBy === "manuel" && tag("choisi à la main", C.teal, C.tealSoft)}
+                              {l.inLots && tag("en lots", C.teal, C.tealSoft)}
                             </span>
                           </div>
+                        ) : l.kind === "rupture" ? (
+                          <div style={{ fontSize: 14, fontWeight: 700, color: C.red, marginTop: 2 }}>{l.note}</div>
                         ) : (
                           <div style={{ fontSize: 14, fontWeight: 700, color: C.orange, marginTop: 2 }}>
-                            {l.suggestions.length ? "Code absent — choisis le bon produit :" : "Produit non trouvé dans le catalogue"}
+                            ⚠ À SAISIR — {l.reason || "article introuvable dans Odoo"}
                           </div>
                         )}
+                        {l.description && <div style={{ fontSize: 12.5, fontWeight: 700, color: l.highlight === "red" ? C.red : C.orange, marginTop: 2 }}>Libellé de la ligne : {l.description}</div>}
+                        {l.byName && <div style={{ fontSize: 12, color: C.textSec, marginTop: 2 }}>{l.byName}</div>}
+                        {l.lotNote && <div style={{ fontSize: 12, color: C.teal, marginTop: 2 }}>{l.lotNote}</div>}
+                        {l.lue.comment && <div style={{ fontSize: 12, color: C.muted, marginTop: 2 }}>Note de lecture : {l.lue.comment}</div>}
                         {nonVendable(l) && (
                           <div style={{ fontSize: 12.5, fontWeight: 700, color: C.orange, marginTop: 2 }}>
-                            « Peut être vendu » est décoché dans Odoo pour ce produit — vérifie avant de l'ajouter.
+                            « Peut être vendu » est décoché dans Odoo pour cet article — vérifie avant de l'ajouter.
                           </div>
                         )}
-                        {!l.product && l.suggestions.length > 0 && (
+                        {l.kind === "saisir" && l.suggestions.length > 0 && (
                           <div style={{ display: "flex", flexWrap: "wrap" as const, gap: 6, marginTop: 6 }}>
                             {l.suggestions.map(p => (
-                              <button key={p.id} onClick={() => update(l.key, { product: p, matchedBy: "manuel", include: l.qty > 0 })}
+                              <button key={p.id} onClick={() => pickProduct(l, p)}
                                 style={{ ...chipBtn(false), borderColor: C.teal, color: C.tealDark, textAlign: "left" as const }}>
                                 {p.display_name || p.name}
                                 {p.default_code && <span style={{ color: C.muted, fontWeight: 600, marginLeft: 6 }}>{p.default_code}</span>}
@@ -705,68 +687,47 @@ export default function BonCommandeScreen({ session, client, priceItems, onApply
                             ))}
                           </div>
                         )}
-                        <button onClick={() => setSearchFor(searchFor === l.key ? null : l.key)}
-                          style={{ margin: "2px 0 0 -8px", padding: "6px 8px", border: "none", background: "transparent", color: C.teal, fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
-                          {searchFor === l.key ? "Fermer la recherche" : l.product ? "Changer de produit" : l.suggestions.length ? "Autre produit…" : "Choisir le produit"}
-                        </button>
+                        {l.kind !== "rupture" && (
+                          <button onClick={() => setSearchFor(searchFor === l.key ? null : l.key)}
+                            style={{ margin: "2px 0 0 -8px", padding: "6px 8px", border: "none", background: "transparent", color: C.teal, fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+                            {searchFor === l.key ? "Fermer la recherche" : prod ? "Changer d'article" : "Choisir l'article"}
+                          </button>
+                        )}
+                        {l.kind === "saisir" && l.include && (
+                          <div style={{ fontSize: 11.5, color: C.muted }}>Sans article choisi, la ligne part en note « ⚠ À SAISIR » sur le devis.</div>
+                        )}
+                        {l.kind === "rupture" && l.include && (
+                          <div style={{ fontSize: 11.5, color: C.muted }}>Ligne de note sur le devis (rupture).</div>
+                        )}
                       </div>
 
-                      {/* Quantité : − / chiffre (pavé numérique) / + */}
-                      <div style={{ display: "flex", alignItems: "center", flexShrink: 0, border: `1.5px solid ${C.border}`, borderRadius: 12, overflow: "hidden" }}>
-                        <button onClick={() => update(l.key, { qty: Math.max(0, l.qty - 1) })} style={stepBtn(C.red)} aria-label="Moins">−</button>
-                        <button onClick={() => setPadFor(l.key)} style={{ width: 52, height: 44, border: "none", borderLeft: `1px solid ${C.border}`, borderRight: `1px solid ${C.border}`, background: C.white, fontSize: 17, fontWeight: 800, color: C.text, cursor: "pointer", fontFamily: "inherit" }}>
-                          {l.qty}
-                        </button>
-                        <button onClick={() => update(l.key, { qty: l.qty + 1, include: !!l.product })} style={stepBtn(C.teal)} aria-label="Plus">+</button>
-                      </div>
+                      {prod && (
+                        <div style={{ display: "flex", flexDirection: "column" as const, alignItems: "flex-end", gap: 6, flexShrink: 0 }}>
+                          <div style={{ display: "flex", alignItems: "center", border: `1.5px solid ${C.border}`, borderRadius: 12, overflow: "hidden" }}>
+                            <button onClick={() => update(l.key, { qty: Math.max(0, l.qty - 1) })} style={stepBtn(C.red)} aria-label="Moins">−</button>
+                            <button onClick={() => setPadFor({ key: l.key, field: "qty" })} style={{ width: 52, height: 44, border: "none", borderLeft: `1px solid ${C.border}`, borderRight: `1px solid ${C.border}`, background: C.white, fontSize: 17, fontWeight: 800, color: C.text, cursor: "pointer", fontFamily: "inherit" }}>
+                              {fmtQty(l.qty)}
+                            </button>
+                            <button onClick={() => update(l.key, { qty: l.qty + 1, include: true })} style={stepBtn(C.teal)} aria-label="Plus">+</button>
+                          </div>
+                          <button onClick={() => setPadFor({ key: l.key, field: "freeQty" })}
+                            title="Unités gratuites (UG) : 2e ligne, Type de Gratuité « Geste Co. - hors Coffre »"
+                            style={{ height: 30, padding: "0 10px", borderRadius: 15, border: `1.5px solid ${l.freeQty > 0 ? C.green : C.border}`, background: l.freeQty > 0 ? C.greenSoft : C.white, color: l.freeQty > 0 ? C.green : C.muted, fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+                            {l.freeQty > 0 ? `+ ${fmtQty(l.freeQty)} UG offert${l.freeQty > 1 ? "s" : ""}` : "+ UG"}
+                          </button>
+                        </div>
+                      )}
 
-                      {wide && (
+                      {wide && prod && (
                         <div style={{ width: 96, flexShrink: 0, textAlign: "right" as const, paddingTop: 2 }}>
-                          <div style={{ fontSize: 16, fontWeight: 800, color: actif ? C.text : C.muted }}>{l.product ? fmtPrice(l.qty * linePrice(l)) : "—"}</div>
-                          {l.product && <div style={{ fontSize: 11, color: C.muted }}>{l.qty} × {fmtUnit(linePrice(l))}</div>}
+                          <div style={{ fontSize: 16, fontWeight: 800, color: l.include ? C.text : C.muted }}>{fmtPrice(l.qty * price)}</div>
+                          <div style={{ fontSize: 11, color: C.muted }}>{fmtQty(l.qty)} × {fmtPrice(price)}</div>
                         </div>
                       )}
                     </div>
-
-                    {l.product && (
-                    <div style={{ display: "flex", flexWrap: "wrap" as const, alignItems: "center", gap: 6, marginTop: 4 }}>
-                        <>
-                          <button onClick={() => update(l.key, { priceMode: "odoo", manualPrice: "" })} style={chipBtn(l.priceMode === "odoo")}>
-                            Prix Odoo {fmtUnit(prixClient!)}
-                          </button>
-                          {bonNetPrice(l.lue) != null && (
-                            <button onClick={() => update(l.key, { priceMode: "bon", manualPrice: "" })} style={chipBtn(l.priceMode === "bon")}>
-                              Prix du bon {fmtUnit(bonNetPrice(l.lue)!)}
-                              {l.lue.prix_brut_ht != null && !!l.lue.remise_pct && (
-                                <span style={{ fontWeight: 600, opacity: 0.75, marginLeft: 6 }}>
-                                  ({fmtUnit(l.lue.prix_brut_ht)} −{l.lue.remise_pct} %)
-                                </span>
-                              )}
-                            </button>
-                          )}
-                          <input value={l.manualPrice} inputMode="decimal" placeholder="Autre prix €"
-                            onChange={e => update(l.key, { manualPrice: e.target.value, priceMode: e.target.value.trim() ? "manuel" : "odoo" })}
-                            style={{
-                              width: 116, height: 44, borderRadius: 22, padding: "0 14px", fontSize: 13, fontWeight: 700, fontFamily: "inherit",
-                              border: `1.5px solid ${manualInvalid ? C.red : l.priceMode === "manuel" ? C.teal : C.border}`,
-                              background: l.priceMode === "manuel" ? C.tealSoft : C.white, color: C.text, boxSizing: "border-box" as const,
-                            }} />
-                          {ecart != null && (
-                            <span style={{ fontSize: 12, fontWeight: 700, color: C.orange }}>
-                              bon {ecart > 0 ? "+" : ""}{ecart.toFixed(0)} % vs Odoo
-                            </span>
-                          )}
-                        </>
-                    </div>
-                    )}
-                    {!wide && l.product && (
-                      <div style={{ fontSize: 13, fontWeight: 700, color: C.textSec, marginTop: 6 }}>
-                        Total ligne {fmtPrice(l.qty * linePrice(l))}
-                      </div>
-                    )}
                     {searchFor === l.key && (
-                      <ProductPicker session={session} initial={l.lue.designation}
-                        onPick={p => { update(l.key, { product: p, matchedBy: "manuel", include: l.qty > 0 }); setSearchFor(null); }} />
+                      <ProductPicker session={session} initial={l.lue.label || l.lue.code || l.lue.ean}
+                        onPick={p => { pickProduct(l, p); setSearchFor(null); }} />
                     )}
                   </div>
                 </div>
@@ -776,12 +737,11 @@ export default function BonCommandeScreen({ session, client, priceItems, onApply
         </div>
       </div>
 
-      {/* Pied fixe : total + validation toujours visibles */}
       <div style={{ padding: "12px 20px", background: C.white, borderTop: `1px solid ${C.border}`, display: "flex", alignItems: "center", gap: 16, boxShadow: "0 -4px 12px rgba(0,0,0,0.04)" }}>
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontSize: 20, fontWeight: 800, color: C.text }}>{fmtPrice(total)} <span style={{ fontSize: 12, color: C.muted, fontWeight: 700 }}>HT</span></div>
+          <div style={{ fontSize: 20, fontWeight: 800, color: C.text }}>{fmtPrice(total)} <span style={{ fontSize: 12, color: C.muted, fontWeight: 700 }}>HT · prix client</span></div>
           <div style={{ fontSize: 12.5, color: nbAVerifier ? C.orange : C.muted, fontWeight: 600 }}>
-            {retenues.length} ligne{retenues.length > 1 ? "s" : ""} retenue{retenues.length > 1 ? "s" : ""}
+            {retenues.length} article{retenues.length > 1 ? "s" : ""} retenu{retenues.length > 1 ? "s" : ""}
             {nbAVerifier > 0 && ` · ${nbAVerifier} à vérifier`}
             {!client && " · client à choisir"}
           </div>
@@ -797,9 +757,10 @@ export default function BonCommandeScreen({ session, client, priceItems, onApply
         </button>
       </div>
 
-      {padLine && (
-        <QtyPad name={padLine.product?.name || padLine.lue.designation} initial={padLine.qty}
-          onSet={n => update(padLine.key, { qty: n, include: !!padLine.product && n > 0 })}
+      {padLine && padFor && (
+        <QtyPad name={(padLine.product?.name || padLine.lue.label) + (padFor.field === "freeQty" ? " — UG offertes" : "")}
+          initial={padFor.field === "qty" ? padLine.qty : padLine.freeQty}
+          onSet={n => update(padLine.key, padFor.field === "qty" ? { qty: n, include: true } : { freeQty: n })}
           onClose={() => setPadFor(null)} />
       )}
 
