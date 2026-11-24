@@ -486,7 +486,28 @@ function ProductImageInner({ id, networkUrl, style }: { id: number; networkUrl: 
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// Hauteur réellement visible, exposée en CSS (--app-h) : window.innerHeight suit
+// les barres de Safari (iPad) et la rotation, sans rétrécir quand le clavier
+// s'ouvre (visualViewport, lui, rétrécirait tout l'écran) ; 100dvh en repli.
+function useVisibleHeight() {
+  useEffect(() => {
+    const root = document.documentElement;
+    const set = () => {
+      const h = window.innerHeight;
+      if (h > 0) root.style.setProperty("--app-h", `${Math.round(h)}px`);
+    };
+    set();
+    window.addEventListener("resize", set);
+    window.addEventListener("orientationchange", set);
+    return () => {
+      window.removeEventListener("resize", set);
+      window.removeEventListener("orientationchange", set);
+    };
+  }, []);
+}
+
 export default function OrderScreen({ session, onBack, onToast, desktop }: Props) {
+  useVisibleHeight();
   const [step, setStep] = useState<"home" | "client" | "hub" | "catalog" | "history" | "perime" | "assistant" | "bon" | "perimesReport">("client");
   // Sens de la transition d'écran : on glisse vers la gauche en avançant, vers
   // la droite en revenant (profondeur de l'écran dans le parcours).
@@ -1328,7 +1349,10 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
   );
 
   return (
-    <div style={{ position: "fixed", inset: 0, left: desktop ? 248 : 0, zIndex: 150, background: C.bg, display: "flex", flexDirection: "column" as const, fontFamily: "'DM Sans', sans-serif", overflow: "hidden", paddingTop: "env(safe-area-inset-top)", paddingBottom: "env(safe-area-inset-bottom)" }}>
+    // Hauteur = zone réellement visible (--app-h, cf. useVisibleHeight) : sur iPad,
+    // Safari compte sous ses barres une hauteur qu'il n'affiche pas, et le bas de
+    // l'écran (total du panier, bas des gammes) passait hors de l'écran.
+    <div style={{ position: "fixed", top: 0, right: 0, height: "var(--app-h, 100dvh)", left: desktop ? 248 : 0, zIndex: 150, background: C.bg, display: "flex", flexDirection: "column" as const, fontFamily: "'DM Sans', sans-serif", overflow: "hidden", paddingTop: "env(safe-area-inset-top)", paddingBottom: "env(safe-area-inset-bottom)", boxSizing: "border-box" as const }}>
 
       {/* Sélecteur de fichier des boutons « Importer un bon » — sans accept : un PDF
            sans extension serait masqué ; le type est vérifié sur le contenu. */}
@@ -4412,7 +4436,7 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
 
       {/* ── Sidebar catégories par mots-clés ── */}
       <div style={{ width: 160, background: C.white, borderRight: `1px solid ${C.border}`, overflowY: "auto" as const, flexShrink: 0, display: listView ? "none" : "block" }}>
-        <div style={{ padding: "12px 10px 6px", fontSize: 10, fontWeight: 700, color: C.muted, textTransform: "uppercase" as const, letterSpacing: "0.08em" }}>Gammes</div>
+        <div style={{ padding: "8px 10px 3px", fontSize: 10, fontWeight: 700, color: C.muted, textTransform: "uppercase" as const, letterSpacing: "0.08em" }}>Gammes</div>
 
         {/* « Tous » retiré de la liste des gammes (demande 2026-11-24). */}
         {/* Produit vente (défaut) : les six gammes de vente réunies */}
@@ -4421,7 +4445,7 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
           const count = allProducts.filter(p => isVenteProduct(p) && (!stockOnly || inStock(p))).length;
           return (
             <button onClick={() => setActiveCatId(VENTE_CAT_ID)}
-              style={{ width: "100%", padding: "10px 10px", background: active ? C.tealSoft : "transparent", border: "none", borderLeft: `3px solid ${active ? C.teal : "transparent"}`, cursor: "pointer", textAlign: "left" as const, fontFamily: "inherit", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6, transition: "all 0.1s" }}>
+              style={{ width: "100%", padding: "6px 10px", background: active ? C.tealSoft : "transparent", border: "none", borderLeft: `3px solid ${active ? C.teal : "transparent"}`, cursor: "pointer", textAlign: "left" as const, fontFamily: "inherit", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6, transition: "all 0.1s" }}>
               <span style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: active ? 700 : 400, color: active ? C.tealDark : C.textSec }}>
                 Produit vente
               </span>
@@ -4439,7 +4463,7 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
           const hero = gammeHero(allProducts, cat);
           return (
             <button key={cat.id} onClick={() => setActiveCatId(cat.id)}
-              style={{ width: "100%", padding: "10px 10px", background: active ? C.tealSoft : "transparent", border: "none", borderLeft: `3px solid ${active ? C.teal : "transparent"}`, cursor: "pointer", textAlign: "left" as const, fontFamily: "inherit", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6, transition: "all 0.1s" }}>
+              style={{ width: "100%", padding: "6px 10px", background: active ? C.tealSoft : "transparent", border: "none", borderLeft: `3px solid ${active ? C.teal : "transparent"}`, cursor: "pointer", textAlign: "left" as const, fontFamily: "inherit", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6, transition: "all 0.1s" }}>
               <span style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: active ? 700 : 400, color: active ? C.tealDark : C.textSec }}>
                 {SHOW_PRODUCT_IMAGES && <span style={{ position: "relative" as const, width: 34, height: 34, borderRadius: 9, background: "#fff", border: `1px solid ${active ? C.tealMid : C.border}`, display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden", flexShrink: 0 }}>
                   {/* Initiale de la gamme en fond : visible tant que l'image manque */}
@@ -4455,14 +4479,14 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
 
         {/* ── Types de produit (x_type_de_produit_id) ── */}
         {productTypes.length > 0 && (
-          <div style={{ marginTop: 8, borderTop: `1px solid ${C.border}`, paddingTop: 6 }}>
-            <div style={{ padding: "4px 10px", fontSize: 10, fontWeight: 700, color: C.muted, textTransform: "uppercase" as const, letterSpacing: "0.08em" }}>Type de produit</div>
+          <div style={{ marginTop: 4, borderTop: `1px solid ${C.border}`, paddingTop: 3 }}>
+            <div style={{ padding: "3px 10px 2px", fontSize: 10, fontWeight: 700, color: C.muted, textTransform: "uppercase" as const, letterSpacing: "0.08em" }}>Type de produit</div>
             {productTypes.map(t => {
               const id = TYPE_CAT_PREFIX + t.id;
               const active = activeCatId === id;
               return (
                 <button key={t.id} onClick={() => setActiveCatId(id)} title={t.label}
-                  style={{ width: "100%", padding: "10px 10px", background: active ? C.tealSoft : "transparent", border: "none", borderLeft: `3px solid ${active ? C.teal : "transparent"}`, cursor: "pointer", textAlign: "left" as const, fontFamily: "inherit", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6, transition: "all 0.1s" }}>
+                  style={{ width: "100%", padding: "6px 10px", background: active ? C.tealSoft : "transparent", border: "none", borderLeft: `3px solid ${active ? C.teal : "transparent"}`, cursor: "pointer", textAlign: "left" as const, fontFamily: "inherit", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6, transition: "all 0.1s" }}>
                   <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const, fontSize: 12, fontWeight: active ? 700 : 400, color: active ? C.tealDark : C.textSec }}>
                     {t.label}
                   </span>
@@ -4474,25 +4498,25 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
         )}
 
         {/* ── Offres MEA ── */}
-        <div style={{ marginTop: 8, borderTop: `1px solid ${C.border}`, paddingTop: 6 }}>
-          <div style={{ padding: "4px 10px 4px", fontSize: 10, fontWeight: 700, color: C.muted, textTransform: "uppercase" as const, letterSpacing: "0.08em" }}>Offres</div>
+        <div style={{ marginTop: 4, borderTop: `1px solid ${C.border}`, paddingTop: 3 }}>
+          <div style={{ padding: "3px 10px 2px", fontSize: 10, fontWeight: 700, color: C.muted, textTransform: "uppercase" as const, letterSpacing: "0.08em" }}>Offres</div>
           <button
             onClick={() => { setActiveCatId(MEA_CAT_ID); loadMeaTemplates(); }}
-            style={{ width: "100%", padding: "10px 10px", background: activeCatId === MEA_CAT_ID ? C.orangeSoft : "transparent", border: "none", borderLeft: `3px solid ${activeCatId === MEA_CAT_ID ? C.orange : "transparent"}`, cursor: "pointer", textAlign: "left" as const, fontFamily: "inherit", display: "flex", alignItems: "center", gap: 7, transition: "all 0.1s" }}>
+            style={{ width: "100%", padding: "6px 10px", background: activeCatId === MEA_CAT_ID ? C.orangeSoft : "transparent", border: "none", borderLeft: `3px solid ${activeCatId === MEA_CAT_ID ? C.orange : "transparent"}`, cursor: "pointer", textAlign: "left" as const, fontFamily: "inherit", display: "flex", alignItems: "center", gap: 7, transition: "all 0.1s" }}>
             <span style={{ fontSize: 12, fontWeight: activeCatId === MEA_CAT_ID ? 700 : 400, color: activeCatId === MEA_CAT_ID ? C.orange : C.textSec, display: "flex", alignItems: "center", gap: 6 }}>
               <Icon name="gift" size={13} /> MEA
             </span>
           </button>
           <button
             onClick={() => { setActiveCatId(DEVIS_CAT_ID); loadMeaTemplates(); }}
-            style={{ width: "100%", padding: "10px 10px", background: activeCatId === DEVIS_CAT_ID ? C.orangeSoft : "transparent", border: "none", borderLeft: `3px solid ${activeCatId === DEVIS_CAT_ID ? C.orange : "transparent"}`, cursor: "pointer", textAlign: "left" as const, fontFamily: "inherit", display: "flex", alignItems: "center", gap: 7, transition: "all 0.1s" }}>
+            style={{ width: "100%", padding: "6px 10px", background: activeCatId === DEVIS_CAT_ID ? C.orangeSoft : "transparent", border: "none", borderLeft: `3px solid ${activeCatId === DEVIS_CAT_ID ? C.orange : "transparent"}`, cursor: "pointer", textAlign: "left" as const, fontFamily: "inherit", display: "flex", alignItems: "center", gap: 7, transition: "all 0.1s" }}>
             <span style={{ fontSize: 12, fontWeight: activeCatId === DEVIS_CAT_ID ? 700 : 400, color: activeCatId === DEVIS_CAT_ID ? C.orange : C.textSec, display: "flex", alignItems: "center", gap: 6 }}>
               <Icon name="file" size={13} /> Devis d&apos;implantation
             </span>
           </button>
           {/* Remise événement Co : % appliqué à tout le panier ; panneau ouvert au clic */}
           <button onClick={() => setShowEventDisc(v => !v)}
-            style={{ width: "100%", padding: "10px 10px", background: eventDiscount > 0 || showEventDisc ? "#f5f3ff" : "transparent", border: "none", borderLeft: `3px solid ${eventDiscount > 0 ? "#7c3aed" : "transparent"}`, cursor: "pointer", textAlign: "left" as const, fontFamily: "inherit", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6, transition: "all 0.1s" }}>
+            style={{ width: "100%", padding: "6px 10px", background: eventDiscount > 0 || showEventDisc ? "#f5f3ff" : "transparent", border: "none", borderLeft: `3px solid ${eventDiscount > 0 ? "#7c3aed" : "transparent"}`, cursor: "pointer", textAlign: "left" as const, fontFamily: "inherit", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6, transition: "all 0.1s" }}>
             <span style={{ fontSize: 12, fontWeight: eventDiscount > 0 ? 700 : 400, color: eventDiscount > 0 ? "#7c3aed" : C.textSec, display: "flex", alignItems: "center", gap: 6 }}>
               <Icon name="tag" size={13} /> Remise événement
             </span>

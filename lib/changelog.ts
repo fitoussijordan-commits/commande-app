@@ -8,6 +8,7 @@ export const CHANGELOG: ChangelogEntry[] = [
   {
     date: "2026-11-24",
     items: [
+      "iPad : l'écran de prise de commande prend exactement la hauteur visible (le total du panier et le bas des gammes passaient sous le bord de l'écran) ; lignes des gammes / types / offres resserrées pour tout afficher.",
       "Remise événement : le bouton est déplacé dans la zone « Offres » (à gauche, sous MEA et Devis d'implantation).",
       "Panier en vue liste : intitulés des colonnes (Code, EAN, Article, Qté, PU brut, Remise, PU net, Total) ; PU brut = prix catalogue, Remise = liste de prix du client + promotions cumulées, PU net = prix facturé à l'unité.",
       "« Charger la commande » : le bon est maintenant lu par Odoo (module « Import de commandes clients par Claude », version 19.0.1.46.0 requise), avec la clé API et le modèle Claude réglés dans Odoo (paramètres système claude.api_key et sale_order_ocr_import.anthropic_model, Haiku 5.5 par défaut) — plus rien sur Vercel pour cette lecture.",
