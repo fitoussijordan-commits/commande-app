@@ -961,7 +961,7 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
       // Commande portail modifiée : ses frais de port d'origine restent, pas de second forfait.
       const feeProduct = needsShippingFee(netHt) && !(editOrder && editOrder.partnerId === client.id) ? await shippingProduct(session) : null;
       if (needsShippingFee(netHt) && !feeProduct) {
-        onToast("Article « Frais de port » introuvable dans Odoo — frais de livraison à ajouter à la main", "error");
+        onToast("Article [982040] « Frais de port - Transporteurs » introuvable dans Odoo — frais de livraison à ajouter à la main", "error");
       }
 
       const pricelistId = client.property_product_pricelist?.[0] || false;
