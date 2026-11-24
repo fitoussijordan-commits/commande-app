@@ -4490,6 +4490,36 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
               <Icon name="file" size={13} /> Devis d&apos;implantation
             </span>
           </button>
+          {/* Remise événement Co : % appliqué à tout le panier ; panneau ouvert au clic */}
+          <button onClick={() => setShowEventDisc(v => !v)}
+            style={{ width: "100%", padding: "10px 10px", background: eventDiscount > 0 || showEventDisc ? "#f5f3ff" : "transparent", border: "none", borderLeft: `3px solid ${eventDiscount > 0 ? "#7c3aed" : "transparent"}`, cursor: "pointer", textAlign: "left" as const, fontFamily: "inherit", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6, transition: "all 0.1s" }}>
+            <span style={{ fontSize: 12, fontWeight: eventDiscount > 0 ? 700 : 400, color: eventDiscount > 0 ? "#7c3aed" : C.textSec, display: "flex", alignItems: "center", gap: 6 }}>
+              <Icon name="tag" size={13} /> Remise événement
+            </span>
+            {eventDiscount > 0 && <span style={{ fontSize: 10, fontWeight: 700, color: "#fff", background: "#7c3aed", borderRadius: 5, padding: "1px 5px", flexShrink: 0 }}>{eventDiscount}%</span>}
+          </button>
+          {showEventDisc && (
+            <div className="reveal" style={{ padding: "4px 10px 8px", display: "flex", flexDirection: "column" as const, gap: 6 }}>
+              <div style={{ display: "flex", gap: 6 }}>
+                {[10, 15].map(v => (
+                  <button key={v} onClick={() => setEventDiscount(d => d === v ? 0 : v)}
+                    style={{ flex: 1, padding: "6px 0", borderRadius: 8, fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit",
+                      background: eventDiscount === v ? "#7c3aed" : "#fff", color: eventDiscount === v ? "#fff" : "#7c3aed", border: "1.5px solid #c4b5fd" }}>
+                    {v}%
+                  </button>
+                ))}
+              </div>
+              <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
+                <input type="number" min={0} max={100} placeholder="% libre"
+                  value={![0, 10, 15].includes(eventDiscount) ? eventDiscount : ""}
+                  onChange={e => { const n = Math.max(0, Math.min(100, Number(e.target.value) || 0)); setEventDiscount(n); }}
+                  style={{ flex: 1, minWidth: 0, padding: "6px 8px", borderRadius: 8, border: "1.5px solid #c4b5fd", fontSize: 12, fontFamily: "inherit", color: C.text, outline: "none" }} />
+                {eventDiscount > 0 && (
+                  <button onClick={() => setEventDiscount(0)} title="Retirer la remise" style={{ background: "none", border: "none", cursor: "pointer", color: C.red, fontSize: 15, flexShrink: 0 }}>✕</button>
+                )}
+              </div>
+            </div>
+          )}
         </div>
       </div>
 
@@ -5089,36 +5119,6 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
           )}
 
         </div>
-
-        {/* Remise événement Co — petit bouton discret ; le panneau s'ouvre au clic */}
-        {cartItems.length > 0 && (
-          <div style={{ margin: "0 12px 8px" }}>
-            <button onClick={() => setShowEventDisc(v => !v)}
-              style={{ display: "flex", alignItems: "center", gap: 6, padding: "5px 10px", borderRadius: 8, cursor: "pointer", fontFamily: "inherit", fontSize: 11.5, fontWeight: 700,
-                background: eventDiscount > 0 ? "#7c3aed" : "transparent", color: eventDiscount > 0 ? "#fff" : "#7c3aed", border: "1px solid #c4b5fd" }}>
-              <Icon name="tag" size={11} />
-              {eventDiscount > 0 ? `Remise ${eventDiscount}%` : "Remise événement"}
-            </button>
-            {showEventDisc && (
-              <div className="reveal" style={{ display: "flex", gap: 6, alignItems: "center", marginTop: 6 }}>
-                {[10, 15].map(v => (
-                  <button key={v} onClick={() => setEventDiscount(d => d === v ? 0 : v)}
-                    style={{ flex: "0 0 auto", padding: "6px 12px", borderRadius: 8, fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit",
-                      background: eventDiscount === v ? "#7c3aed" : "#fff", color: eventDiscount === v ? "#fff" : "#7c3aed", border: "1.5px solid #c4b5fd" }}>
-                    {v}%
-                  </button>
-                ))}
-                <input type="number" min={0} max={100} placeholder="% libre"
-                  value={![0, 10, 15].includes(eventDiscount) ? eventDiscount : ""}
-                  onChange={e => { const n = Math.max(0, Math.min(100, Number(e.target.value) || 0)); setEventDiscount(n); }}
-                  style={{ flex: 1, minWidth: 0, padding: "6px 8px", borderRadius: 8, border: "1.5px solid #c4b5fd", fontSize: 12, fontFamily: "inherit", color: C.text, outline: "none" }} />
-                {eventDiscount > 0 && (
-                  <button onClick={() => setEventDiscount(0)} title="Retirer" style={{ background: "none", border: "none", cursor: "pointer", color: C.red, fontSize: 15, flexShrink: 0 }}>✕</button>
-                )}
-              </div>
-            )}
-          </div>
-        )}
 
         {/* Rupture de stock : le détail est porté par la pastille rouge de chaque
             ligne ; ici un simple rappel. Informatif — le devis reste créable. */}
