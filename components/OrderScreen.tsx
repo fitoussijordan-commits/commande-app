@@ -4330,12 +4330,7 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
       <div style={{ width: 160, background: C.white, borderRight: `1px solid ${C.border}`, overflowY: "auto" as const, flexShrink: 0, display: listView ? "none" : "block" }}>
         <div style={{ padding: "12px 10px 6px", fontSize: 10, fontWeight: 700, color: C.muted, textTransform: "uppercase" as const, letterSpacing: "0.08em" }}>Gammes</div>
 
-        {/* Tous */}
-        <button onClick={() => setActiveCatId(null)}
-          style={{ width: "100%", padding: "10px 10px", background: !activeCatId ? C.tealSoft : "transparent", border: "none", borderLeft: `3px solid ${!activeCatId ? C.teal : "transparent"}`, cursor: "pointer", textAlign: "left" as const, fontSize: 12, fontWeight: !activeCatId ? 700 : 400, color: !activeCatId ? C.tealDark : C.textSec, fontFamily: "inherit", display: "flex", alignItems: "center", gap: 7 }}>
-          <Icon name="home" size={13} /> Tous
-        </button>
-
+        {/* « Tous » retiré de la liste des gammes (demande 2026-11-24). */}
         {/* Produit vente (défaut) : les six gammes de vente réunies */}
         {(() => {
           const active = activeCatId === VENTE_CAT_ID;
@@ -4344,22 +4339,15 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
             <button onClick={() => setActiveCatId(VENTE_CAT_ID)}
               style={{ width: "100%", padding: "10px 10px", background: active ? C.tealSoft : "transparent", border: "none", borderLeft: `3px solid ${active ? C.teal : "transparent"}`, cursor: "pointer", textAlign: "left" as const, fontFamily: "inherit", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6, transition: "all 0.1s" }}>
               <span style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: active ? 700 : 400, color: active ? C.tealDark : C.textSec }}>
-                <Icon name="cart" size={13} /> Produit vente
+                Produit vente
               </span>
               {count > 0 && <span style={{ fontSize: 10, fontWeight: 700, color: active ? C.teal : C.muted, background: active ? C.tealMid : C.bg, borderRadius: 5, padding: "1px 5px", flexShrink: 0 }}>{count}</span>}
             </button>
           );
         })()}
 
-        {/* Top 40 (ex-Favoris) du client */}
-        <button onClick={() => { setActiveCatId(FAV_CAT_ID); loadFavorites(); }}
-          style={{ width: "100%", padding: "10px 10px", background: activeCatId === FAV_CAT_ID ? C.orangeSoft : "transparent", border: "none", borderLeft: `3px solid ${activeCatId === FAV_CAT_ID ? C.orange : "transparent"}`, cursor: "pointer", textAlign: "left" as const, fontFamily: "inherit", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6, transition: "all 0.1s" }}>
-          <span style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: activeCatId === FAV_CAT_ID ? 700 : 400, color: activeCatId === FAV_CAT_ID ? C.orange : C.textSec }}>
-            <Icon name="star" size={13} /> Top 40
-          </span>
-          {favLoaded && favProducts.length > 0 && <span style={{ fontSize: 10, fontWeight: 700, color: activeCatId === FAV_CAT_ID ? C.orange : C.muted, background: activeCatId === FAV_CAT_ID ? C.orangeSoft : C.bg, borderRadius: 5, padding: "1px 5px", flexShrink: 0 }}>{favProducts.length}</span>}
-        </button>
-
+        {/* « Top 40 » retiré de la liste des gammes (demande 2026-11-24) — le
+             chargement (loadFavorites) reste en place pour un autre accès. */}
         {/* Catégories configurées */}
         {smartCats.map(cat => {
           const count = allProducts.filter(p => matchesCat(p, cat) && isSaleProduct(p) && (!stockOnly || inStock(p))).length;
