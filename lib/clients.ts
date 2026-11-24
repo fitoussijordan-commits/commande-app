@@ -131,7 +131,6 @@ export const isMine = (c: any, uid: number) => !Array.isArray(c?.user_id) || c.u
 // Tous (tous les clients, comme avant).
 export type ClientScope = "clients" | "prospects" | "all";
 const OWN_DOCS_KEY = "wms_sales_own_docs_only";
-const SCOPE_KEY = "wms_clients_scope";
 
 // Dernière valeur connue (hors ligne / affichage immédiat) ; null = jamais lue.
 export function cachedOwnDocsOnly(): boolean | null {
@@ -144,10 +143,12 @@ export async function fetchOwnDocsOnly(session: odoo.OdooSession): Promise<boole
   try { localStorage.setItem(OWN_DOCS_KEY, own ? "1" : "0"); } catch {}
   return own;
 }
-export function getScopeChoice(): "clients" | "prospects" {
-  try { return localStorage.getItem(SCOPE_KEY) === "prospects" ? "prospects" : "clients"; } catch { return "clients"; }
+// Fiche prospect : Type de compte = Prospect, ou à défaut (fiche venue d'un écran
+// qui ne lit pas ce champ) une référence XX-….
+export function isProspect(c: any): boolean {
+  const t = Array.isArray(c?.x_type_de_compte_id) ? String(c.x_type_de_compte_id[1] || "").trim().toLowerCase() : "";
+  return t === "prospect" || String(c?.ref || "").trim().toUpperCase().startsWith(PROSPECT_REF_PREFIX);
 }
-export function setScopeChoice(v: "clients" | "prospects") { try { localStorage.setItem(SCOPE_KEY, v); } catch {} }
 
 export const PROSPECT_REF_PREFIX = "XX-";
 // Domaine Odoo du mode (remplace customer_rank / vendeur dans les recherches).

@@ -36,7 +36,7 @@ import { apiUrl } from "@/lib/apiBase";
 import * as loyalty from "@/lib/loyalty";
 import { PriceItem, sortPriceItems, applyPricelist, resolveBaseLists } from "@/lib/pricing";
 import { descToText, routeUrls, stripRouteLinks } from "@/lib/text";
-import { dedupeClients, NOT_SUPPLIER, getMineOnly, setMineOnly, mineDomain, isMine, ClientScope, cachedOwnDocsOnly, fetchOwnDocsOnly, getScopeChoice, setScopeChoice, scopeDomain, matchesScope } from "@/lib/clients";
+import { dedupeClients, NOT_SUPPLIER, getMineOnly, setMineOnly, mineDomain, isMine, ClientScope, cachedOwnDocsOnly, fetchOwnDocsOnly, scopeDomain, matchesScope, isProspect } from "@/lib/clients";
 import { eventOnDay, ALLDAY_FIELDS, linkedPartnerId } from "@/lib/calendar";
 import { pickClientAmong } from "@/lib/clients";
 import { SHOW_PRODUCT_IMAGES } from "@/lib/features";
@@ -2632,10 +2632,11 @@ function ClientStep({ session, onSelect, onImportBon, onOpenPlanning, onToast, d
   // Autres utilisateurs : Tous. Droit relu dans Odoo à chaque ouverture, dernière
   // valeur gardée pour l'affichage immédiat et le hors ligne.
   const [ownDocsOnly, setOwnDocsOnly] = useState<boolean>(() => cachedOwnDocsOnly() ?? false);
-  const [scopeChoice, setScopeChoiceState] = useState<"clients" | "prospects">(getScopeChoice);
+  // Pas mémorisé : chaque arrivée sur cet écran repart sur « Mes clients ».
+  const [scopeChoice, setScopeChoiceState] = useState<"clients" | "prospects">("clients");
   const scope: ClientScope = ownDocsOnly ? scopeChoice : "all";
   useEffect(() => { fetchOwnDocsOnly(session).then(setOwnDocsOnly).catch(() => {}); }, [session]);
-  const toggleScope = () => setScopeChoiceState(v => { const n = v === "clients" ? "prospects" : "clients"; setScopeChoice(n); return n; });
+  const toggleScope = () => setScopeChoiceState(v => v === "clients" ? "prospects" : "clients");
 
   useEffect(() => {
     if (q.length < 2) { setResults([]); return; }
@@ -2948,6 +2949,9 @@ function ClientHub({ session, client, hasDraft, onPrep, onOrder, onHistory, onAp
   const caN1 = caDateN1 != null ? fmtPrice(caDateN1) : typeof client.x_ca_n_1 === "number" ? fmtPrice(client.x_ca_n_1) : null;
   const evoLabel = caDateN1 != null ? "vs CA à date N-1" : "Évolution CA N-1";
 
+  // Prospect : seules la prise de commande et la prise de RDV restent actives.
+  const prospect = isProspect(client);
+  const PROSPECT_OK = new Set(["order", "rdv"]);
   // Refonte : une seule carte accentuée (l'action principale), les autres en blanc.
   const cards = [
     { key: "order", icon: "cart", title: "Prise de commande", subtitle: hasDraft ? "Brouillon en attente" : "Nouveau devis", primary: true, badge: hasDraft, onClick: onOrder },
@@ -3030,12 +3034,15 @@ function ClientHub({ session, client, hasDraft, onPrep, onOrder, onHistory, onAp
           </button>
         ))}
         <div className="stagger" style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 12 }}>
-          {cards.filter(c => !c.primary).map(c => (
-            <button key={c.key} onClick={c.onClick}
+          {cards.filter(c => !c.primary).map(c => {
+            const off = prospect && !PROSPECT_OK.has(c.key);
+            return (
+            <button key={c.key} onClick={off ? undefined : c.onClick} disabled={off}
+              title={off ? "Non disponible pour un prospect" : undefined}
               style={{ position: "relative" as const, textAlign: "left" as const, padding: "14px 14px", borderRadius: 16, border: `1.5px solid ${C.border}`, background: C.white, color: C.text,
-                cursor: "pointer", fontFamily: "inherit", boxShadow: C.shadow, minWidth: 0 }}>
+                cursor: off ? "not-allowed" : "pointer", opacity: off ? 0.4 : 1, fontFamily: "inherit", boxShadow: C.shadow, minWidth: 0 }}>
               {/* Note client : bouton REC → dictée immédiate */}
-              {c.key === "note" && (
+              {c.key === "note" && !off && (
                 <span role="button" tabIndex={0} aria-label="Dicter une note tout de suite" title="Dicter une note tout de suite"
                   onClick={e => { e.stopPropagation(); onNoteRec(); }}
                   style={{ position: "absolute" as const, top: 8, right: 8, height: 36, padding: "0 11px", borderRadius: 999, background: C.bg, border: `1px solid ${C.border}`, color: C.textSec, display: "flex", alignItems: "center", gap: 6, fontSize: 11, fontWeight: 700, letterSpacing: "0.04em" }}>
@@ -3048,7 +3055,8 @@ function ClientHub({ session, client, hasDraft, onPrep, onOrder, onHistory, onAp
               <div style={{ fontSize: 14, fontWeight: 800, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>{c.title}</div>
               <div style={{ fontSize: 11.5, color: C.muted, marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>{c.subtitle}</div>
             </button>
-          ))}
+            );
+          })}
         </div>
       </div>
     </div>
