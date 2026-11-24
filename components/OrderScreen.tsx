@@ -36,7 +36,7 @@ import { apiUrl } from "@/lib/apiBase";
 import * as loyalty from "@/lib/loyalty";
 import { PriceItem, sortPriceItems, applyPricelist, resolveBaseLists } from "@/lib/pricing";
 import { descToText, routeUrls, stripRouteLinks } from "@/lib/text";
-import { dedupeClients, NOT_SUPPLIER, getMineOnly, setMineOnly, mineDomain, isMine } from "@/lib/clients";
+import { dedupeClients, NOT_SUPPLIER, getMineOnly, setMineOnly, mineDomain, isMine, ClientScope, cachedOwnDocsOnly, fetchOwnDocsOnly, getScopeChoice, setScopeChoice, scopeDomain, matchesScope } from "@/lib/clients";
 import { eventOnDay, ALLDAY_FIELDS, linkedPartnerId } from "@/lib/calendar";
 import { pickClientAmong } from "@/lib/clients";
 import { SHOW_PRODUCT_IMAGES } from "@/lib/features";
@@ -1712,7 +1712,7 @@ const LOC_RADII_KM = [1, 2, 5, 10, 20, 50];   // choix proposés
 // parent_id / type servent à écarter les adresses enfants (voir dedupeClients).
 // customer_rank : sert à départager plusieurs fiches partageant le même ref
 // (cf. pickClient) — c'est la fiche qui reçoit réellement les commandes.
-const CLIENT_FIELDS = ["id", "name", "ref", "street", "zip", "city", "user_id", "country_id", "property_product_pricelist", "email", "phone", "is_company", "x_nbre_visites_realisees", "parent_id", "type", "customer_rank", "x_evolution_ca_n_n_1", "x_ca_n_1", "x_ca_a_date_n", "x_statut_client_id", "category_id"];
+const CLIENT_FIELDS = ["id", "name", "ref", "street", "zip", "city", "user_id", "country_id", "property_product_pricelist", "email", "phone", "is_company", "x_nbre_visites_realisees", "parent_id", "type", "customer_rank", "x_evolution_ca_n_n_1", "x_ca_n_1", "x_ca_a_date_n", "x_statut_client_id", "category_id", "x_type_de_compte_id"];
 
 // Évolution du CA année N vs N-1 (onglet « Conditions commerciales » de la fiche
 // client Odoo, champ x_evolution_ca_n_n_1).
@@ -2628,9 +2628,14 @@ function ClientStep({ session, onSelect, onImportBon, onOpenPlanning, onToast, d
   const [locError, setLocError] = useState("");
   const [nearby, setNearby] = useState<any[]>([]);   // clients géolocalisés, triés par distance (tous rayons)
   const [radius, setRadius] = useState(LOC_RADIUS_KM);
-  // « Mes clients » (vendeur = moi) par défaut ; bouton pour voir tous les clients.
-  const [mine, setMine] = useState(getMineOnly);
-  const toggleMine = () => setMine(m => { setMineOnly(!m); return !m; });
+  // Commerciaux (Ventes « mes documents seulement ») : Mes clients / Mes prospects.
+  // Autres utilisateurs : Tous. Droit relu dans Odoo à chaque ouverture, dernière
+  // valeur gardée pour l'affichage immédiat et le hors ligne.
+  const [ownDocsOnly, setOwnDocsOnly] = useState<boolean>(() => cachedOwnDocsOnly() ?? false);
+  const [scopeChoice, setScopeChoiceState] = useState<"clients" | "prospects">(getScopeChoice);
+  const scope: ClientScope = ownDocsOnly ? scopeChoice : "all";
+  useEffect(() => { fetchOwnDocsOnly(session).then(setOwnDocsOnly).catch(() => {}); }, [session]);
+  const toggleScope = () => setScopeChoiceState(v => { const n = v === "clients" ? "prospects" : "clients"; setScopeChoice(n); return n; });
 
   useEffect(() => {
     if (q.length < 2) { setResults([]); return; }
@@ -2641,19 +2646,19 @@ function ClientStep({ session, onSelect, onImportBon, onOpenPlanning, onToast, d
         // Nom, référence OU ville — aligné sur la recherche hors ligne (et sur le
         // sous-titre de l'écran, qui promettait déjà la ville).
         const r = await odoo.searchRead(session, "res.partner",
-          ["|", "|", ["name", "ilike", q], ["ref", "ilike", q], ["city", "ilike", q], ["customer_rank", ">", 0], ["active", "=", true], NOT_SUPPLIER, ...mineDomain(session.uid, mine)],
+          ["|", "|", ["name", "ilike", q], ["ref", "ilike", q], ["city", "ilike", q], ["active", "=", true], NOT_SUPPLIER, ...scopeDomain(session.uid, scope)],
           CLIENT_FIELDS, 30);
         setResults(r);
       } catch {
         // Réseau indisponible → on cherche dans le cache local préchargé.
         try {
-          const cached = await sync.searchCachedClients(q, 30);
-          setResults(cached);
+          const cached = await sync.searchCachedClients(q, 5000);
+          setResults(cached.filter(c => matchesScope(c, session.uid, scope)).slice(0, 30));
         } catch { setResults([]); }
       }
       setLoading(false);
     }, 300);
-  }, [q, session, mine]);
+  }, [q, session, scope]);
 
   // Taper dans la recherche désactive le mode localisation (évite la confusion entre les deux listes)
   useEffect(() => { if (q.length >= 2 && locMode) setLocMode(false); }, [q]); // eslint-disable-line
@@ -2667,7 +2672,7 @@ function ClientStep({ session, onSelect, onImportBon, onOpenPlanning, onToast, d
       let rows: any[];
       try {
         rows = await odoo.searchRead(session, "res.partner",
-          [["customer_rank", ">", 0], ["active", "=", true], ["partner_latitude", "!=", 0], ["partner_longitude", "!=", 0], NOT_SUPPLIER, ...mineDomain(session.uid, mine)],
+          [["active", "=", true], ["partner_latitude", "!=", 0], ["partner_longitude", "!=", 0], NOT_SUPPLIER, ...scopeDomain(session.uid, scope)],
           [...CLIENT_FIELDS, "partner_latitude", "partner_longitude"], 3000);
       } catch {
         // Hors ligne → clients géolocalisés depuis le cache préchargé.
@@ -2691,7 +2696,7 @@ function ClientStep({ session, onSelect, onImportBon, onOpenPlanning, onToast, d
   // repli sur le cache hors ligne et la liste « clients proches ».
   const nearbyShown = nearby.filter(r => r._distKm <= radius);
   const displayed = dedupeClients(q.length >= 2 ? results : (locMode ? nearbyShown : []))
-    .filter(c => !mine || isMine(c, session.uid));
+    .filter(c => matchesScope(c, session.uid, scope));
 
   // Agenda + clients prioritaires : affichés tant qu'on ne cherche pas.
   const showWidgets = q.trim().length < 2 && !locMode;
@@ -2723,12 +2728,19 @@ function ClientStep({ session, onSelect, onImportBon, onOpenPlanning, onToast, d
               placeholder="Chercher un client : nom, référence ou ville"
               style={{ width: "100%", boxSizing: "border-box" as const, padding: "14px 14px 14px 44px", border: `1.5px solid ${C.border}`, borderRadius: 14, fontSize: 16, fontFamily: "inherit", background: C.white, color: C.text, boxShadow: C.shadowMd, outline: "none" }} />
           </div>
-          {/* Mes clients / tous les clients */}
-          <button onClick={toggleMine}
-            title={mine ? "Mes clients uniquement — toucher pour voir tous les clients" : "Tous les clients — toucher pour ne voir que les miens"}
-            style={{ flexShrink: 0, padding: "0 12px", display: "flex", alignItems: "center", gap: 6, background: mine ? C.teal : C.white, border: `1.5px solid ${mine ? C.teal : C.border}`, borderRadius: 14, cursor: "pointer", boxShadow: C.shadowMd, color: mine ? "#fff" : C.textSec, fontFamily: "inherit", fontSize: 13, fontWeight: 700, whiteSpace: "nowrap" as const }}>
-            <Icon name="user" size={18} />{mine ? "Mes clients" : "Tous"}
-          </button>
+          {/* Commerciaux : Mes clients / Mes prospects. Autres : Tous (pas de bascule). */}
+          {(() => {
+            const prospects = scope === "prospects";
+            const on = scope === "clients";
+            return (
+              <button onClick={ownDocsOnly ? toggleScope : undefined} disabled={!ownDocsOnly}
+                title={!ownDocsOnly ? "Tous les clients"
+                  : prospects ? "Mes prospects (réf. XX-…) — toucher pour mes clients" : "Mes clients — toucher pour mes prospects"}
+                style={{ flexShrink: 0, padding: "0 12px", display: "flex", alignItems: "center", gap: 6, background: on ? C.teal : prospects ? C.orangeSoft : C.white, border: `1.5px solid ${on ? C.teal : prospects ? C.orange : C.border}`, borderRadius: 14, cursor: ownDocsOnly ? "pointer" : "default", boxShadow: C.shadowMd, color: on ? "#fff" : prospects ? C.orange : C.textSec, fontFamily: "inherit", fontSize: 13, fontWeight: 700, whiteSpace: "nowrap" as const }}>
+                <Icon name="user" size={18} />{!ownDocsOnly ? "Tous" : prospects ? "Mes prospects" : "Mes clients"}
+              </button>
+            );
+          })()}
           <button
             onClick={() => locMode ? setLocMode(false) : enableLocation()}
             title="Proposer les clients les plus proches de ma position"

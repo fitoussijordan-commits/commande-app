@@ -36,6 +36,8 @@ export const CLIENT_FIELDS = [
   "parent_id", "type", "customer_rank", "x_evolution_ca_n_n_1", "x_ca_n_1", "x_ca_a_date_n", "x_statut_client_id",
   // Étiquettes client : « Bloqué compta » doit s'afficher aussi hors ligne.
   "category_id",
+  // Type de compte (Client / Prospect) : modes Mes clients / Mes prospects hors ligne.
+  "x_type_de_compte_id",
 ];
 
 const KEY = "all";
@@ -72,7 +74,8 @@ export async function preloadCatalog(
   onProgress?.({ step: "Clients", done: 1, total: steps });
   const clients = await odoo.searchRead(
     session, "res.partner",
-    [["active", "=", true], ["customer_rank", ">", 0]],
+    // Clients + prospects (réf. XX-…, souvent sans commande donc customer_rank 0).
+    [["active", "=", true], "|", ["customer_rank", ">", 0], ["ref", "=like", "XX-%"]],
     CLIENT_FIELDS,
     0, "name"
   );

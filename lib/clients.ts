@@ -1,4 +1,5 @@
 // lib/clients.ts
+import * as odoo from "@/lib/odoo";
 // Départage des fiches res.partner partageant un même code client (ref).
 
 export interface PickResult {
@@ -120,3 +121,44 @@ export function setMineOnly(v: boolean) { try { localStorage.setItem(MINE_KEY, v
 export const mineDomain = (uid: number, mine: boolean): any[] => mine ? [["user_id", "=", uid]] : [];
 // Filtre local (cache hors ligne) : une fiche sans vendeur connu est gardée.
 export const isMine = (c: any, uid: number) => !Array.isArray(c?.user_id) || c.user_id[0] === uid;
+
+// ── Écran d'accueil : « Mes clients » / « Mes prospects » / « Tous » ─────────
+// Commerciaux (droits Ventes « Utilisateur : mes documents seulement ») : deux
+// modes, Mes clients (Type de compte = Client, vendeur = moi) et Mes prospects
+// (Type de compte = Prospect, référence XX-…). Autres utilisateurs : un seul mode,
+// Tous (tous les clients, comme avant).
+export type ClientScope = "clients" | "prospects" | "all";
+const OWN_DOCS_KEY = "wms_sales_own_docs_only";
+const SCOPE_KEY = "wms_clients_scope";
+
+// Dernière valeur connue (hors ligne / affichage immédiat) ; null = jamais lue.
+export function cachedOwnDocsOnly(): boolean | null {
+  try { const v = localStorage.getItem(OWN_DOCS_KEY); return v === null ? null : v === "1"; } catch { return null; }
+}
+// « Mes documents seulement » = groupe Ventes utilisateur SANS « tous les documents ».
+export async function fetchOwnDocsOnly(session: odoo.OdooSession): Promise<boolean> {
+  const has = async (g: string) => Boolean(await odoo.callMethod(session, "res.users", "has_group", [[session.uid], g]));
+  const own = (await has("sales_team.group_sale_salesman")) && !(await has("sales_team.group_sale_salesman_all_leads"));
+  try { localStorage.setItem(OWN_DOCS_KEY, own ? "1" : "0"); } catch {}
+  return own;
+}
+export function getScopeChoice(): "clients" | "prospects" {
+  try { return localStorage.getItem(SCOPE_KEY) === "prospects" ? "prospects" : "clients"; } catch { return "clients"; }
+}
+export function setScopeChoice(v: "clients" | "prospects") { try { localStorage.setItem(SCOPE_KEY, v); } catch {} }
+
+export const PROSPECT_REF_PREFIX = "XX-";
+// Domaine Odoo du mode (remplace customer_rank / vendeur dans les recherches).
+export function scopeDomain(uid: number, scope: ClientScope): any[] {
+  if (scope === "clients") return [["customer_rank", ">", 0], ["user_id", "=", uid], ["x_type_de_compte_id", "=", "Client"]];
+  if (scope === "prospects") return [["x_type_de_compte_id", "=", "Prospect"], ["ref", "=like", PROSPECT_REF_PREFIX + "%"]];
+  return [["customer_rank", ">", 0]];
+}
+// Même filtre en local (cache hors ligne). Type de compte absent du cache (préchargé
+// avant cette version) → on n'exclut pas sur ce critère.
+export function matchesScope(c: any, uid: number, scope: ClientScope): boolean {
+  const t = Array.isArray(c?.x_type_de_compte_id) ? String(c.x_type_de_compte_id[1] || "").trim().toLowerCase() : null;
+  if (scope === "clients") return isMine(c, uid) && (t === null || t === "client") && (c?.customer_rank ?? 1) > 0;
+  if (scope === "prospects") return (t === null || t === "prospect") && String(c?.ref || "").startsWith(PROSPECT_REF_PREFIX);
+  return (c?.customer_rank ?? 1) > 0;
+}
