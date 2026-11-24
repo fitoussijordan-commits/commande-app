@@ -8,7 +8,7 @@ export const CHANGELOG: ChangelogEntry[] = [
   {
     date: "2026-11-24",
     items: [
-      "Accueil : le bouton revient toujours sur « Mes clients » en arrivant sur l'écran. Fiche d'un prospect : seuls « Prise de commande » et « Prendre un RDV » sont actifs.",
+      "Accueil : le bouton revient toujours sur « Mes clients » en arrivant sur l'écran. Fiche d'un prospect : seuls « Prise de commande », « Prendre un RDV » et « Note client » sont actifs.",
       "Correctif « Mes prospects » : la recherche ne donnait aucun résultat (les codes XX-… étaient encore écartés comme fournisseurs).",
       "Recherche client (accueil) : pour les commerciaux (Ventes « mes documents seulement »), le bouton bascule entre « Mes clients » (Type de compte = Client) et « Mes prospects » (Type de compte = Prospect, code XX-…), toujours ceux dont on est le vendeur. Les autres utilisateurs voient « Tous ». Les prospects sont aussi chargés pour le hors ligne.",
       "Gammes : « Tous » et « Top 40 » retirés de la liste ; « Produit vente » sans icône.",

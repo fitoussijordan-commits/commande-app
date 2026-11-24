@@ -2949,9 +2949,9 @@ function ClientHub({ session, client, hasDraft, onPrep, onOrder, onHistory, onAp
   const caN1 = caDateN1 != null ? fmtPrice(caDateN1) : typeof client.x_ca_n_1 === "number" ? fmtPrice(client.x_ca_n_1) : null;
   const evoLabel = caDateN1 != null ? "vs CA à date N-1" : "Évolution CA N-1";
 
-  // Prospect : seules la prise de commande et la prise de RDV restent actives.
+  // Prospect : seules la prise de commande, la prise de RDV et la note client restent actives.
   const prospect = isProspect(client);
-  const PROSPECT_OK = new Set(["order", "rdv"]);
+  const PROSPECT_OK = new Set(["order", "rdv", "note"]);
   // Refonte : une seule carte accentuée (l'action principale), les autres en blanc.
   const cards = [
     { key: "order", icon: "cart", title: "Prise de commande", subtitle: hasDraft ? "Brouillon en attente" : "Nouveau devis", primary: true, badge: hasDraft, onClick: onOrder },
