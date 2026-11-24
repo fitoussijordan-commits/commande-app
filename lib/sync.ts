@@ -537,6 +537,32 @@ async function enrichCalendarEventValues(session: odoo.OdooSession, values: any)
 
 let _flushing = false;
 
+async function saleOrderName(session: odoo.OdooSession, id: number): Promise<string | undefined> {
+  try {
+    const rows = await odoo.searchRead(session, "sale.order", [["id", "=", id]], ["name"], 1);
+    return rows[0]?.name ? String(rows[0].name) : undefined;
+  } catch { return undefined; }
+}
+
+// Commandes déjà synchronisées avant l'ajout du numéro (ou numéro non lu) :
+// on le complète dès qu'Odoo répond. Ne concerne que les sale.order.
+export async function backfillOrderNames(session: odoo.OdooSession): Promise<boolean> {
+  const orders = await db.getQueuedOrders();
+  const todo = orders.filter(o => o.status === "synced" && o.odooId && !o.odooName && o.id != null
+    && (o.kind === "perime" || (o.payloads && o.payloads.length)
+        || (o.actions || []).find(a => a.op === "create")?.model === "sale.order"));
+  if (!todo.length) return false;
+  const ids = todo.map(o => o.odooId!) as number[];
+  const rows = await odoo.searchRead(session, "sale.order", [["id", "in", ids]], ["id", "name"], ids.length);
+  const byId = new Map<number, string>(rows.map((r: any) => [r.id, String(r.name || "")] as [number, string]));
+  let changed = false;
+  for (const o of todo) {
+    const name = byId.get(o.odooId!);
+    if (name) { await db.updateQueuedOrder(o.id!, { odooName: name }); changed = true; }
+  }
+  return changed;
+}
+
 // Rejoue toutes les commandes en attente vers Odoo. Idempotent : ne tourne
 // qu'une fois à la fois, et ignore les commandes déjà synchronisées.
 export async function flushQueue(
@@ -560,11 +586,13 @@ export async function flushQueue(
       await db.updateQueuedOrder(order.id, { status: "syncing" });
       try {
         const resultIds: number[] = [];
+        let firstModel = "";
         // Reprise de périmés : rejeu par la MÊME fonction que le chemin en ligne,
         // protégée par le localRef contre tout doublon.
         if (order.kind === "perime" && order.perime) {
           const res = await perimes.submitReprise(session, order.perime);
           resultIds.push(res.orderId);
+          firstModel = firstModel || "sale.order";
         }
         // Nouveau format générique : liste d'actions Odoo.
         if (order.actions && order.actions.length) {
@@ -575,6 +603,7 @@ export async function flushQueue(
                 : a.values;
               const rid = await odoo.create(session, a.model, values);
               resultIds.push(rid);
+              firstModel = firstModel || a.model;
             } else if (a.op === "write") {
               await odoo.write(session, a.model, a.ids || [], a.values || {});
             } else if (a.op === "callMethod") {
@@ -590,6 +619,7 @@ export async function flushQueue(
           for (const payload of order.payloads) {
             const oid = await createOrder(session, payload);
             resultIds.push(oid);
+            firstModel = firstModel || "sale.order";
           }
           // Commande directe logistique : confirmation APRÈS création. Un échec ne
           // doit pas faire rejouer la création (doublon) : il est seulement noté.
@@ -603,16 +633,20 @@ export async function flushQueue(
             }
           }
         }
+        // Numéro de commande (S…) à afficher dans la file, plutôt que l'id technique.
+        const odooName = firstModel === "sale.order" && resultIds[0]
+          ? await saleOrderName(session, resultIds[0]) : undefined;
         await db.updateQueuedOrder(order.id, {
           status: "synced",
           odooId: resultIds[0],
+          odooName,
           attempts: (order.attempts || 0) + 1,
           // Devis créé mais confirmation / note du pick en échec : visible dans le
           // panneau de la file, à terminer dans Odoo.
           lastError: transmitError || undefined,
         });
         synced++;
-        onOrderSynced?.({ ...order, status: "synced", odooId: resultIds[0] });
+        onOrderSynced?.({ ...order, status: "synced", odooId: resultIds[0], odooName });
       } catch (e: any) {
         const msg = e?.message || String(e);
         await db.updateQueuedOrder(order.id, {

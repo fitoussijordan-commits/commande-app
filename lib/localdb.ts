@@ -154,6 +154,7 @@ export interface QueuedOrder {
   attempts: number;
   lastError?: string;
   odooId?: number;             // id après synchro réussie
+  odooName?: string;           // numéro de commande Odoo (ex. S12345) après synchro
   kind?: QueuedKind;           // défaut "order" (rétro-compat)
   label: string;               // libellé affiché dans l'UI (ex: "Commande — Client X")
   clientName?: string;         // conservé pour rétro-compat

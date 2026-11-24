@@ -70,6 +70,14 @@ export default function OfflineBar({
     return () => clearInterval(t);
   }, [refreshStatus]);
 
+  // Numéros de commande manquants (commandes envoyées avant cette version ou
+  // lecture du numéro en échec) : complétés à l'ouverture du panneau, en ligne.
+  useEffect(() => {
+    if (!showPanel || !online || odooDown) return;
+    if (!queue.some(o => o.status === "synced" && o.odooId && !o.odooName)) return;
+    sync.backfillOrderNames(session).then(ch => { if (ch) refreshStatus(); }).catch(() => {});
+  }, [showPanel, online, odooDown]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // Synchro automatique dès qu'on repasse en ligne s'il y a des commandes en attente.
   useEffect(() => {
     if (online && !odooDown && pending > 0 && !syncing) {
@@ -254,7 +262,7 @@ export default function OfflineBar({
                           {fmtDate(o.createdAt)}
                           {typeof o.total === "number" && o.total > 0 && ` · ${fmtPrice(o.total)}`}
                           {(o.attempts || 0) > 1 && ` · ${o.attempts} tentatives`}
-                          {o.odooId ? ` · Odoo #${o.odooId}` : ""}
+                          {o.odooName ? ` · ${o.odooName}` : o.odooId ? ` · Odoo #${o.odooId}` : ""}
                         </div>
                       </div>
                       <span style={{ fontSize: 11, fontWeight: 700, color: st.color, background: st.bg, borderRadius: 8, padding: "3px 9px", flexShrink: 0 }}>{st.label}</span>
