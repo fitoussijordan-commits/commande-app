@@ -8,7 +8,7 @@ export const CHANGELOG: ChangelogEntry[] = [
   {
     date: "2026-11-24",
     items: [
-      "« Favoris » devient « Les + achetés » : le top 30 des articles de vente (code commençant par 10) achetés par le client sur 18 mois (bons de livraison validés, et non plus les commandes), classés par quantité achetée, articles Maquillage (106…) en fin de liste.",
+      "« Favoris » devient « Top 40 » : les 40 premiers des articles de vente (code commençant par 10) achetés par le client sur 18 mois (bons de livraison validés, et non plus les commandes), classés par quantité achetée, articles Maquillage (106…) en fin de liste.",
     ],
   },
   {

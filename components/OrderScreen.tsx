@@ -3818,12 +3818,12 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
     </button>
   );
 
-  // ── Favoris : top 30 des articles de vente (code « 10… ») LIVRÉS au client ──
+  // ── Top 40 (ex-Favoris) : top 40 des articles de vente (code « 10… ») LIVRÉS au client ──
   // Source : transferts de stock sortants (OUT) validés, pas les commandes ni les
   // factures — c'est ce que le client a réellement reçu. 18 derniers mois.
   // Tri : quantité décroissante, articles Maquillage (code « 106… ») en fin de liste.
   const FAV_CAT_ID = "__fav__";
-  const FAV_MAX = 30;
+  const FAV_MAX = 40;
   const [favProducts, setFavProducts] = useState<any[]>([]);
   const [favLoading, setFavLoading] = useState(false);
   const [favLoaded, setFavLoaded] = useState(false);
@@ -3868,7 +3868,7 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
         agg.set(pid, cur);
       }
       for (const [pid, a] of Array.from(agg.entries())) if (a.totalQty <= 0) agg.delete(pid);
-      // Top 30 par quantité livrée
+      // Top 40 par quantité livrée
       const ids = Array.from(agg.entries())
         .sort((a, b) => b[1].totalQty - a[1].totalQty)
         .slice(0, FAV_MAX)
@@ -3896,7 +3896,7 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
       // Hors ligne → favoris préchargés pour ce client (si dispo)
       const cached = await sync.getCachedFavorites(client.id).catch(() => undefined);
       if (cached) { setFavProducts(cached); setFavLoaded(true); }
-      else onToast("« Les + achetés » indisponibles hors ligne pour ce client", "info");
+      else onToast("Top 40 indisponible hors ligne pour ce client", "info");
     }
     setFavLoading(false);
   };
@@ -4351,11 +4351,11 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
           );
         })()}
 
-        {/* « Les + achetés » (ex-Favoris) du client */}
+        {/* Top 40 (ex-Favoris) du client */}
         <button onClick={() => { setActiveCatId(FAV_CAT_ID); loadFavorites(); }}
           style={{ width: "100%", padding: "10px 10px", background: activeCatId === FAV_CAT_ID ? C.orangeSoft : "transparent", border: "none", borderLeft: `3px solid ${activeCatId === FAV_CAT_ID ? C.orange : "transparent"}`, cursor: "pointer", textAlign: "left" as const, fontFamily: "inherit", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6, transition: "all 0.1s" }}>
           <span style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: activeCatId === FAV_CAT_ID ? 700 : 400, color: activeCatId === FAV_CAT_ID ? C.orange : C.textSec }}>
-            <Icon name="star" size={13} /> Les + achetés
+            <Icon name="star" size={13} /> Top 40
           </span>
           {favLoaded && favProducts.length > 0 && <span style={{ fontSize: 10, fontWeight: 700, color: activeCatId === FAV_CAT_ID ? C.orange : C.muted, background: activeCatId === FAV_CAT_ID ? C.orangeSoft : C.bg, borderRadius: 5, padding: "1px 5px", flexShrink: 0 }}>{favProducts.length}</span>}
         </button>
@@ -4562,7 +4562,7 @@ function CatalogStep({ session, cart, onQtyChange, freeItems, onValidate, submit
           ) : activeCatId === FAV_CAT_ID && favLoaded && displayedProducts.length === 0 ? (
             <div style={{ textAlign: "center", padding: 60, color: C.muted }}>
               <div style={{ marginBottom: 10 }}><Icon name="star" size={32} color={C.border} /></div>
-              <div>{favProducts.length === 0 ? "Aucun article de vente (code 10…) acheté par ce client sur les 18 derniers mois" : "Aucun article « Les + achetés » en stock — désactive « Stock dispo » pour tout voir"}</div>
+              <div>{favProducts.length === 0 ? "Aucun article de vente (code 10…) acheté par ce client sur les 18 derniers mois" : "Aucun article du Top 40 en stock — désactive « Stock dispo » pour tout voir"}</div>
             </div>
           ) : loading && allProducts.length === 0 ? (
             <CatalogSkeleton dense={dense} />
