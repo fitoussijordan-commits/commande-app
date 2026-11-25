@@ -8,6 +8,7 @@ export const CHANGELOG: ChangelogEntry[] = [
   {
     date: "2026-11-25",
     items: [
+      "Devis d'implantation : pas de remise événement — le bouton « Remise événement » est désactivé (et la remise retirée) dès qu'un devis d'implantation est dans le panier.",
       "Remise événement : remise ADDITIONNELLE sur toutes les lignes payantes (tarif −17 % + événement −10 % = −27 % sur le prix catalogue, cumulée aussi avec la promo d'une MEA), affichée sur chaque ligne du panier et envoyée telle quelle dans le devis.",
       "Remise événement : uniquement 10 % ou 15 % (la saisie d'un % libre est supprimée). Un nouveau clic sur le % choisi retire la remise.",
       "Brouillons : après la création du devis, le brouillon repris est bien supprimé (il réapparaissait sur l'accueil).",

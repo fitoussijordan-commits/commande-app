@@ -147,9 +147,11 @@ function linePricing(item: { product: any; unitPrice: number; priceLocked?: bool
   const net = brut * (1 - first / 100) * (1 - other / 100);
   return { brut, discount: brut > 0 ? (1 - net / brut) * 100 : 0, net, additive: true };
 }
-// % additionnés au tarif client : promo Odoo + remise événement (lignes payantes).
+const isImplantLine = (i: { group?: string }) => /implantation/i.test(i.group || "");
+// % additionnés au tarif client : promo Odoo + remise événement (lignes payantes,
+// jamais celles d'un devis d'implantation).
 const addPctOf = (i: CartItem, lineDiscounts: Record<number, number>, eventDiscount: number) =>
-  (lineDiscounts[i.product.id] || 0) + (i.unitPrice > 0 ? eventDiscount || 0 : 0);
+  (lineDiscounts[i.product.id] || 0) + (i.unitPrice > 0 && !isImplantLine(i) ? eventDiscount || 0 : 0);
 // % appliqué ensuite, en cascade : remise du devis d'implantation.
 const otherPctOf = (i: CartItem, groupDiscounts: Record<string, number>) =>
   i.group ? groupDiscounts[i.group] || 0 : 0;
@@ -1238,7 +1240,7 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
             if (item.note) return [[0, 0, { display_type: item.note, name: String(item.product.name).trim(), ...hl }]];
             // Remise ligne = promo Odoo + remise événement Co + remise du devis
             // d'implantation (cumul, plafonné à 100%).
-            const promoDisc = Math.min(100, (lineDiscounts[item.product.id] || 0) + (eventDiscount || 0)
+            const promoDisc = Math.min(100, (lineDiscounts[item.product.id] || 0) + (isImplantLine(item) ? 0 : eventDiscount || 0)
               + (item.group ? groupDiscounts[item.group] || 0 : 0));
             // Promo Odoo : remise additionnée à celle du tarif client (cf. linePricing) →
             // la ligne part au prix catalogue avec la remise totale.
@@ -3966,6 +3968,9 @@ function CatalogStep({ session, loyaltyPrograms, cart, onQtyChange, freeItems, o
   const [pad, setPad] = useState<{ product: any; price?: number } | null>(null);
   // Panneau remise événement Co : masqué par défaut, ouvert au clic sur le bouton.
   const [showEventDisc, setShowEventDisc] = useState(false);
+  // Devis d'implantation dans le panier → pas de remise événement (retirée si choisie).
+  const hasImplant = Object.values(cart).some(isImplantLine);
+  useEffect(() => { if (hasImplant && eventDiscount) setEventDiscount(0); }, [hasImplant, eventDiscount, setEventDiscount]);
 
   // État réseau léger (événements navigateur, sans ping) : sert uniquement à
   // annoncer AVANT validation que la commande partira en file hors ligne.
@@ -4832,15 +4837,17 @@ function CatalogStep({ session, loyaltyPrograms, cart, onQtyChange, freeItems, o
               <Icon name="file" size={13} /> Devis d&apos;implantation
             </span>
           </button>
-          {/* Remise événement Co : % appliqué à tout le panier ; panneau ouvert au clic */}
-          <button onClick={() => setShowEventDisc(v => !v)}
-            style={{ width: "100%", padding: "6px 10px", background: eventDiscount > 0 || showEventDisc ? "#f5f3ff" : "transparent", border: "none", borderLeft: `3px solid ${eventDiscount > 0 ? "#7c3aed" : "transparent"}`, cursor: "pointer", textAlign: "left" as const, fontFamily: "inherit", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6, transition: "all 0.1s" }}>
+          {/* Remise événement Co : % appliqué à tout le panier ; panneau ouvert au clic.
+              Désactivée pour un devis d'implantation. */}
+          <button onClick={() => !hasImplant && setShowEventDisc(v => !v)} disabled={hasImplant}
+            title={hasImplant ? "Pas de remise événement sur un devis d'implantation" : undefined}
+            style={{ width: "100%", padding: "6px 10px", opacity: hasImplant ? 0.4 : 1, background: eventDiscount > 0 || showEventDisc ? "#f5f3ff" : "transparent", border: "none", borderLeft: `3px solid ${eventDiscount > 0 ? "#7c3aed" : "transparent"}`, cursor: hasImplant ? "not-allowed" : "pointer", textAlign: "left" as const, fontFamily: "inherit", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6, transition: "all 0.1s" }}>
             <span style={{ fontSize: 12, fontWeight: eventDiscount > 0 ? 700 : 400, color: eventDiscount > 0 ? "#7c3aed" : C.textSec, display: "flex", alignItems: "center", gap: 6 }}>
               <Icon name="tag" size={13} /> Remise événement
             </span>
             {eventDiscount > 0 && <span style={{ fontSize: 10, fontWeight: 700, color: "#fff", background: "#7c3aed", borderRadius: 5, padding: "1px 5px", flexShrink: 0 }}>{eventDiscount}%</span>}
           </button>
-          {showEventDisc && (
+          {showEventDisc && !hasImplant && (
             <div className="reveal" style={{ padding: "4px 10px 8px", display: "flex", flexDirection: "column" as const, gap: 6 }}>
               <div style={{ display: "flex", gap: 6 }}>
                 {[10, 15].map(v => (
