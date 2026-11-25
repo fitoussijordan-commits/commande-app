@@ -348,6 +348,20 @@ interface Draft {
   // offres cochées : sans elles, un brouillon repris perdait la date d'expé.
   templateInfo?: Record<string, { note?: string; shipDate?: string; code?: string }>;
   offerIds?: number[];
+  // Gratuités (article MEA code 7, PLV, testeurs…), remise événement et remises
+  // d'implantation : sans elles, une MEA reprise n'avait plus son article code 7,
+  // donc plus de promo, et ne changeait plus de palier.
+  giftItems?: GiftItem[];
+  eventDiscount?: number;
+  groupDiscounts?: Record<string, number>;
+  // … et tout le reste de la commande en cours : type de commande, date
+  // d'expédition choisie, remises Odoo retirées à la main, commande portail en
+  // cours de modification (sans elle, la reprise créait un 2e devis), bon chargé.
+  orderType?: string | number | "";
+  wantedExpedition?: string | null;
+  removedPromoIds?: number[];
+  editOrder?: any;
+  importMeta?: any;
 }
 
 // Brouillons stockés par client (clientId → Draft) — changer de client n'écrase plus rien.
@@ -355,7 +369,16 @@ function loadAllDrafts(): Record<string, Draft> {
   const keep = (all: Record<string, Draft>) => Object.fromEntries(Object.entries(all || {}).filter(([, d]) => ownedBy(d?.client)));
   try { return JSON.parse(localStorage.getItem(userKey(LS_DRAFTS, keep)) || "{}"); } catch { return {}; }
 }
-function saveAllDrafts(d: Record<string, Draft>) { localStorage.setItem(userKey(LS_DRAFTS, () => ({})), JSON.stringify(d)); }
+function saveAllDrafts(d: Record<string, Draft>) {
+  const key = userKey(LS_DRAFTS, () => ({}));
+  try { localStorage.setItem(key, JSON.stringify(d)); }
+  catch {
+    // Stockage plein (fichier d'un bon chargé, plusieurs Mo) : brouillons gardés
+    // sans le fichier joint — le panier, lui, est toujours enregistré.
+    const light = Object.fromEntries(Object.entries(d).map(([k, v]) => [k, v.importMeta?.file ? { ...v, importMeta: { ...v.importMeta, file: null } } : v]));
+    try { localStorage.setItem(key, JSON.stringify(light)); } catch {}
+  }
+}
 
 function loadDraftForClient(clientId: number): Draft | null {
   return loadAllDrafts()[String(clientId)] || null;
@@ -746,7 +769,13 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
   // Date d'expédition modifiée par le délégué (null = calculée). Remise à zéro
   // quand on change de client.
   const [wantedExpedition, setWantedExpedition] = useState<Date | null>(null);
-  useEffect(() => { setWantedExpedition(null); }, [client?.id]);
+  // Nouveau client : date d'expédition remise à zéro — sauf reprise d'un brouillon
+  // (la date enregistrée est rendue).
+  useEffect(() => {
+    const r = restoreExpRef.current;
+    setWantedExpedition(r && r.clientId === client?.id ? r.date : null);
+    restoreExpRef.current = null;
+  }, [client?.id]); // eslint-disable-line react-hooks/exhaustive-deps
   // Date d'expédition des offres du panier (la plus tardive) : sert de date par défaut.
   const offerShipDate = (() => {
     const groups = new Set(Object.values(cart).map(i => i.group).filter(Boolean) as string[]);
@@ -892,6 +921,7 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
   const enterOrderMode = () => { if (client) beginOrder(client); };
   const [pendingQuote, setPendingQuote] = useState<{ templateId: number; qtys: Record<number, number> } | null>(null);
   const beginOrder = (client: any) => {
+    restoreExpRef.current = null;
     setImportMeta(null);
     setCart({});
     setNote("");
@@ -938,10 +968,31 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
   // stocké par client, ne touche jamais aux brouillons des autres clients.
   useEffect(() => {
     if (client && Object.keys(cart).length > 0) {
-      saveDraftForClient(client.id, { client, cart, note, savedAt: Date.now(), templateInfo, offerIds });
+      saveDraftForClient(client.id, {
+        client, cart, note, savedAt: Date.now(), templateInfo, offerIds, giftItems, eventDiscount, groupDiscounts,
+        orderType, wantedExpedition: wantedExpedition ? wantedExpedition.toISOString() : null,
+        removedPromoIds: Array.from(manuallyRemovedRef.current), editOrder, importMeta,
+      });
       refreshPendingDrafts();
     }
-  }, [cart, client, note, templateInfo, offerIds, refreshPendingDrafts]);
+  }, [cart, client, note, templateInfo, offerIds, giftItems, eventDiscount, groupDiscounts, orderType, wantedExpedition, appliedPromos, editOrder, importMeta, refreshPendingDrafts]);
+
+  // Remet TOUT l'état de la commande depuis un brouillon (reprise).
+  const restoreExpRef = useRef<{ clientId: number; date: Date | null } | null>(null);
+  const applyDraftState = (d: Draft) => {
+    setCart(d.cart);
+    setTemplateInfo(d.templateInfo || {}); setOfferIds(d.offerIds || []);
+    setGiftItems(d.giftItems || []); setEventDiscount(d.eventDiscount || 0); setGroupDiscounts(d.groupDiscounts || {});
+    setOrderType(d.orderType ?? "");
+    const exp = d.wantedExpedition ? new Date(d.wantedExpedition) : null;
+    const date = exp && !isNaN(exp.getTime()) ? exp : null;
+    restoreExpRef.current = { clientId: d.client?.id, date };
+    setWantedExpedition(date);
+    manuallyRemovedRef.current = new Set(d.removedPromoIds || []);
+    setEditOrder(d.editOrder || null);
+    setImportMeta(d.importMeta || null);
+    setNote(d.note || "");
+  };
 
   useEffect(() => { setFreeItems(HOMEMADE_RULES_ENABLED ? computeFreeItems(cart, rules) : []); }, [cart, rules]);
 
@@ -996,9 +1047,7 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
   // Reprendre le brouillon proposé pour le client qu'on vient de sélectionner
   const acceptResumePrompt = () => {
     if (!resumePrompt) return;
-    setCart(resumePrompt.cart);
-    setTemplateInfo(resumePrompt.templateInfo || {}); setOfferIds(resumePrompt.offerIds || []);
-    setNote(resumePrompt.note || "");
+    applyDraftState(resumePrompt);
     setResumePrompt(null);
     onToast("Brouillon restauré", "success");
   };
@@ -1012,9 +1061,7 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
   // Reprendre un brouillon depuis le panneau global (n'importe quel client)
   const resumeDraftFromPanel = (d: Draft) => {
     setClient(d.client);
-    setCart(d.cart);
-    setTemplateInfo(d.templateInfo || {}); setOfferIds(d.offerIds || []);
-    setNote(d.note || "");
+    applyDraftState(d);
     setResumePrompt(null);
     setAppliedPromos({});
     setShowDraftsPanel(false);
@@ -4311,6 +4358,34 @@ function CatalogStep({ session, loyaltyPrograms, cart, onQtyChange, freeItems, o
     } catch (e: any) { onToast("Erreur: " + e.message, "error"); }
     setApplyingMea(null);
   };
+
+  // MEA déjà au panier mais pas suivie (brouillon repris, retour depuis l'accueil) :
+  // ses paliers sont relus pour que le changement automatique de palier reprenne.
+  const meaTrackPending = useRef<Set<string>>(new Set());
+  const cartGroupsKey = Array.from(new Set(Object.values(cart).map(i => i.group).filter((g): g is string => !!g && !/implantation/i.test(g)))).sort().join("|");
+  useEffect(() => {
+    // Promos chargées d'abord : sans elles, les paliers seraient lus sans leur promo liée.
+    if (!meaTemplates.length || !cartGroupsKey || !loyaltyPrograms.length) return;
+    for (const group of cartGroupsKey.split("|")) {
+      if (Object.values(meaVariants).some(v => v.variants.some(x => x.name === group))) continue;
+      if (meaTrackPending.current.has(group)) continue;
+      const t = meaTemplates.find((x: any) => x.name === group && !isImplantTemplate(x));
+      if (!t) continue;
+      meaTrackPending.current.add(group);
+      const prefix = meaPrefix(String(t.name || ""));
+      const siblings = [t, ...meaTemplates.filter((x: any) => x.id !== t.id && !isImplantTemplate(x) && inPeriod(x) && meaPrefix(String(x.name || "")) === prefix)];
+      parseTemplates(siblings).then(parsed => {
+        const v = parsed[0];
+        const family = parsed.filter(x => x.id === v.id || (x.paidSet && x.paidSet === v.paidSet));
+        if (family.length > 1) setMeaVariants(prev => ({ ...prev, [prefix + "|" + v.paidSet]: { current: v.id, variants: family } }));
+        // Brouillon enregistré sans ses gratuités (avant cette version) : celles du
+        // modèle sont remises, dont l'article MEA code 7 sans lequel la promo ne s'applique pas.
+        if (v.gifts.length) setGiftItems(prev => prev.some(g => g.cond?.label === v.name) ? prev
+          : [...prev, ...v.gifts.map(g => ({ ...g, cond: v.programId ? meaCond(v) : { label: v.name, required: {} } }))]);
+      }).catch(() => {}).finally(() => meaTrackPending.current.delete(group));
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [meaTemplates, cartGroupsKey, loyaltyPrograms]);
 
   // Changement automatique de palier : parmi les paliers de la MEA, le plus haut
   // dont la promo Odoo est éligible avec le panier (ex. Essentiel 18 unités choisi,
