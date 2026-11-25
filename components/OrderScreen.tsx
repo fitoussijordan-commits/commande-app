@@ -186,9 +186,6 @@ interface GiftItem {
   afterProductId?: number;   // UG d'un bon chargé : juste après la ligne payante de cet article
 }
 
-// Gratuité « manuelle » : bouton cadeau 🎁 du catalogue, UG d'un bon chargé (hors
-// MEA / devis d'implantation, dont les gratuités suivent les règles de l'offre).
-const isManualGift = (g: GiftItem) => !g.cond;
 // Quantité offerte non couverte par le stock prévisionnel : le stock sert d'abord
 // la ligne payante du même article, puis la gratuité.
 function giftShortage(g: GiftItem, cart: Record<number, { qty: number }>): number {
@@ -1197,8 +1194,8 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
       // service client + notes de suivi des campagnes ajoutées (ex. SERUM26).
       const ruptures = [
         ...cartRuptures(cart),
-        // Gratuités manuelles en rupture (le manquant part à 0, comme pour un article payant).
-        ...giftItems.filter(g => isManualGift(g) && giftActive(g, cart) && g.qty > 0 && giftShortage(g, cart) > 0)
+        // Gratuités en rupture (le manquant part à 0, comme pour un article payant).
+        ...giftItems.filter(g => giftActive(g, cart) && g.qty > 0 && giftShortage(g, cart) > 0)
           .map(g => ({ name: String(g.product.name || ""), code: g.product.default_code || undefined, qty: g.qty, stock: g.qty - giftShortage(g, cart) })),
       ];
       const groupsInCart = new Set(Object.values(cart).map(i => i.group).filter(Boolean) as string[]);
@@ -1277,18 +1274,15 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
               ...(missing > 0 ? [line(0, { name: ruptureName })] : []),
             ];
       };
-      // Gratuité → ligne de devis (0 €, ou prix client à 100 % de remise pour une UG de bon chargé).
-      // Gratuité manuelle (bouton cadeau, UG d'un bon) : prix normal du client avec
-      // 100 % de remise, et contrôle de stock comme un article payant (manquant sur
-      // une ligne « RUPTURE » à 0 juste après). Gratuité de MEA : à 0 €, comme avant.
+      // Gratuité → ligne de devis : TOUTES (bouton cadeau, UG d'un bon, MEA, devis
+      // d'implantation) au prix normal du client avec 100 % de remise, et contrôle de
+      // stock comme un article payant (manquant sur une ligne « RUPTURE » à 0 juste après).
       const giftCmds = (g: GiftItem): any[] => {
         const base = {
           product_id: g.product.id,
           ...(g.type ? { type_gratuit: g.type } : {}),
           ...(g.highlight && imp?.line.has("ocr_highlight") ? { ocr_highlight: g.highlight } : {}),
         };
-        if (!isManualGift(g)) return [[0, 0, { ...base, product_uom_qty: g.qty,
-          ...(g.fullDiscountPrice != null ? { price_unit: g.fullDiscountPrice, discount: 100 } : { price_unit: 0 }) }]];
         const price = g.fullDiscountPrice ?? applyPricelist(g.product.lst_price || 0, g.product.id, g.product.product_tmpl_id?.[0] || 0, priceItems, Math.max(1, g.qty));
         const missing = giftShortage(g, cart), served = g.qty - missing;
         const line = (qty: number, extra: any = {}) => [0, 0, { ...base, product_uom_qty: qty, price_unit: price, discount: 100, ...extra }];
@@ -4691,7 +4685,7 @@ function CatalogStep({ session, loyaltyPrograms, cart, onQtyChange, freeItems, o
                   </div>
                   <button onClick={() => setGiftItems(prev => prev.filter((_, j) => j !== i))} title="Retirer"
                     style={{ flexShrink: 0, width: 32, height: 32, marginLeft: 4, background: "none", border: "none", cursor: "pointer", color: C.muted, fontSize: 12, padding: 0, ...(inline ? { order: -2 } : {}) }}>✕</button>
-                  {isManualGift(g) && g.qty > 0 && giftShortage(g, cart) > 0 && (
+                  {giftActive(g, cart) && g.qty > 0 && giftShortage(g, cart) > 0 && (
                     <span title="Stock prévisionnel insuffisant : le manquant part à 0 sur le devis (« RUPTURE »)"
                       style={{ flexBasis: "100%", order: 5, fontSize: 10.5, fontWeight: 700, color: C.red }}>
                       Rupture : {giftShortage(g, cart)} manquant{giftShortage(g, cart) > 1 ? "s" : ""} (stock {Math.max(0, Math.floor(g.product.virtual_available || 0))})

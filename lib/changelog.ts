@@ -8,6 +8,7 @@ export const CHANGELOG: ChangelogEntry[] = [
   {
     date: "2026-11-25",
     items: [
+      "Gratuités des MEA (et des devis d'implantation) : envoyées elles aussi au prix normal du client avec 100 % de remise (et non plus à 0 €), avec contrôle de stock — le manquant part sur une ligne « RUPTURE » à 0, signalée dans le panier et dans la note interne des ruptures.",
       "Gratuités ajoutées avec le bouton cadeau 🎁 (et UG d'un bon chargé) : envoyées au prix normal du client avec 100 % de remise (et non plus à 0 €), avec contrôle de stock — le manquant part sur une ligne « RUPTURE » à 0, signalée dans le panier.",
       "Panier : les gratuités d'une MEA s'affichent sous leur MEA (à leur place du modèle), les UG d'un bon chargé juste après leur article payant — dans le panier comme dans le devis Odoo. La zone « Gratuités » ne garde que les autres (bouton Offrir).",
       "Devis : les gratuités d'une MEA (ou d'un devis d'implantation) sont placées dans le bloc de la MEA, à leur place du modèle de devis (ex. après « Éléments de PLV optionnels »), et non plus en fin de commande. Les autres gratuités (bouton Offrir, bon chargé) restent en fin de commande.",
