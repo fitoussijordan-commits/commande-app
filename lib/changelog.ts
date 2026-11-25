@@ -8,6 +8,8 @@ export const CHANGELOG: ChangelogEntry[] = [
   {
     date: "2026-11-25",
     items: [
+      "Accueil « Reprendre » et brouillons : propres à l'utilisateur Odoo connecté (avant, communs à l'appareil). Les commerciaux ne voient plus les clients ouverts par un collègue sur le même iPad.",
+      "Initiales de l'utilisateur Odoo connecté (ex. Astrid Bodin → AB) en pastille ronde en haut à droite, nom complet au survol.",
       "MEA dont la promo Odoo est introuvable : toutes les lignes du modèle de devis sont ajoutées telles quelles (gratuités comprises), sans condition.",
       "Articles de vente = Type de produit Odoo « Produit vente » : utilisé pour les gammes (dont « Produit vente ») et pour les articles payants des MEA (regroupement des paliers). Sans type renseigné, l'ancienne règle (référence en 1…) s'applique.",
       "MEA : avantages appliqués selon la promo Odoo liée (« Réductions & fidélité » dont le nom commence par le code 7 de la MEA) — éligible seulement si la promo l'est selon ses règles Odoo ET si l'article MEA (code 7) est dans la commande. Le nom du modèle (« 36 unités // 10 % ») n'est plus utilisé.",

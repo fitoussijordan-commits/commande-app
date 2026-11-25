@@ -195,6 +195,27 @@ interface FreeItem { product: any; qty: number; ruleName: string; }
 
 const LS_RULES  = "wms_order_rules_v2";
 const LS_DRAFTS = "wms_order_drafts_v1"; // un brouillon PAR client (map clientId → Draft), plus d'écrasement
+
+// Brouillons et « derniers clients » : propres à l'utilisateur Odoo connecté (clé
+// suffixée par son uid). Avant, ils étaient communs à l'appareil : un commercial
+// voyait les clients ouverts par un collègue ou un admin sur le même iPad.
+let _lsUid = 0;
+function setStorageUser(uid: number) { _lsUid = uid || 0; }
+// Clé de l'utilisateur ; à la 1re lecture, reprise des anciennes données communes,
+// limitée aux clients dont il est le vendeur.
+function userKey(base: string, keepLegacy: (value: any) => any): string {
+  const key = `${base}:${_lsUid}`;
+  try {
+    if (_lsUid && localStorage.getItem(key) === null) {
+      const legacy = localStorage.getItem(base);
+      localStorage.setItem(key, legacy ? JSON.stringify(keepLegacy(JSON.parse(legacy))) : (base === LS_DRAFTS ? "{}" : "[]"));
+    }
+  } catch {}
+  return key;
+}
+// Reprise des anciennes données : filtrée sur « vendeur = moi » pour les
+// commerciaux (Ventes « mes documents seulement »), complète pour les autres.
+const ownedBy = (c: any) => cachedOwnDocsOnly() === false || (Array.isArray(c?.user_id) && c.user_id[0] === _lsUid);
 const LS_CATS   = "wms_order_smart_cats";
 
 // Règles "maison" (articles offerts configurés localement, panneau ⚙️) — masquées pour le moment
@@ -331,9 +352,10 @@ interface Draft {
 
 // Brouillons stockés par client (clientId → Draft) — changer de client n'écrase plus rien.
 function loadAllDrafts(): Record<string, Draft> {
-  try { return JSON.parse(localStorage.getItem(LS_DRAFTS) || "{}"); } catch { return {}; }
+  const keep = (all: Record<string, Draft>) => Object.fromEntries(Object.entries(all || {}).filter(([, d]) => ownedBy(d?.client)));
+  try { return JSON.parse(localStorage.getItem(userKey(LS_DRAFTS, keep)) || "{}"); } catch { return {}; }
 }
-function saveAllDrafts(d: Record<string, Draft>) { localStorage.setItem(LS_DRAFTS, JSON.stringify(d)); }
+function saveAllDrafts(d: Record<string, Draft>) { localStorage.setItem(userKey(LS_DRAFTS, () => ({})), JSON.stringify(d)); }
 
 function loadDraftForClient(clientId: number): Draft | null {
   return loadAllDrafts()[String(clientId)] || null;
@@ -359,11 +381,12 @@ function listDrafts(): { clientId: string; draft: Draft }[] {
 // Derniers clients ouverts (accueil → « Reprendre ») : 6 max, sur l'appareil.
 const LS_RECENTS = "wms_recent_clients";
 function loadRecentClients(): any[] {
-  try { const v = JSON.parse(localStorage.getItem(LS_RECENTS) || "[]"); return Array.isArray(v) ? v : []; } catch { return []; }
+  const keep = (v: any) => (Array.isArray(v) ? v : []).filter(ownedBy);
+  try { const v = JSON.parse(localStorage.getItem(userKey(LS_RECENTS, keep)) || "[]"); return Array.isArray(v) ? v : []; } catch { return []; }
 }
 function pushRecentClient(c: any) {
   if (!c?.id) return;
-  try { localStorage.setItem(LS_RECENTS, JSON.stringify([c, ...loadRecentClients().filter(r => r.id !== c.id)].slice(0, 6))); } catch {}
+  try { localStorage.setItem(userKey(LS_RECENTS, () => []), JSON.stringify([c, ...loadRecentClients().filter(r => r.id !== c.id)].slice(0, 6))); } catch {}
 }
 
 // ── Migration douce de l'ancien format (1 seul brouillon global) ──────────────
@@ -541,6 +564,7 @@ function useVisibleHeight() {
 }
 
 export default function OrderScreen({ session, onBack, onToast, desktop }: Props) {
+  setStorageUser(session.uid);
   useVisibleHeight();
   const [step, setStep] = useState<"home" | "client" | "hub" | "catalog" | "history" | "perime" | "assistant" | "bon" | "perimesReport">("client");
   // Sens de la transition d'écran : on glisse vers la gauche en avançant, vers
@@ -1550,6 +1574,20 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
           </button>
         )}
         {showDash && <Dashboard session={session} onClose={() => setShowDash(false)} onOpenClient={c => { setShowDash(false); selectClient(c); }} onToast={onToast} />}
+
+        {/* Utilisateur Odoo connecté : initiales (Astrid Bodin → AB), nom au survol */}
+        {(() => {
+          const name = String(session.name || session.login || "").trim();
+          const initials = name.split(/[\s@._-]+/).filter(Boolean).slice(0, 2).map(w => w[0]).join("").toUpperCase() || "?";
+          return (
+            <div title={`Connecté : ${name}`} aria-label={`Connecté : ${name}`}
+              style={{ width: 36, height: 36, borderRadius: "50%", flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center",
+                background: "linear-gradient(135deg, #2dd4bf 0%, #0f766e 100%)", color: "#fff", fontSize: 13, fontWeight: 800, letterSpacing: "0.04em",
+                boxShadow: "0 2px 8px rgba(15,118,110,0.35), inset 0 0 0 2px rgba(255,255,255,0.55)", userSelect: "none" as const }}>
+              {initials}
+            </div>
+          );
+        })()}
 
         {/* Déconnexion — uniquement sur l'écran racine, avec confirmation explicite
              (hors ligne, impossible de se reconnecter : Odoo doit vérifier le mot de passe). */}
