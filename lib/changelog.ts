@@ -8,6 +8,7 @@ export const CHANGELOG: ChangelogEntry[] = [
   {
     date: "2026-11-25",
     items: [
+      "Remise événement : uniquement 10 % ou 15 % (la saisie d'un % libre est supprimée). Un nouveau clic sur le % choisi retire la remise.",
       "Brouillons : après la création du devis, le brouillon repris est bien supprimé (il réapparaissait sur l'accueil).",
       "Gratuités des MEA (et des devis d'implantation) : envoyées elles aussi au prix normal du client avec 100 % de remise (et non plus à 0 €), avec contrôle de stock — le manquant part sur une ligne « RUPTURE » à 0, signalée dans le panier et dans la note interne des ruptures.",
       "Gratuités ajoutées avec le bouton cadeau 🎁 (et UG d'un bon chargé) : envoyées au prix normal du client avec 100 % de remise (et non plus à 0 €), avec contrôle de stock — le manquant part sur une ligne « RUPTURE » à 0, signalée dans le panier.",

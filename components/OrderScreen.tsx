@@ -681,7 +681,7 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
   // Gratuités : lignes offertes (produit à 0€ + type_gratuit) + liste des types.
   const [giftItems, setGiftItems] = useState<GiftItem[]>([]);
   const [freeTypes, setFreeTypes] = useState<sync.FreeType[]>([]);
-  // Remise événement Co (10/15%/libre) appliquée sur TOUT le panier (0 = aucune).
+  // Remise événement Co (10 % ou 15 % uniquement) appliquée sur TOUT le panier (0 = aucune).
   const [eventDiscount, setEventDiscount] = useState(0);
   // Remise par devis d'implantation ajouté (clé = nom du modèle = groupe du panier).
   const [groupDiscounts, setGroupDiscounts] = useState<Record<string, number>>({});
@@ -1041,7 +1041,7 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
   const applyDraftState = (d: Draft) => {
     setCart(d.cart);
     setTemplateInfo(d.templateInfo || {}); setOfferIds(d.offerIds || []);
-    setGiftItems(d.giftItems || []); setEventDiscount(d.eventDiscount || 0); setGroupDiscounts(d.groupDiscounts || {});
+    setGiftItems(d.giftItems || []); setEventDiscount([10, 15].includes(d.eventDiscount || 0) ? d.eventDiscount! : 0); setGroupDiscounts(d.groupDiscounts || {});
     setOrderType(d.orderType ?? "");
     const exp = d.wantedExpedition ? new Date(d.wantedExpedition) : null;
     const date = exp && !isNaN(exp.getTime()) ? exp : null;
@@ -4845,15 +4845,6 @@ function CatalogStep({ session, loyaltyPrograms, cart, onQtyChange, freeItems, o
                     {v}%
                   </button>
                 ))}
-              </div>
-              <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
-                <input type="number" min={0} max={100} placeholder="% libre"
-                  value={![0, 10, 15].includes(eventDiscount) ? eventDiscount : ""}
-                  onChange={e => { const n = Math.max(0, Math.min(100, Number(e.target.value) || 0)); setEventDiscount(n); }}
-                  style={{ flex: 1, minWidth: 0, padding: "6px 8px", borderRadius: 8, border: "1.5px solid #c4b5fd", fontSize: 12, fontFamily: "inherit", color: C.text, outline: "none" }} />
-                {eventDiscount > 0 && (
-                  <button onClick={() => setEventDiscount(0)} title="Retirer la remise" style={{ background: "none", border: "none", cursor: "pointer", color: C.red, fontSize: 15, flexShrink: 0 }}>✕</button>
-                )}
               </div>
             </div>
           )}
