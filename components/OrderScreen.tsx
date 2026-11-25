@@ -182,6 +182,7 @@ interface GiftItem {
   product: any; qty: number; type: string;
   cond?: { label: string; required: Record<number, number>; mea?: { code?: string; programId?: number } };
   off?: boolean; highlight?: string; fullDiscountPrice?: number;
+  afterIdx?: number;   // gratuité de MEA : nb de lignes du modèle avant elle (place dans le devis)
 }
 function giftActive(g: GiftItem, cart: Record<number, { qty: number }>): boolean {
   if (!g.cond) return true;
@@ -1166,18 +1167,8 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
 
       // Commande + toutes ses lignes créées en UN SEUL appel Odoo (commandes one2many [0,0,{...}])
       // au lieu d'un appel par ligne — c'est ça qui rendait les gros devis lents.
-      const mainPayload: any = {
-        partner_id: client.id, state: "draft",
-        ...importVals,
-        ...(pricelistId ? { pricelist_id: pricelistId } : {}),
-        [sync.CHATTER_KEY]: orderNote,   // note de la commande → chatter (cf. sync.createOrder)
-        ...tagVals,
-        ...shipVals,
-        ...joinVals,
-        ...metaVals,
-        order_line: [
-          // Ordre d'ajout : les lignes d'une même MEA restent groupées dans le devis.
-          ...orderedCart(cart).filter(item => item.note ? !!String(item.product.name || "").trim() : item.qty > 0).flatMap(item => {
+      // Une ligne du panier → ligne(s) de devis (ligne « RUPTURE » à 0 juste après si besoin).
+      const cartLineCmds = (item: CartItem): any[] => {
             const hl = item.highlight && imp?.line.has("ocr_highlight") ? { ocr_highlight: item.highlight } : {};
             if (item.note) return [[0, 0, { display_type: item.note, name: String(item.product.name).trim(), ...hl }]];
             // Remise ligne = promo Odoo + remise événement Co + remise du devis
@@ -1225,22 +1216,63 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
               ...(served > 0 ? [line(served)] : []),
               ...(missing > 0 ? [line(0, { name: ruptureName })] : []),
             ];
-          }),
-          // Produits offerts par une offre marketing → 0€ + type "Gratuités des offres" (auto).
+      };
+      // Gratuité → ligne de devis (0 €, ou prix client à 100 % de remise pour une UG de bon chargé).
+      const giftCmd = (g: GiftItem) => [0, 0, {
+        product_id: g.product.id,
+        product_uom_qty: g.qty,
+        ...(g.fullDiscountPrice != null ? { price_unit: g.fullDiscountPrice, discount: 100 } : { price_unit: 0 }),
+        ...(g.type ? { type_gratuit: g.type } : {}),
+        ...(g.highlight && imp?.line.has("ocr_highlight") ? { ocr_highlight: g.highlight } : {}),
+      }];
+      // Gratuités d'une MEA / d'un devis d'implantation : placées dans le bloc de la
+      // MEA, après la k-ième ligne du bloc (afterIdx = sa position dans le modèle de
+      // devis), sinon en fin de bloc — et plus en fin de commande.
+      const activeGifts = giftItems.filter(g => giftActive(g, cart) && g.qty > 0);
+      const placedGifts = new Set<GiftItem>();
+      const takeGifts = (list: GiftItem[]) => list.map(g => { placedGifts.add(g); return giftCmd(g); });
+      const giftsOf = (label: string, ok: (g: GiftItem) => boolean) => activeGifts.filter(g => !placedGifts.has(g) && g.cond?.label === label && ok(g));
+      const ordered = orderedCart(cart);
+      const lastOfGroup = new Map<string, number>();
+      ordered.forEach((it, i) => { if (it.group) lastOfGroup.set(it.group, i); });
+      const seenInGroup: Record<string, number> = {};
+      const orderBody: any[] = [];
+      ordered.forEach((item, i) => {
+        const grp = item.group;
+        if (grp && seenInGroup[grp] === undefined) {
+          seenInGroup[grp] = 0;
+          orderBody.push(...takeGifts(giftsOf(grp, g => (g.afterIdx ?? Infinity) <= 0)));
+        }
+        if (item.note ? !!String(item.product.name || "").trim() : item.qty > 0) orderBody.push(...cartLineCmds(item));
+        if (grp) {
+          seenInGroup[grp]++;
+          orderBody.push(...takeGifts(giftsOf(grp, g => (g.afterIdx ?? Infinity) <= seenInGroup[grp])));
+          if (lastOfGroup.get(grp) === i) orderBody.push(...takeGifts(giftsOf(grp, () => true)));
+        }
+      });
+
+      const mainPayload: any = {
+        partner_id: client.id, state: "draft",
+        ...importVals,
+        ...(pricelistId ? { pricelist_id: pricelistId } : {}),
+        [sync.CHATTER_KEY]: orderNote,   // note de la commande → chatter (cf. sync.createOrder)
+        ...tagVals,
+        ...shipVals,
+        ...joinVals,
+        ...metaVals,
+        order_line: [
+          // Ordre d'ajout : les lignes d'une même MEA restent groupées dans le devis.
+          // Lignes du panier dans l'ordre d'ajout, avec les gratuités de chaque MEA /
+          // devis d'implantation DANS son bloc, à leur place du modèle (cf. orderBody).
+          ...orderBody,          // Produits offerts par une offre marketing → 0€ + type "Gratuités des offres" (auto).
           ...promoFreeLines.map(p => [0, 0, {
             product_id: p.reward.reward_product_id,
             product_uom_qty: p.reward.reward_product_qty * Math.max(1, loyalty.rewardTimes(p.program, p.reward, promoCart(cart))),
             price_unit: 0,
             type_gratuit: "gratuites_des_offres",
           }]),
-          // Gratuités saisies manuellement (quantité offerte + type de gratuité choisi).
-          ...giftItems.filter(g => giftActive(g, cart) && g.qty > 0).map(g => [0, 0, {
-            product_id: g.product.id,
-            product_uom_qty: g.qty,
-            ...(g.fullDiscountPrice != null ? { price_unit: g.fullDiscountPrice, discount: 100 } : { price_unit: 0 }),
-            ...(g.type ? { type_gratuit: g.type } : {}),
-            ...(g.highlight && imp?.line.has("ocr_highlight") ? { ocr_highlight: g.highlight } : {}),
-          }]),
+          // Gratuités hors MEA (bouton Offrir, bon chargé…) et celles d'une MEA retirée.
+          ...takeGifts(activeGifts.filter(g => !placedGifts.has(g))),
           // Franco non atteint : frais de livraison.
           ...(feeProduct ? [[0, 0, { product_id: feeProduct.id, product_uom_qty: 1, price_unit: SHIPPING_FEE_HT }]] : []),
         ],
@@ -4219,7 +4251,7 @@ function CatalogStep({ session, loyaltyPrograms, cart, onQtyChange, freeItems, o
   type MeaLine = { product: any; qty: number; price: number; kind: "paid" | "tester" | "other" | "code"; freeType?: string };
   type MeaParsed = {
     id: number; name: string; notes: { name: string; type: "line_note" | "line_section" }[];
-    items: MeaLine[]; gifts: { product: any; qty: number; type: string }[]; paid: Record<number, number>;
+    items: MeaLine[]; gifts: { product: any; qty: number; type: string; afterIdx: number }[]; paid: Record<number, number>;
     rows: ({ note: { name: string; type: "line_note" | "line_section" } } | { item: MeaLine })[];
     code?: string;            // code de l'article MEA (7…)
     programId?: number;       // promo Odoo liée
@@ -4287,7 +4319,7 @@ function CatalogStep({ session, loyaltyPrograms, cart, onQtyChange, freeItems, o
         }
         if (freeRaw || discount >= 99.99) {
           if (promoGifts.has(product.id)) continue;
-          out.gifts.push({ product, qty, type: meaGiftType(freeRaw) });
+          out.gifts.push({ product, qty, type: meaGiftType(freeRaw), afterIdx: out.rows.length });
           continue;
         }
         const tester = String(product.default_code || "").startsWith("3");
