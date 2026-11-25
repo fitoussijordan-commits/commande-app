@@ -183,6 +183,39 @@ interface GiftItem {
   cond?: { label: string; required: Record<number, number>; mea?: { code?: string; programId?: number } };
   off?: boolean; highlight?: string; fullDiscountPrice?: number;
   afterIdx?: number;   // gratuité de MEA : nb de lignes du modèle avant elle (place dans le devis)
+  afterProductId?: number;   // UG d'un bon chargé : juste après la ligne payante de cet article
+}
+
+// Place des gratuités dans le panier et le devis :
+//   • UG d'un bon chargé → juste après la ligne payante du même article ;
+//   • gratuités d'une MEA / d'un devis d'implantation → dans le bloc de leur groupe,
+//     après la k-ième ligne du bloc (afterIdx = position dans le modèle de devis),
+//     sinon en fin de bloc ;
+//   • les autres (bouton Offrir, groupe retiré…) → `rest`, en fin de commande.
+// before / after : index de ligne du panier → gratuités à placer avant / après elle.
+function placeGifts(items: CartItem[], gifts: GiftItem[]) {
+  const before = new Map<number, GiftItem[]>(), after = new Map<number, GiftItem[]>();
+  const placed = new Set<GiftItem>();
+  const take = (map: Map<number, GiftItem[]>, i: number, list: GiftItem[]) => {
+    if (!list.length) return;
+    list.forEach(g => placed.add(g));
+    map.set(i, [...(map.get(i) || []), ...list]);
+  };
+  const of = (label: string, ok: (g: GiftItem) => boolean) => gifts.filter(g => !placed.has(g) && g.cond?.label === label && ok(g));
+  const lastOfGroup = new Map<string, number>();
+  items.forEach((it, i) => { if (it.group) lastOfGroup.set(it.group, i); });
+  const seen: Record<string, number> = {};
+  items.forEach((item, i) => {
+    const grp = item.group;
+    if (grp && seen[grp] === undefined) { seen[grp] = 0; take(before, i, of(grp, g => (g.afterIdx ?? Infinity) <= 0)); }
+    if (!item.note) take(after, i, gifts.filter(g => !placed.has(g) && g.afterProductId === item.product.id));
+    if (grp) {
+      seen[grp]++;
+      take(after, i, of(grp, g => (g.afterIdx ?? Infinity) <= seen[grp]));
+      if (lastOfGroup.get(grp) === i) take(after, i, of(grp, () => true));
+    }
+  });
+  return { before, after, rest: gifts.filter(g => !placed.has(g)) };
 }
 function giftActive(g: GiftItem, cart: Record<number, { qty: number }>): boolean {
   if (!g.cond) return true;
@@ -963,7 +996,7 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
     setCart(next);
     const giftType = freeTypes.find(t => t.value === "geste_co_hors_quota")?.value
       || freeTypes.find(t => fold(t.label) === fold("Geste Co. - hors Coffre"))?.value || "geste_co_hors_quota";
-    setGiftItems(res.gifts.map(g => ({ product: g.product, qty: g.qty, type: giftType, highlight: "green", fullDiscountPrice: g.unitPrice })));
+    setGiftItems(res.gifts.map(g => ({ product: g.product, qty: g.qty, type: giftType, highlight: "green", fullDiscountPrice: g.unitPrice, afterProductId: g.product.id })));
     setNote(res.note);
     setImportMeta(res.meta);
   };
@@ -1225,30 +1258,15 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
         ...(g.type ? { type_gratuit: g.type } : {}),
         ...(g.highlight && imp?.line.has("ocr_highlight") ? { ocr_highlight: g.highlight } : {}),
       }];
-      // Gratuités d'une MEA / d'un devis d'implantation : placées dans le bloc de la
-      // MEA, après la k-ième ligne du bloc (afterIdx = sa position dans le modèle de
-      // devis), sinon en fin de bloc — et plus en fin de commande.
-      const activeGifts = giftItems.filter(g => giftActive(g, cart) && g.qty > 0);
-      const placedGifts = new Set<GiftItem>();
-      const takeGifts = (list: GiftItem[]) => list.map(g => { placedGifts.add(g); return giftCmd(g); });
-      const giftsOf = (label: string, ok: (g: GiftItem) => boolean) => activeGifts.filter(g => !placedGifts.has(g) && g.cond?.label === label && ok(g));
+      // Gratuités placées comme dans le panier (placeGifts) : celles d'une MEA dans
+      // son bloc, les UG d'un bon chargé après leur article payant ; le reste en fin.
       const ordered = orderedCart(cart);
-      const lastOfGroup = new Map<string, number>();
-      ordered.forEach((it, i) => { if (it.group) lastOfGroup.set(it.group, i); });
-      const seenInGroup: Record<string, number> = {};
+      const gp = placeGifts(ordered, giftItems.filter(g => giftActive(g, cart) && g.qty > 0));
       const orderBody: any[] = [];
       ordered.forEach((item, i) => {
-        const grp = item.group;
-        if (grp && seenInGroup[grp] === undefined) {
-          seenInGroup[grp] = 0;
-          orderBody.push(...takeGifts(giftsOf(grp, g => (g.afterIdx ?? Infinity) <= 0)));
-        }
+        orderBody.push(...(gp.before.get(i) || []).map(giftCmd));
         if (item.note ? !!String(item.product.name || "").trim() : item.qty > 0) orderBody.push(...cartLineCmds(item));
-        if (grp) {
-          seenInGroup[grp]++;
-          orderBody.push(...takeGifts(giftsOf(grp, g => (g.afterIdx ?? Infinity) <= seenInGroup[grp])));
-          if (lastOfGroup.get(grp) === i) orderBody.push(...takeGifts(giftsOf(grp, () => true)));
-        }
+        orderBody.push(...(gp.after.get(i) || []).map(giftCmd));
       });
 
       const mainPayload: any = {
@@ -1272,7 +1290,7 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
             type_gratuit: "gratuites_des_offres",
           }]),
           // Gratuités hors MEA (bouton Offrir, bon chargé…) et celles d'une MEA retirée.
-          ...takeGifts(activeGifts.filter(g => !placedGifts.has(g))),
+          ...gp.rest.map(giftCmd),
           // Franco non atteint : frais de livraison.
           ...(feeProduct ? [[0, 0, { product_id: feeProduct.id, product_uom_qty: 1, price_unit: SHIPPING_FEE_HT }]] : []),
         ],
@@ -4616,6 +4634,39 @@ function CatalogStep({ session, loyaltyPrograms, cart, onQtyChange, freeItems, o
   const [cartSearch, setCartSearch] = useState<string | null>(null);
   const cartWords = fold(cartSearch || "").split(/\s+/).filter(Boolean);
   const shownCartItems = cartWords.length ? cartItems.filter(i => !i.note && matchesSearch(i.product, cartWords)) : cartItems;
+  // Ligne d'une gratuité (zone « Gratuités », ou sous sa MEA / son article : inline).
+  const giftRow = (g: GiftItem, inline: boolean) => {
+    const i = giftItems.indexOf(g);
+    return (
+                <div key={`gift-${i}`} title={!giftActive(g, cart) ? (g.cond?.mea ? `MEA « ${g.cond?.label} » non éligible : promo Odoo non atteinte ou article MEA (code 7) absent` : `Offre suspendue : total d'articles de « ${g.cond?.label} » non atteint`) : undefined}
+                  style={{ display: "flex", alignItems: "center", gap: 6, padding: "3px 0", borderBottom: inline ? "none" : `1px solid ${C.green}22`, ...(inline ? { background: C.greenSoft, borderRadius: 8, padding: "3px 6px", margin: "2px 0 4px 14px" } : {}), flexWrap: inline || !g.type ? "wrap" as const : "nowrap" as const, opacity: !giftActive(g, cart) ? 0.45 : g.qty === 0 ? 0.7 : 1 }}>
+                  <span title={g.product.default_code || ""} style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const, fontSize: 11.5, fontWeight: 600, color: C.text, textDecoration: giftActive(g, cart) ? "none" : "line-through", ...(inline ? { flexBasis: "calc(100% - 44px)", order: -2, display: "flex", alignItems: "center", gap: 5 } : {}) }}>
+                    {inline && <span style={{ color: C.green, display: "inline-flex", flexShrink: 0 }}><Icon name="gift" size={12} /></span>}
+                    {inline ? <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{g.product.name}</span> : g.product.name}
+                    {g.product.default_code && <span style={{ marginLeft: 6, fontSize: 9.5, fontWeight: 500, fontFamily: "monospace", color: C.muted }}>{g.product.default_code}</span>}
+                  </span>
+                  {inline && <span style={{ flex: 1 }} />}
+                  <div style={{ display: "flex", alignItems: "center", gap: 2, flexShrink: 0 }}>
+                    <button onClick={() => setGiftItems(prev => prev.map((x, j) => j === i ? { ...x, qty: Math.max(0, x.qty - 1) } : x))}
+                      style={{ width: 34, height: 34, borderRadius: 8, background: C.redSoft, border: "none", cursor: "pointer", color: C.red, fontSize: 16, fontWeight: 700, lineHeight: 1, padding: 0 }}>−</button>
+                    <span key={g.qty} className="qty-pop" style={{ minWidth: 24, textAlign: "center" as const, fontSize: 12, fontWeight: 800, color: C.text }}>{g.qty}</span>
+                    <button onClick={() => setGiftItems(prev => prev.map((x, j) => j === i ? { ...x, qty: x.qty + 1 } : x))}
+                      style={{ width: 34, height: 34, borderRadius: 8, background: "#fff", border: `1px solid ${C.green}44`, cursor: "pointer", color: C.green, fontSize: 16, fontWeight: 700, lineHeight: 1, padding: 0 }}>+</button>
+                  </div>
+                  <button onClick={() => setGiftItems(prev => prev.filter((_, j) => j !== i))} title="Retirer"
+                    style={{ flexShrink: 0, width: 32, height: 32, marginLeft: 4, background: "none", border: "none", cursor: "pointer", color: C.muted, fontSize: 12, padding: 0, ...(inline ? { order: -2 } : {}) }}>✕</button>
+                  {/* Type de gratuité PAR LIGNE (Coffre DC par défaut, Gratuités des offres pour une MEA) */}
+                  <select value={g.type} title="Type de gratuité de cette ligne"
+                    onChange={e => setGiftItems(prev => prev.map((x, j) => j === i ? { ...x, type: e.target.value } : x))}
+                    style={{ order: -1, flexShrink: 0, width: g.type ? 96 : "100%", padding: "2px 4px", fontSize: 10, fontWeight: 700, borderRadius: 6, border: `1px solid ${g.type ? C.green + "66" : C.red}`, background: "#fff", color: g.type ? C.green : C.text, fontFamily: "inherit" }}>
+                    <option value="">— Type —</option>
+                    {freeTypes.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
+                  </select>
+                </div>
+    );
+  };
+  // Gratuités sous leur MEA / après leur article (pas pendant une recherche dans le panier).
+  const giftPlacement = placeGifts(shownCartItems, cartWords.length ? [] : giftItems);
   const cartCount = cartItems.reduce((s, i) => s + i.qty, 0);
   const cartTotal = cartItems.reduce((s, i) => s + i.qty * i.unitPrice, 0);
   const freeCount = freeItems.reduce((s, i) => s + i.qty, 0);
@@ -5195,6 +5246,7 @@ function CatalogStep({ session, loyaltyPrograms, cart, onQtyChange, freeItems, o
                     )}
                   </div>
                 )}
+                {(giftPlacement.before.get(idx) || []).map(g => giftRow(g, true))}
                 {item.note ? (
                   /* Ligne de commentaire : texte libre, repris tel quel dans le devis */
                   <div style={{ marginBottom: 8, display: "flex", alignItems: "center", gap: 6, padding: "4px 6px 4px 10px", borderLeft: `3px solid ${item.note === "line_section" ? C.tealDark : C.muted}`, background: C.bg, borderRadius: 6 }}>
@@ -5291,44 +5343,26 @@ function CatalogStep({ session, loyaltyPrograms, cart, onQtyChange, freeItems, o
                   );
                 })()
                 )}
+                {(giftPlacement.after.get(idx) || []).map(g => giftRow(g, true))}
                 </div>
               );
             })}
           </>)}
 
-          {/* Gratuités saisies manuellement (produit à 0€ + type de gratuité) */}
-          {giftItems.length > 0 && (
+          {/* Gratuités placées sous leur MEA / après leur article (placeGifts) : message
+               de suspension sous la liste ; zone « Gratuités » pour les autres seulement. */}
+          {giftPlacement.rest.length === 0 && giftItems.some(g => !giftActive(g, cart) && g.cond?.mea) && (
+            <div style={{ margin: "6px 0", fontSize: 11, fontWeight: 700, color: C.orange }}>
+              Gratuités de MEA suspendues (barrées) : la promo Odoo liée n'est pas atteinte ou l'article MEA (code 7) est absent ; elles reviennent dès que la MEA est éligible.
+            </div>
+          )}
+          {/* Gratuités hors MEA (bouton Offrir…) : produit à 0 € + type de gratuité */}
+          {giftPlacement.rest.length > 0 && (
             <div className="reveal" style={{ margin: "8px 0", padding: "8px 10px", background: C.greenSoft, border: `1px solid ${C.green}44`, borderRadius: 10 }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
                 <span style={{ fontSize: 10, fontWeight: 700, color: C.green, textTransform: "uppercase" as const, letterSpacing: "0.05em", display: "flex", alignItems: "center", gap: 5 }}><Icon name="gift" size={11} /> Gratuités</span>
               </div>
-              {giftItems.map((g, i) => (
-                /* Une ligne par gratuité ; le type se choisit en tête du bloc (choix
-                   par ligne seulement s'il manque). */
-                <div key={i} title={!giftActive(g, cart) ? (g.cond?.mea ? `MEA « ${g.cond?.label} » non éligible : promo Odoo non atteinte ou article MEA (code 7) absent` : `Offre suspendue : total d'articles de « ${g.cond?.label} » non atteint`) : undefined}
-                  style={{ display: "flex", alignItems: "center", gap: 6, padding: "3px 0", borderBottom: i < giftItems.length - 1 ? `1px solid ${C.green}22` : "none", flexWrap: g.type ? "nowrap" as const : "wrap" as const, opacity: !giftActive(g, cart) ? 0.45 : g.qty === 0 ? 0.7 : 1 }}>
-                  <span title={g.product.default_code || ""} style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const, fontSize: 11.5, fontWeight: 600, color: C.text, textDecoration: giftActive(g, cart) ? "none" : "line-through" }}>
-                    {g.product.name}
-                    {g.product.default_code && <span style={{ marginLeft: 6, fontSize: 9.5, fontWeight: 500, fontFamily: "monospace", color: C.muted }}>{g.product.default_code}</span>}
-                  </span>
-                  <div style={{ display: "flex", alignItems: "center", gap: 2, flexShrink: 0 }}>
-                    <button onClick={() => setGiftItems(prev => prev.map((x, j) => j === i ? { ...x, qty: Math.max(0, x.qty - 1) } : x))}
-                      style={{ width: 34, height: 34, borderRadius: 8, background: C.redSoft, border: "none", cursor: "pointer", color: C.red, fontSize: 16, fontWeight: 700, lineHeight: 1, padding: 0 }}>−</button>
-                    <span key={g.qty} className="qty-pop" style={{ minWidth: 24, textAlign: "center" as const, fontSize: 12, fontWeight: 800, color: C.text }}>{g.qty}</span>
-                    <button onClick={() => setGiftItems(prev => prev.map((x, j) => j === i ? { ...x, qty: x.qty + 1 } : x))}
-                      style={{ width: 34, height: 34, borderRadius: 8, background: "#fff", border: `1px solid ${C.green}44`, cursor: "pointer", color: C.green, fontSize: 16, fontWeight: 700, lineHeight: 1, padding: 0 }}>+</button>
-                  </div>
-                  <button onClick={() => setGiftItems(prev => prev.filter((_, j) => j !== i))} title="Retirer"
-                    style={{ flexShrink: 0, width: 32, height: 32, marginLeft: 4, background: "none", border: "none", cursor: "pointer", color: C.muted, fontSize: 12, padding: 0 }}>✕</button>
-                  {/* Type de gratuité PAR LIGNE (Coffre DC par défaut, Gratuités des offres pour une MEA) */}
-                  <select value={g.type} title="Type de gratuité de cette ligne"
-                    onChange={e => setGiftItems(prev => prev.map((x, j) => j === i ? { ...x, type: e.target.value } : x))}
-                    style={{ order: -1, flexShrink: 0, width: g.type ? 96 : "100%", padding: "2px 4px", fontSize: 10, fontWeight: 700, borderRadius: 6, border: `1px solid ${g.type ? C.green + "66" : C.red}`, background: "#fff", color: g.type ? C.green : C.text, fontFamily: "inherit" }}>
-                    <option value="">— Type —</option>
-                    {freeTypes.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
-                  </select>
-                </div>
-              ))}
+              {giftPlacement.rest.map(g => giftRow(g, false))}
               {giftItems.some(g => !giftActive(g, cart)) && (
                 <div style={{ marginTop: 6, fontSize: 11, fontWeight: 700, color: C.orange }}>
                   {giftItems.some(g => !giftActive(g, cart) && g.cond?.mea)

@@ -8,6 +8,7 @@ export const CHANGELOG: ChangelogEntry[] = [
   {
     date: "2026-11-25",
     items: [
+      "Panier : les gratuités d'une MEA s'affichent sous leur MEA (à leur place du modèle), les UG d'un bon chargé juste après leur article payant — dans le panier comme dans le devis Odoo. La zone « Gratuités » ne garde que les autres (bouton Offrir).",
       "Devis : les gratuités d'une MEA (ou d'un devis d'implantation) sont placées dans le bloc de la MEA, à leur place du modèle de devis (ex. après « Éléments de PLV optionnels »), et non plus en fin de commande. Les autres gratuités (bouton Offrir, bon chargé) restent en fin de commande.",
       "Après « Devis créé ! », les boutons « Nouvelle commande » et « Mon planning » n'affichent plus l'écran décalé vers la droite avec une zone blanche à gauche (il fallait actualiser la page).",
       "MEA : l'article MEA (code 7, 1re ligne du modèle de devis) est en 1re ligne de la MEA dans le panier, et non plus dans la zone Gratuités ; envoyé à 0 € avec son Type de gratuité, avec le contrôle de stock habituel. Il suit le changement de palier ; les brouillons existants sont remis en ordre à la reprise.",
