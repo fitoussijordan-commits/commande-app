@@ -5005,7 +5005,13 @@ function CatalogStep({ session, loyaltyPrograms, cart, onQtyChange, freeItems, o
               // Prix catalogue d'origine (avant pricelist client) pour affichage barré.
               const catalog = item.product.lst_price || 0;
               const hasPricelistDiscount = catalog > 0 && catalog - item.unitPrice > 0.01;
-              const pricelistPct = hasPricelistDiscount ? Math.round((1 - item.unitPrice / catalog) * 100) : 0;
+              const pricelistPct = hasPricelistDiscount ? (1 - item.unitPrice / catalog) * 100 : 0;
+              // Remise totale affichée = sur le prix catalogue, tarif client + promos (additionnés,
+              // cf. linePricing), à 0,1 % près — même pour une ligne à quantité 0.
+              const lpUnit = linePricing(item, pct, groupPct);
+              const refBrut = catalog > 0 ? Math.max(catalog, item.unitPrice) : item.unitPrice;
+              const totalPct = refBrut > 0 ? Math.round((1 - lpUnit.net / refBrut) * 1000) / 10 : 0;
+              const fmtPct = (n: number) => String(n).replace(".", ",");
               return (
                 <div key={item.product.id} className={removing.has(item.product.id) ? "cart-line removing" : "cart-line"}>
                 {sepLabel && (
@@ -5074,7 +5080,7 @@ function CatalogStep({ session, loyaltyPrograms, cart, onQtyChange, freeItems, o
                       // PU brut = prix catalogue (avant liste de prix du client) ;
                       // remise = liste de prix + promos + remises de groupe, cumulées ;
                       // PU net = prix réellement facturé à l'unité.
-                      const unitNet = item.qty ? net / item.qty : item.unitPrice * (1 - Math.min(100, pct + groupPct) / 100);
+                      const unitNet = lpUnit.net;
                       const brut = catalog > 0 ? Math.max(catalog, item.unitPrice) : item.unitPrice;
                       const remise = brut > 0 ? Math.round((1 - unitNet / brut) * 1000) / 10 : 0;
                       return <>
@@ -5096,7 +5102,7 @@ function CatalogStep({ session, loyaltyPrograms, cart, onQtyChange, freeItems, o
                     ? <>{item.product.default_code}{item.product.barcode ? <>{item.product.default_code ? " " : ""}<Ean code={item.product.barcode} /></> : null}</>
                     : null;
                   const disc = (pricelistPct > 0 || pct + groupPct > 0) && (
-                    <span style={{ flexShrink: 0, fontSize: 10.5, fontWeight: 700, color: C.orange }}>−{Math.min(100, pricelistPct + pct + groupPct)}%</span>
+                    <span style={{ flexShrink: 0, fontSize: 10.5, fontWeight: 700, color: C.orange }}>−{fmtPct(totalPct)} %</span>
                   );
                   const offer = Array.isArray(item.product.x_offre_produit_id) && <OfferTag name={item.product.x_offre_produit_id[1]} />;
                   const qtyCtl = (

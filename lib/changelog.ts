@@ -8,6 +8,7 @@ export const CHANGELOG: ChangelogEntry[] = [
   {
     date: "2026-11-25",
     items: [
+      "Panier : remise affichée exacte (tarif + promo additionnés, à 0,1 % près, ex. −32,5 % et non −33 %), y compris sur les lignes à quantité 0 (elles affichaient la remise en cascade, ex. 31,1 %).",
       "Accueil « Reprendre » et brouillons : propres à l'utilisateur Odoo connecté (avant, communs à l'appareil). Les commerciaux ne voient plus les clients ouverts par un collègue sur le même iPad.",
       "Initiales de l'utilisateur Odoo connecté (ex. Astrid Bodin → AB) en pastille ronde en haut à droite, nom complet au survol.",
       "MEA dont la promo Odoo est introuvable : toutes les lignes du modèle de devis sont ajoutées telles quelles (gratuités comprises), sans condition.",
