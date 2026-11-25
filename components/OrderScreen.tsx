@@ -1449,7 +1449,10 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
 
   // Écran confirmation finale
   if (done) return (
-    <div className="fade-in" style={{ position: "fixed", inset: 0, left: desktop ? 248 : 0, background: "#0f766e", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'DM Sans', sans-serif", paddingTop: "env(safe-area-inset-top)", paddingBottom: "env(safe-area-inset-bottom)" }}>
+    // key distincte de l'écran principal : sinon React réutilise le même <div> et, en
+    // retirant « inset », efface aussi la position gauche de l'écran principal (décalé
+    // à droite avec une zone blanche après « Nouvelle commande », jusqu'à actualiser).
+    <div key="done-screen" className="fade-in" style={{ position: "fixed", top: 0, right: 0, bottom: 0, left: desktop ? 248 : 0, background: "#0f766e", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'DM Sans', sans-serif", paddingTop: "env(safe-area-inset-top)", paddingBottom: "env(safe-area-inset-bottom)" }}>
       <div style={{ background: "#fff", borderRadius: 24, padding: "48px 40px", maxWidth: 480, width: "90%", textAlign: "center", boxShadow: C.shadowXl }}>
         {/* Le tube dépose sa noisette de crème, la coche se dessine */}
         <TubeSuccess color={done.offline ? C.orange : C.teal}>
@@ -1491,7 +1494,7 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
     // Hauteur = zone réellement visible (--app-h, cf. useVisibleHeight) : sur iPad,
     // Safari compte sous ses barres une hauteur qu'il n'affiche pas, et le bas de
     // l'écran (total du panier, bas des gammes) passait hors de l'écran.
-    <div style={{ position: "fixed", top: 0, right: 0, height: "var(--app-h, 100dvh)", left: desktop ? 248 : 0, zIndex: 150, background: C.bg, display: "flex", flexDirection: "column" as const, fontFamily: "'DM Sans', sans-serif", overflow: "hidden", paddingTop: "env(safe-area-inset-top)", paddingBottom: "env(safe-area-inset-bottom)", boxSizing: "border-box" as const }}>
+    <div key="main-screen" style={{ position: "fixed", top: 0, right: 0, height: "var(--app-h, 100dvh)", left: desktop ? 248 : 0, zIndex: 150, background: C.bg, display: "flex", flexDirection: "column" as const, fontFamily: "'DM Sans', sans-serif", overflow: "hidden", paddingTop: "env(safe-area-inset-top)", paddingBottom: "env(safe-area-inset-bottom)", boxSizing: "border-box" as const }}>
 
       {/* Sélecteur de fichier des boutons « Importer un bon » — sans accept : un PDF
            sans extension serait masqué ; le type est vérifié sur le contenu. */}

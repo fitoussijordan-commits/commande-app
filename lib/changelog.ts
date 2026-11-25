@@ -8,6 +8,7 @@ export const CHANGELOG: ChangelogEntry[] = [
   {
     date: "2026-11-25",
     items: [
+      "Après « Devis créé ! », les boutons « Nouvelle commande » et « Mon planning » n'affichent plus l'écran décalé vers la droite avec une zone blanche à gauche (il fallait actualiser la page).",
       "MEA : l'article MEA (code 7, 1re ligne du modèle de devis) est en 1re ligne de la MEA dans le panier, et non plus dans la zone Gratuités ; envoyé à 0 € avec son Type de gratuité, avec le contrôle de stock habituel. Il suit le changement de palier ; les brouillons existants sont remis en ordre à la reprise.",
       "Brouillons : la commande en cours est enregistrée en entier (gratuités dont l'article MEA code 7, remise événement, remises d'implantation, type de commande, date d'expédition choisie, remises retirées à la main, commande portail en cours de modification, bon chargé) et entièrement rendue à la reprise.",
       "MEA : après la reprise d'un brouillon, le changement automatique de palier refonctionne ; un ancien brouillon sans gratuités retrouve celles du modèle (dont l'article code 7).",
