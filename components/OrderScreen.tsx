@@ -186,6 +186,28 @@ interface GiftItem {
   afterProductId?: number;   // UG d'un bon chargé : juste après la ligne payante de cet article
 }
 
+// Gratuité « manuelle » : bouton cadeau 🎁 du catalogue, UG d'un bon chargé (hors
+// MEA / devis d'implantation, dont les gratuités suivent les règles de l'offre).
+const isManualGift = (g: GiftItem) => !g.cond;
+// Quantité offerte non couverte par le stock prévisionnel : le stock sert d'abord
+// la ligne payante du même article, puis la gratuité.
+function giftShortage(g: GiftItem, cart: Record<number, { qty: number }>): number {
+  if (isSeparatorProduct(g.product)) return 0;
+  const stock = Math.max(0, Math.floor(g.product?.virtual_available || 0));
+  const paid = cart[g.product.id]?.qty || 0;
+  return Math.max(0, g.qty - Math.max(0, stock - paid));
+}
+// Libellé de la ligne « RUPTURE » (réf., EAN et nom séparés : cf. cartLineCmds).
+function ruptureLabel(product: any, missing: number): string {
+  const pname = String(product.name || "").replace(/^\[[^\]]*\]\s*/, "");
+  return [
+    `RUPTURE — ${missing} manquant${missing > 1 ? "s" : ""} (non livré${missing > 1 ? "s" : ""})`,
+    product.default_code ? `Réf. ${product.default_code}` : "",
+    product.barcode ? `EAN ${product.barcode}` : "",
+    pname,
+  ].filter(Boolean).join(" · ");
+}
+
 // Place des gratuités dans le panier et le devis :
 //   • UG d'un bon chargé → juste après la ligne payante du même article ;
 //   • gratuités d'une MEA / d'un devis d'implantation → dans le bloc de leur groupe,
@@ -1173,7 +1195,12 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
       if (m?.offersField && allOfferIds.length) metaVals[m.offersField] = [[6, 0, allOfferIds]];
       // Note INTERNE (jamais imprimée sur le devis) : ruptures à vérifier par le
       // service client + notes de suivi des campagnes ajoutées (ex. SERUM26).
-      const ruptures = cartRuptures(cart);
+      const ruptures = [
+        ...cartRuptures(cart),
+        // Gratuités manuelles en rupture (le manquant part à 0, comme pour un article payant).
+        ...giftItems.filter(g => isManualGift(g) && giftActive(g, cart) && g.qty > 0 && giftShortage(g, cart) > 0)
+          .map(g => ({ name: String(g.product.name || ""), code: g.product.default_code || undefined, qty: g.qty, stock: g.qty - giftShortage(g, cart) })),
+      ];
       const groupsInCart = new Set(Object.values(cart).map(i => i.group).filter(Boolean) as string[]);
       const internalLines = [
         ...(ruptures.length ? [`RUPTURES (manquant envoyé à 0 sur le devis) : ${ruptures.map(r => `${r.code || r.name} (${r.qty} dem. / ${r.stock} livrés)`).join(", ")}`] : []),
@@ -1251,22 +1278,31 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
             ];
       };
       // Gratuité → ligne de devis (0 €, ou prix client à 100 % de remise pour une UG de bon chargé).
-      const giftCmd = (g: GiftItem) => [0, 0, {
-        product_id: g.product.id,
-        product_uom_qty: g.qty,
-        ...(g.fullDiscountPrice != null ? { price_unit: g.fullDiscountPrice, discount: 100 } : { price_unit: 0 }),
-        ...(g.type ? { type_gratuit: g.type } : {}),
-        ...(g.highlight && imp?.line.has("ocr_highlight") ? { ocr_highlight: g.highlight } : {}),
-      }];
+      // Gratuité manuelle (bouton cadeau, UG d'un bon) : prix normal du client avec
+      // 100 % de remise, et contrôle de stock comme un article payant (manquant sur
+      // une ligne « RUPTURE » à 0 juste après). Gratuité de MEA : à 0 €, comme avant.
+      const giftCmds = (g: GiftItem): any[] => {
+        const base = {
+          product_id: g.product.id,
+          ...(g.type ? { type_gratuit: g.type } : {}),
+          ...(g.highlight && imp?.line.has("ocr_highlight") ? { ocr_highlight: g.highlight } : {}),
+        };
+        if (!isManualGift(g)) return [[0, 0, { ...base, product_uom_qty: g.qty,
+          ...(g.fullDiscountPrice != null ? { price_unit: g.fullDiscountPrice, discount: 100 } : { price_unit: 0 }) }]];
+        const price = g.fullDiscountPrice ?? applyPricelist(g.product.lst_price || 0, g.product.id, g.product.product_tmpl_id?.[0] || 0, priceItems, Math.max(1, g.qty));
+        const missing = giftShortage(g, cart), served = g.qty - missing;
+        const line = (qty: number, extra: any = {}) => [0, 0, { ...base, product_uom_qty: qty, price_unit: price, discount: 100, ...extra }];
+        return [...(served > 0 ? [line(served)] : []), ...(missing > 0 ? [line(0, { name: ruptureLabel(g.product, missing) })] : [])];
+      };
       // Gratuités placées comme dans le panier (placeGifts) : celles d'une MEA dans
       // son bloc, les UG d'un bon chargé après leur article payant ; le reste en fin.
       const ordered = orderedCart(cart);
       const gp = placeGifts(ordered, giftItems.filter(g => giftActive(g, cart) && g.qty > 0));
       const orderBody: any[] = [];
       ordered.forEach((item, i) => {
-        orderBody.push(...(gp.before.get(i) || []).map(giftCmd));
+        orderBody.push(...(gp.before.get(i) || []).flatMap(giftCmds));
         if (item.note ? !!String(item.product.name || "").trim() : item.qty > 0) orderBody.push(...cartLineCmds(item));
-        orderBody.push(...(gp.after.get(i) || []).map(giftCmd));
+        orderBody.push(...(gp.after.get(i) || []).flatMap(giftCmds));
       });
 
       const mainPayload: any = {
@@ -1290,7 +1326,7 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
             type_gratuit: "gratuites_des_offres",
           }]),
           // Gratuités hors MEA (bouton Offrir, bon chargé…) et celles d'une MEA retirée.
-          ...gp.rest.map(giftCmd),
+          ...gp.rest.flatMap(giftCmds),
           // Franco non atteint : frais de livraison.
           ...(feeProduct ? [[0, 0, { product_id: feeProduct.id, product_uom_qty: 1, price_unit: SHIPPING_FEE_HT }]] : []),
         ],
@@ -4655,6 +4691,12 @@ function CatalogStep({ session, loyaltyPrograms, cart, onQtyChange, freeItems, o
                   </div>
                   <button onClick={() => setGiftItems(prev => prev.filter((_, j) => j !== i))} title="Retirer"
                     style={{ flexShrink: 0, width: 32, height: 32, marginLeft: 4, background: "none", border: "none", cursor: "pointer", color: C.muted, fontSize: 12, padding: 0, ...(inline ? { order: -2 } : {}) }}>✕</button>
+                  {isManualGift(g) && g.qty > 0 && giftShortage(g, cart) > 0 && (
+                    <span title="Stock prévisionnel insuffisant : le manquant part à 0 sur le devis (« RUPTURE »)"
+                      style={{ flexBasis: "100%", order: 5, fontSize: 10.5, fontWeight: 700, color: C.red }}>
+                      Rupture : {giftShortage(g, cart)} manquant{giftShortage(g, cart) > 1 ? "s" : ""} (stock {Math.max(0, Math.floor(g.product.virtual_available || 0))})
+                    </span>
+                  )}
                   {/* Type de gratuité PAR LIGNE (Coffre DC par défaut, Gratuités des offres pour une MEA) */}
                   <select value={g.type} title="Type de gratuité de cette ligne"
                     onChange={e => setGiftItems(prev => prev.map((x, j) => j === i ? { ...x, type: e.target.value } : x))}
