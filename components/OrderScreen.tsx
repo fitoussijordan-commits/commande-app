@@ -303,11 +303,14 @@ function matchesTypeGroup(product: any, groupId: string): boolean {
   return (!!label && group.patterns.some(re => re.test(label))) || !!group.also?.(product);
 }
 
-// Produit de VENTE, seul affiché dans les gammes (Visage, Corps, Régénérant…) :
-// référence en 1xxxxxx (6 = PLV, 7 = offres MEA, 8 = gratuités allemandes) et
-// hors testeurs, échantillons, travel size, miniatures, accessoires et PLV, qui
-// ont leur propre section.
+// Produit de VENTE, seul affiché dans les gammes (Visage, Corps, Régénérant…) et
+// seul pris en compte comme article « payant » d'une MEA : Type de produit Odoo
+// (x_type_de_produit_id) = « Produit vente ». Type non renseigné (ou champ absent
+// de la base) : repli sur la référence en 1xxxxxx hors testeurs, échantillons,
+// travel size, miniatures, accessoires et PLV.
 function isSaleProduct(product: any): boolean {
+  const label = productTypeLabel(product);
+  if (label) return fold(label).replace(/[^a-z]/g, "") === "produitvente";
   if (!/^1/.test(String(product.default_code || "").trim())) return false;
   return !PRODUCT_TYPE_GROUPS.some(g => matchesTypeGroup(product, g.id));
 }
@@ -4120,7 +4123,7 @@ function CatalogStep({ session, loyaltyPrograms, cart, onQtyChange, freeItems, o
   //   • autre article → article payant, au prix de la liste de prix du client ; la
   //     remise de la MEA vient de la promo liée (jamais du nom du modèle) ;
   //   • rubriques / notes / séparateurs → lignes de commentaire.
-  type MeaLine = { product: any; qty: number; price: number; kind: "paid" | "tester" };
+  type MeaLine = { product: any; qty: number; price: number; kind: "paid" | "tester" | "other" };
   type MeaParsed = {
     id: number; name: string; notes: { name: string; type: "line_note" | "line_section" }[];
     items: MeaLine[]; gifts: { product: any; qty: number; type: string }[]; paid: Record<number, number>;
@@ -4190,9 +4193,11 @@ function CatalogStep({ session, loyaltyPrograms, cart, onQtyChange, freeItems, o
         }
         const tester = String(product.default_code || "").startsWith("3");
         const price = tester ? 0 : applyPricelist(product.lst_price || 0, product.id, product.product_tmpl_id?.[0] || 0, priceItems, Math.max(1, qty));
-        const item: MeaLine = { product, qty, price, kind: tester ? "tester" : "paid" };
+        // Article payant de la MEA = Type de produit « Produit vente » (cf. isSaleProduct).
+        const sale = !tester && isSaleProduct(product);
+        const item: MeaLine = { product, qty, price, kind: tester ? "tester" : sale ? "paid" : "other" };
         out.items.push(item); out.rows.push({ item });
-        if (!tester) out.paid[product.id] = (out.paid[product.id] || 0) + qty;
+        if (sale) out.paid[product.id] = (out.paid[product.id] || 0) + qty;
       }
       out.paidSet = Object.keys(out.paid).map(Number).sort((x, y) => x - y).join(",");
       return out;
