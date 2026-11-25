@@ -25,7 +25,7 @@ const STAT: Record<Status, { label: string; color: string; soft: string }> = {
   todo: { label: "À proposer", color: "#334155", soft: "#eef2f6" },
   devis: { label: "Devis en cours", color: "#ea580c", soft: "#fff7ed" },
   pris: { label: "Ont pris", color: "#16a34a", soft: "#f0fdf4" },
-  ne: { label: "Non éligibles", color: "#94a3b8", soft: "#f1f5f9" },
+  ne: { label: "N/A", color: "#94a3b8", soft: "#f1f5f9" },
 };
 
 // Clients « indirects » : étiquette contenant « indirect » sur la fiche client,
@@ -321,7 +321,7 @@ export default function MeaDashboard({ session, onClose, onOpenClient, onToast }
                   <option value="ca_asc">CA N-1 ↑</option>
                   <option value="name">Nom A→Z</option>
                 </select>
-              </span><span>Prochain RDV</span><span>{filter === "todo" || filter === "ne" ? "Offre prévue" : "Offre"}</span><span>Note</span><span title="Client qui ne peut pas recevoir cette MEA : retiré du calcul de placement">Non éligible</span>
+              </span><span>Prochain RDV</span><span>{filter === "todo" || filter === "ne" ? "Offre prévue" : "Offre"}</span><span>Note</span><span title="Client qui ne peut pas recevoir cette MEA : retiré du calcul de placement">N/A</span>
             </div>
             <div style={{ background: C.white, borderRadius: 14, border: `1px solid ${C.border}`, overflow: "hidden" }}>
               {rows.length === 0 && <div style={{ textAlign: "center" as const, color: C.muted, fontSize: 13, padding: 30 }}>
@@ -373,7 +373,7 @@ export default function MeaDashboard({ session, onClose, onOpenClient, onToast }
                         <input type="checkbox" checked={!!plan?.ineligible} disabled={saving === k}
                           onChange={e => save(c.id, { ineligible: e.target.checked })}
                           style={{ width: 18, height: 18, accentColor: C.textSec, cursor: "pointer" }} />
-                        Non élig.
+                        N/A
                       </label>
                     )}
                   </div>

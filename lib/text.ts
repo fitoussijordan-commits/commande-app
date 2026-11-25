@@ -64,3 +64,12 @@ export function textToHtml(text: string): string {
   const esc = (t: string) => t.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
   return text.split("\n").map(esc).join("<br/>");
 }
+
+// Corps d'un message du chatter Odoo → texte. Un message posté en texte brut
+// (sans body_is_html) est échappé par Odoo : son HTML revient encodé
+// (« &lt;p&gt;&lt;b&gt;… ») et s'affichait balises comprises. On décode donc
+// une seconde fois s'il reste des balises après la première conversion.
+export function messageText(body: string): string {
+  const once = descToText(String(body || ""));
+  return /<\/?[a-z][^>]*>/i.test(once) ? descToText(once) : once;
+}

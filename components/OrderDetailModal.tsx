@@ -4,6 +4,7 @@
 import { createPortal } from "react-dom";
 import { useEffect, useMemo, useRef, useState } from "react";
 import * as odoo from "@/lib/odoo";
+import { messageText } from "@/lib/text";
 import { loadOrderDetail, type OrderDetail, type DetailLine, type DetailPicking } from "@/lib/orderDetail";
 import { odooRecordUrl } from "@/lib/perimes";
 import { useExit, TubeLoader, Sk } from "@/components/motion";
@@ -101,7 +102,7 @@ export default function OrderDetailModal({ session, order, stateLabel, onClose: 
       }
       // Note INTERNE (mt_note) : visible du service client, jamais envoyée au client.
       await odoo.callMethod(session, "sale.order", "message_post", [[order.id]], {
-        body: html, message_type: "comment", subtype_xmlid: "mail.mt_note",
+        body: html, message_type: "comment", subtype_xmlid: "mail.mt_note", body_is_html: true,
         ...(used.length ? { partner_ids: used.map(m => m.partnerId) } : {}),
       });
       setReply(""); setMentions([]); setMq(null); await loadMsgs();
@@ -144,7 +145,7 @@ export default function OrderDetailModal({ session, order, stateLabel, onClose: 
             {msgs && msgs.map(m => {
               const mine = Array.isArray(m.author_id) && /./.test(m.author_id[1]) && String(m.author_id[1]).toLowerCase() === String(session.name || "").toLowerCase();
               const note = Array.isArray(m.subtype_id) && /note/i.test(String(m.subtype_id[1]));
-              const text = String(m.body || "").replace(/<br\s*\/?>/gi, "\n").replace(/<\/p>/gi, "\n").replace(/<[^>]+>/g, "").replace(/&nbsp;/g, " ").replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").trim();
+              const text = messageText(m.body);
               if (!text && !(m.attachment_ids || []).length) return null;
               return (
                 <div key={m.id} style={{ alignSelf: mine ? "flex-end" : "flex-start", maxWidth: "85%", background: mine ? C.tealSoft : C.white, border: `1px solid ${mine ? C.tealMid : C.border}`, borderRadius: 12, padding: "8px 11px" }}>

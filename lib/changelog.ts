@@ -8,6 +8,11 @@ export const CHANGELOG: ChangelogEntry[] = [
   {
     date: "2026-11-25",
     items: [
+      "MEA : l'article MEA code 7 est verrouillé dans le panier (ni quantité ni ✕, 🔒) — sans lui l'étiquette de l'offre ne part pas dans Odoo. Il part avec le bouton « Retirer » de la MEA.",
+      "MEA : un article déjà au panier (ex. Stick Éclat des Lèvres ajouté avant l'offre) passe dans la MEA à sa place quand on ajoute l'offre, au lieu de rester à part.",
+      "Notes du chatter (récapitulatif d'un bon chargé, commandes jointes, notes de commande) : enregistrées en vrai HTML dans Odoo, et les anciennes s'affichent sans les balises « <p><b>… ».",
+      "Préparation de RDV : case « N/A » sur les offres à proposer, quand le DC ne proposera pas l'offre au client (même case que « Non éligible » dans Mes MEA, renommée N/A). L'offre sort du compte « à proposer ».",
+      "Préparation de RDV : bloc « Évolution par produit » (plus grosses baisses / hausses) retiré.",
       "Devis d'implantation : pas de remise événement — le bouton « Remise événement » est désactivé (et la remise retirée) dès qu'un devis d'implantation est dans le panier.",
       "Remise événement : remise ADDITIONNELLE sur toutes les lignes payantes (tarif −17 % + événement −10 % = −27 % sur le prix catalogue, cumulée aussi avec la promo d'une MEA), affichée sur chaque ligne du panier et envoyée telle quelle dans le devis.",
       "Remise événement : uniquement 10 % ou 15 % (la saisie d'un % libre est supprimée). Un nouveau clic sur le % choisi retire la remise.",

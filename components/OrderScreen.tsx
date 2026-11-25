@@ -1361,7 +1361,7 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
           });
           await odoo.callMethod(session, "sale.order", "message_post", [[editOrder.id]], {
             body: `Commande ${editOrder.validate === false ? "" : "portail "}modifiée depuis l'app par ${session.name}${tag && !clientBlocked ? " et validée DC" : ""}.${orderNote ? `<br/>${orderNote.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/\n/g, "<br/>")}` : ""}`,
-            message_type: "comment", subtype_xmlid: "mail.mt_note",
+            message_type: "comment", subtype_xmlid: "mail.mt_note", body_is_html: true,
           }).catch(() => {});
         } catch (e: any) {
           onToast(odoo.isNetworkError(e) ? "Hors ligne : la commande portail n'a pas pu être complétée" : `Odoo a refusé l'ajout : ${e?.message || e}`, "error");
@@ -1439,7 +1439,7 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
             } catch { /* fichier non joint : le récapitulatif part quand même */ }
           }
           await odoo.callMethod(session, "sale.order", "message_post", [[mainId]], {
-            body: importMeta.summaryHtml, message_type: "comment", subtype_xmlid: "mail.mt_note",
+            body: importMeta.summaryHtml, message_type: "comment", subtype_xmlid: "mail.mt_note", body_is_html: true,
             ...(attachmentIds.length ? { attachment_ids: attachmentIds } : {}),
           });
         })().catch(() => {});
@@ -1450,7 +1450,7 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
       if (internalNote) {
         const html = internalNote.split("\n").map(l => l.replace(/&/g, "&amp;").replace(/</g, "&lt;")).join("<br/>");
         odoo.callMethod(session, "sale.order", "message_post", [[mainId]],
-          { body: html, message_type: "comment", subtype_xmlid: "mail.mt_note" }).catch(() => {});
+          { body: html, message_type: "comment", subtype_xmlid: "mail.mt_note", body_is_html: true }).catch(() => {});
       }
 
       // 1 bis) Commande directe logistique : confirmation automatique + note de la
@@ -1492,12 +1492,12 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
         for (const o of joined) {
           await odoo.callMethod(session, "sale.order", "message_post", [[o.id]], {
             body: `Jointe à la commande <strong>${mainName}</strong> (${client.name}) — à expédier ensemble avec ${others(o)}.`,
-            message_type: "comment", subtype_xmlid: "mail.mt_note",
+            message_type: "comment", subtype_xmlid: "mail.mt_note", body_is_html: true,
           }).catch((e: any) => problems.push(`${o.name} : note non ajoutée (${e?.message || e})`));
         }
         await odoo.callMethod(session, "sale.order", "message_post", [[mainId]], {
           body: `Commandes jointes : <strong>${joined.map(o => o.name).join(", ")}</strong> — à expédier ensemble.`,
-          message_type: "comment", subtype_xmlid: "mail.mt_note",
+          message_type: "comment", subtype_xmlid: "mail.mt_note", body_is_html: true,
         }).catch(() => {});
         if (problems.length) onToast(`Commandes jointes : ${problems.join(" ; ")}`, "error");
         else onToast(`${joined.length} commande${joined.length > 1 ? "s" : ""} jointe${joined.length > 1 ? "s" : ""} à ${mainName} : ${joined.map(o => o.name).join(", ")}${jm?.joinedField ? "" : " (note interne ; champ « Commandes jointes » absent)"}`, "success");
@@ -4435,13 +4435,15 @@ function CatalogStep({ session, loyaltyPrograms, cart, onQtyChange, freeItems, o
         const it = qtys && it0.kind === "paid" ? { ...it0, qty: Math.max(0, qtys[it0.product.id] ?? 0) } : it0;
         const have = cart[it.product.id]?.qty || 0;
         if (it.kind === "paid") required[it.product.id] = (required[it.product.id] ?? have) + it.qty;
-        // Article déjà dans un devis d'implantation : il passe dans la MEA.
-        const fromImplant = !implant && /implantation/i.test(cart[it.product.id]?.group || "");
+        // Article déjà au panier hors offre (ajouté avant la MEA) ou dans un devis
+        // d'implantation : il passe dans la MEA, à sa place du modèle.
+        const curGroup = cart[it.product.id]?.group || "";
+        const moveIn = !!cart[it.product.id] && (!curGroup || (!implant && /implantation/i.test(curGroup)));
         if (it.qty === 0 && cart[it.product.id]) {
-          if (fromImplant) { onQtyChange(it.product, have, it.price, template.name, true, true); added++; }
+          if (moveIn) { onQtyChange(it.product, have, it.price, template.name, true, true); added++; }
           continue;
         }
-        onQtyChange(it.product, have + it.qty, it.price, template.name, true, fromImplant, it.kind === "code" ? { freeType: it.freeType } : undefined);
+        onQtyChange(it.product, have + it.qty, it.price, template.name, true, moveIn, it.kind === "code" ? { freeType: it.freeType } : undefined);
         added++;
       }
       const gifts = v.gifts.reduce((s, g) => s + g.qty, 0);
@@ -5236,6 +5238,10 @@ function CatalogStep({ session, loyaltyPrograms, cart, onQtyChange, freeItems, o
               const stockOk = noStockCheck(item) || item.qty <= Math.floor(item.product.virtual_available || 0);
               const pct = addPctOf(item, lineDiscounts, eventDiscount);
               const groupPct = otherPctOf(item, groupDiscounts);
+              // Article MEA code 7 : verrouillé (ni quantité ni suppression) — sans lui,
+              // l'étiquette de l'offre ne part pas dans Odoo. Retiré avec « Retirer » de la MEA.
+              const codeLocked = !!item.freeType && !!item.group && /^7/.test(String(item.product.default_code || "").trim());
+              const lockedMark = <span title="Article de la MEA : retiré uniquement avec « Retirer » de la MEA" style={{ flexShrink: 0, width: 32, textAlign: "center" as const, fontSize: 12, color: C.muted }}>🔒</span>;
               const net = item.qty * linePricing(item, pct, groupPct).net;
               // Prix catalogue d'origine (avant pricelist client) pour affichage barré.
               const catalog = item.product.lst_price || 0;
@@ -5308,9 +5314,9 @@ function CatalogStep({ session, loyaltyPrograms, cart, onQtyChange, freeItems, o
                     <span style={{ flex: 1, minWidth: 0, fontSize: 12.5, fontWeight: 600, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>{item.product.name}</span>
                     {Array.isArray(item.product.x_offre_produit_id) && <OfferTag name={item.product.x_offre_produit_id[1]} />}
                     <div style={{ width: LV.qty, justifyContent: "center", display: "flex", alignItems: "center", gap: 3, flexShrink: 0 }}>
-                      <button onClick={() => onQtyChange(item.product, item.qty - 1)} style={{ width: 36, height: 36, borderRadius: 9, background: C.redSoft, border: "none", cursor: "pointer", color: C.red, fontSize: 17, fontWeight: 700 }}>−</button>
-                      <button onClick={() => setPad({ product: item.product })} style={{ minWidth: 44, height: 36, borderRadius: 9, background: "#fff", border: `1px solid ${C.border}`, cursor: "pointer", fontSize: 13, fontWeight: 800, color: C.text, fontFamily: "inherit" }}><span key={item.qty} className="qty-pop">{item.qty}</span></button>
-                      <button onClick={() => onQtyChange(item.product, item.qty + 1)} style={{ width: 36, height: 36, borderRadius: 9, background: C.tealSoft, border: "none", cursor: "pointer", color: C.teal, fontSize: 17, fontWeight: 700 }}>+</button>
+                      <button onClick={() => onQtyChange(item.product, item.qty - 1)} disabled={codeLocked} style={{ width: 36, height: 36, borderRadius: 9, background: C.redSoft, border: "none", cursor: codeLocked ? "default" : "pointer", color: C.red, fontSize: 17, fontWeight: 700, visibility: codeLocked ? "hidden" : "visible" }}>−</button>
+                      <button onClick={() => !codeLocked && setPad({ product: item.product })} style={{ minWidth: 44, height: 36, borderRadius: 9, background: "#fff", border: `1px solid ${C.border}`, cursor: "pointer", fontSize: 13, fontWeight: 800, color: C.text, fontFamily: "inherit" }}><span key={item.qty} className="qty-pop">{item.qty}</span></button>
+                      <button onClick={() => onQtyChange(item.product, item.qty + 1)} disabled={codeLocked} style={{ width: 36, height: 36, borderRadius: 9, background: C.tealSoft, border: "none", cursor: codeLocked ? "default" : "pointer", color: C.teal, fontSize: 17, fontWeight: 700, visibility: codeLocked ? "hidden" : "visible" }}>+</button>
                     </div>
                     {(() => {
                       // PU brut = prix catalogue (avant liste de prix du client) ;
@@ -5326,7 +5332,7 @@ function CatalogStep({ session, loyaltyPrograms, cart, onQtyChange, freeItems, o
                       </>;
                     })()}
                     <span style={{ width: LV.total, flexShrink: 0, textAlign: "right" as const, fontSize: 13, fontWeight: 800, color: C.text }}>{fmtPrice(net)}</span>
-                    <button onClick={() => removeLine(item.product)} title="Retirer" style={{ flexShrink: 0, width: 36, height: 36, marginLeft: 6, background: "transparent", border: "none", cursor: "pointer", color: C.muted, fontSize: 14 }}>✕</button>
+                    {codeLocked ? lockedMark : <button onClick={() => removeLine(item.product)} title="Retirer" style={{ flexShrink: 0, width: 36, height: 36, marginLeft: 6, background: "transparent", border: "none", cursor: "pointer", color: C.muted, fontSize: 14 }}>✕</button>}
                   </div>
                 ) : (
                 /* Vue compacte : panier étroit → nom sur toute la largeur, détails et
@@ -5343,19 +5349,19 @@ function CatalogStep({ session, loyaltyPrograms, cart, onQtyChange, freeItems, o
                   const offer = Array.isArray(item.product.x_offre_produit_id) && <OfferTag name={item.product.x_offre_produit_id[1]} />;
                   const qtyCtl = (
                     <div style={{ display: "flex", alignItems: "center", gap: 4, flexShrink: 0 }}>
-                      <button onClick={() => onQtyChange(item.product, item.qty - 1)} aria-label="Moins"
-                        style={{ width: 36, height: 36, borderRadius: 9, background: C.redSoft, border: "none", cursor: "pointer", color: C.red, fontSize: 18, fontWeight: 700, lineHeight: 1, padding: 0 }}>−</button>
-                      <button onClick={() => setPad({ product: item.product })} title={saleStep(item.product) > 1 ? `Saisir une quantité (min ${saleStep(item.product)})` : "Saisir une quantité"}
+                      <button onClick={() => onQtyChange(item.product, item.qty - 1)} aria-label="Moins" disabled={codeLocked}
+                        style={{ visibility: codeLocked ? "hidden" : "visible", width: 36, height: 36, borderRadius: 9, background: C.redSoft, border: "none", cursor: "pointer", color: C.red, fontSize: 18, fontWeight: 700, lineHeight: 1, padding: 0 }}>−</button>
+                      <button onClick={() => !codeLocked && setPad({ product: item.product })} title={saleStep(item.product) > 1 ? `Saisir une quantité (min ${saleStep(item.product)})` : "Saisir une quantité"}
                         style={{ minWidth: 42, height: 36, borderRadius: 9, background: "#fff", border: `1px solid ${saleStep(item.product) > 1 ? C.tealMid : C.border}`, cursor: "pointer", fontSize: 14, fontWeight: 800, color: C.text, fontFamily: "inherit", padding: "0 6px" }}>
                         <span key={item.qty} className="qty-pop">{item.qty}</span>
                       </button>
-                      <button onClick={() => onQtyChange(item.product, item.qty + 1)} aria-label="Plus"
-                        style={{ width: 36, height: 36, borderRadius: 9, background: C.tealSoft, border: "none", cursor: "pointer", color: C.teal, fontSize: 18, fontWeight: 700, lineHeight: 1, padding: 0 }}>+</button>
+                      <button onClick={() => onQtyChange(item.product, item.qty + 1)} aria-label="Plus" disabled={codeLocked}
+                        style={{ visibility: codeLocked ? "hidden" : "visible", width: 36, height: 36, borderRadius: 9, background: C.tealSoft, border: "none", cursor: "pointer", color: C.teal, fontSize: 18, fontWeight: 700, lineHeight: 1, padding: 0 }}>+</button>
                     </div>
                   );
                   const total = <span style={{ width: 68, flexShrink: 0, textAlign: "right" as const, fontSize: 12.5, fontWeight: 800, color: pct + groupPct > 0 ? C.orange : C.text }}>{fmtPrice(net)}</span>;
                   // Croix éloignée du « + » (pas de suppression en voulant ajouter).
-                  const remove = (
+                  const remove = codeLocked ? lockedMark : (
                     <button onClick={() => removeLine(item.product)} title="Retirer" aria-label={`Retirer ${item.product.name} du panier`}
                       style={{ flexShrink: 0, width: 32, height: 32, marginLeft: 4, background: "transparent", border: "none", cursor: "pointer", color: C.muted, fontSize: 13, padding: 0 }}>✕</button>
                   );

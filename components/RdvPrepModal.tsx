@@ -1,7 +1,7 @@
 "use client";
 // Préparation de RDV : CA à date, offres du cycle faites / à faire (offre
 // prévue + note), quantités proposées par produit (modifiables) avec export du
-// BDC Excel, et plus grosses baisses du client.
+// BDC Excel (case N/A : offre non proposée au client).
 import { useEffect, useMemo, useState } from "react";
 import * as odoo from "@/lib/odoo";
 import { loadRdvPrep, type RdvPrep, type PrepCampaign } from "@/lib/rdvPrep";
@@ -23,6 +23,7 @@ const STATUS = {
   pris: { label: "Faite", color: C.green, bg: C.greenSoft },
   devis: { label: "En devis", color: C.orange, bg: C.orangeSoft },
   todo: { label: "À proposer", color: C.red, bg: C.redSoft },
+  na: { label: "N/A", color: "#94a3b8", bg: "#f1f5f9" },
 };
 
 export default function RdvPrepModal({ session, client, onClose: onCloseProp, onToast, onCreateQuote }: {
@@ -48,7 +49,7 @@ export default function RdvPrepModal({ session, client, onClose: onCloseProp, on
   const evo = data && data.ca.n != null && data.ca.n1 ? ((data.ca.n - data.ca.n1) / data.ca.n1) * 100 : null;
   const counts = useMemo(() => {
     const c = { pris: 0, devis: 0, todo: 0 };
-    data?.campaigns.forEach(x => { c[x.status]++; });
+    data?.campaigns.forEach(x => { if (!(x.status === "todo" && x.plan?.ineligible)) c[x.status]++; });
     return c;
   }, [data]);
 
@@ -79,7 +80,7 @@ export default function RdvPrepModal({ session, client, onClose: onCloseProp, on
     if (!data) return;
     const cur = pc.plan || { offerId: null, note: "" };
     const next: Plan = { ...cur, ...patch };
-    if (next.offerId === cur.offerId && next.note === cur.note) return;
+    if (next.offerId === cur.offerId && next.note === cur.note && !!next.ineligible === !!cur.ineligible) return;
     try {
       if (data.tracking) next.id = await savePlan(session, data.tracking, pc.campaign.key, client.id, next);
       else saveLocalPlan(planKey(pc.campaign.key, client.id), next);
@@ -137,13 +138,15 @@ export default function RdvPrepModal({ session, client, onClose: onCloseProp, on
           <div className="stagger" style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 22 }}>
             {data.campaigns.map(pc0 => {
               const pc = viewOf(pc0);
-              const st = STATUS[pc.status];
+              // N/A : le DC ne proposera pas cette offre au client (champ « éligible » du suivi MEA).
+              const na = pc.status === "todo" && !!pc.plan?.ineligible;
+              const st = STATUS[na ? "na" : pc.status];
               const isOpen = open === pc.campaign.key;
               // Prix remisé MEA (remise de l'offre), puis remise client.
               const total = pc.products.reduce((s, p) => s + qtyOf(pc, p.product.id, p.proposal) * p.price * (1 - (p.meaPct || 0) / 100), 0) * (1 - data.discount / 100);
               const units = pc.products.reduce((s, p) => s + qtyOf(pc, p.product.id, p.proposal), 0);
               return (
-                <div key={pc.campaign.key} style={{ background: C.white, border: `1px solid ${C.border}`, borderLeft: `4px solid ${st.color}`, borderRadius: 14, overflow: "hidden" }}>
+                <div key={pc.campaign.key} style={{ opacity: na ? 0.6 : 1, background: C.white, border: `1px solid ${C.border}`, borderLeft: `4px solid ${st.color}`, borderRadius: 14, overflow: "hidden" }}>
                   <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", flexWrap: "wrap" }}>
                     <button onClick={() => setOpen(isOpen ? null : pc.campaign.key)}
                       style={{ flex: "1 1 260px", minWidth: 0, display: "flex", alignItems: "center", gap: 10, background: "none", border: "none", cursor: "pointer", fontFamily: "inherit", textAlign: "left", padding: 0 }}>
@@ -151,7 +154,7 @@ export default function RdvPrepModal({ session, client, onClose: onCloseProp, on
                       <span style={{ minWidth: 0 }}>
                         <span style={{ display: "block", fontSize: 14, fontWeight: 800, color: C.text }}>{pc.campaign.key}</span>
                         <span style={{ display: "block", fontSize: 11.5, color: C.muted }}>
-                          {pc.status !== "todo" ? `${pc.orders.join(", ")} · ${pc.variantsTaken.join(", ")}` : pc.chosen ? `Proposition : ${units} u. · ${eur2(total)} HT remisé` : `${pc.products.length} produits`}
+                          {pc.status !== "todo" ? `${pc.orders.join(", ")} · ${pc.variantsTaken.join(", ")}` : na ? "Offre non proposée à ce client" : pc.chosen ? `Proposition : ${units} u. · ${eur2(total)} HT remisé` : `${pc.products.length} produits`}
                         </span>
                       </span>
                       <span style={{ marginLeft: "auto", color: C.muted, fontSize: 16, transform: isOpen ? "rotate(90deg)" : "none", transition: "transform 0.2s" }}>›</span>
@@ -167,6 +170,12 @@ export default function RdvPrepModal({ session, client, onClose: onCloseProp, on
                           onBlur={e => save(pc, { note: e.target.value.trim() })}
                           onKeyDown={e => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
                           style={{ flex: 1, minWidth: 0, height: 32, padding: "0 10px", borderRadius: 8, border: `1px solid ${C.border}`, background: C.bg, fontSize: 12.5, fontFamily: "inherit" }} />
+                        <label title="Offre non proposée à ce client (N/A) : elle sort des offres à proposer"
+                          style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 12, fontWeight: 800, color: na ? C.textSec : C.muted, cursor: "pointer", flexShrink: 0 }}>
+                          <input type="checkbox" checked={na} onChange={e => save(pc, { ineligible: e.target.checked })}
+                            style={{ width: 18, height: 18, accentColor: C.textSec, cursor: "pointer" }} />
+                          N/A
+                        </label>
                       </div>
                     )}
                   </div>
@@ -256,12 +265,6 @@ export default function RdvPrepModal({ session, client, onClose: onCloseProp, on
             })}
           </div>
 
-          {/* Baisses et hausses côte à côte */}
-          <SectionTitle>Évolution par produit ({new Date().getFullYear()} à date vs même période {new Date().getFullYear() - 1})</SectionTitle>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: 12 }}>
-            <TrendList title="Plus grosses baisses" color={C.red} soft={C.redSoft} rows={data.drops} empty="Aucune baisse notable ✓" />
-            <TrendList title="Top positif — plus grosses hausses" color={C.green} soft={C.greenSoft} rows={data.rises} empty="Aucune hausse sur la période" />
-          </div>
         </>}
       </div>
     </div>
@@ -280,26 +283,4 @@ function Kpi({ label, value, color, small }: { label: string; value: React.React
 }
 function SectionTitle({ children }: { children: React.ReactNode }) {
   return <div style={{ fontSize: 12, fontWeight: 800, color: C.muted, textTransform: "uppercase", letterSpacing: "0.06em", margin: "0 2px 10px" }}>{children}</div>;
-}
-
-function TrendList({ title, color, soft, rows, empty }: { title: string; color: string; soft: string; rows: { product: any; code: string; name: string; n1: number; n: number; amountN: number; amountN1: number }[]; empty: string }) {
-  return (
-    <div style={{ background: C.white, border: `1px solid ${C.border}`, borderTop: `4px solid ${color}`, borderRadius: 14, overflow: "hidden" }}>
-      <div style={{ padding: "9px 14px", background: soft, fontSize: 12.5, fontWeight: 800, color }}>{title} ({rows.length})</div>
-      {rows.length === 0 ? <div style={{ padding: 12, fontSize: 13, color: C.muted }}>{empty}</div> : (
-        <div className="stagger">
-          {rows.map((d, i) => (
-            <div key={d.product.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 14px", borderTop: i ? `1px solid ${C.border}` : "none" }}>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: 13, fontWeight: 700, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{d.name}</div>
-                <div style={{ fontSize: 10.5, color: C.muted, fontFamily: "ui-monospace, monospace" }}>{d.code}</div>
-              </div>
-              <div style={{ fontSize: 12.5, color: C.textSec, textAlign: "right", whiteSpace: "nowrap" }}>{q(d.n1)} → <strong style={{ color }}>{q(d.n)}</strong> u.</div>
-              <div style={{ width: 80, textAlign: "right", fontSize: 12.5, fontWeight: 800, color, whiteSpace: "nowrap" }}>{d.amountN - d.amountN1 > 0 ? "+" : ""}{eur(d.amountN - d.amountN1)}</div>
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  );
 }

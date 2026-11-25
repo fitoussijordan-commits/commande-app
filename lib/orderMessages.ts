@@ -6,6 +6,7 @@
 // commercial. Il disparaît quand il est traité : le commercial répond (depuis
 // la fiche commande), ou le marque « Traité » (mémorisé sur l'appareil).
 import * as odoo from "@/lib/odoo";
+import { messageText } from "@/lib/text";
 
 export interface PendingThread {
   order: { id: number; name: string; date_order?: string; state: string; amount_total?: number; partner_id?: any };
@@ -20,8 +21,7 @@ export function markDone(orderId: number, msgId: number) {
   try { localStorage.setItem(LS_DONE, JSON.stringify({ ...doneMap(), [orderId]: msgId })); } catch {}
 }
 
-const text = (h: any) => String(h || "").replace(/<br\s*\/?>/gi, " ").replace(/<\/p>/gi, " ").replace(/<[^>]+>/g, "")
-  .replace(/&nbsp;/g, " ").replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/\s+/g, " ").trim();
+const text = (h: any) => messageText(String(h || "")).replace(/\s+/g, " ").trim();
 
 let _partner: number | null | undefined;
 async function myPartner(session: odoo.OdooSession): Promise<number | null> {

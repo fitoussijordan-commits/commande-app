@@ -5,6 +5,7 @@
 //   statut de livraison = non livré
 // limité aux commandes dont le commercial connecté est le vendeur.
 import * as odoo from "@/lib/odoo";
+import { textToHtml } from "@/lib/text";
 import { loadBlockingTags, clientBlockingTags } from "@/lib/clientFlags";
 
 export interface PortalOrder { id: number; name: string; date_order: string; state: string; amount_total: number; amount_untaxed: number; partner_id: any; website?: string }
@@ -53,6 +54,6 @@ export async function validatePortalOrder(session: odoo.OdooSession, orderId: nu
   await odoo.write(session, "sale.order", [orderId], { tag_ids: [[4, tag]] });
   if (note && note.trim()) {
     await odoo.callMethod(session, "sale.order", "message_post", [[orderId]],
-      { body: note.trim(), message_type: "comment", subtype_xmlid: "mail.mt_note" }).catch(() => {});
+      { body: textToHtml(note.trim()), message_type: "comment", subtype_xmlid: "mail.mt_note", body_is_html: true }).catch(() => {});
   }
 }

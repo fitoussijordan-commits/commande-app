@@ -443,7 +443,7 @@ export async function createOrder(session: odoo.OdooSession, payload: any): Prom
   if (text && String(text).trim()) {
     const html = String(text).trim().split("\n").map(l => l.replace(/&/g, "&amp;").replace(/</g, "&lt;")).join("<br/>");
     await odoo.callMethod(session, "sale.order", "message_post", [[id]],
-      { body: html, message_type: "comment", subtype_xmlid: "mail.mt_note" }).catch(() => {});
+      { body: html, message_type: "comment", subtype_xmlid: "mail.mt_note", body_is_html: true }).catch(() => {});
   }
   return id;
 }
