@@ -4254,11 +4254,10 @@ function CatalogStep({ session, loyaltyPrograms, cart, onQtyChange, freeItems, o
       }
       const gifts = v.gifts.reduce((s, g) => s + g.qty, 0);
       if (v.gifts.length) {
-        // MEA avec article code 7 : gratuités soumises à l'éligibilité de la MEA.
-        // Devis d'implantation : jamais suspendues. MEA sans code 7 : ancienne règle
-        // (total d'articles payants du modèle atteint).
-        const cond = implant ? { label: template.name, required: {} }
-          : v.code ? meaCond(v) : { label: template.name, required };
+        // MEA avec promo Odoo liée : gratuités soumises à l'éligibilité de la MEA.
+        // Devis d'implantation, ou MEA dont la promo est introuvable (ou sans article
+        // code 7) : toutes les lignes du modèle sont ajoutées telles quelles, sans condition.
+        const cond = !implant && v.programId ? meaCond(v) : { label: template.name, required: {} };
         setGiftItems(prev => [...prev, ...v.gifts.map(g => ({ ...g, cond }))]);
       }
       if (template.internalNote || template.shipDate || template.offerCode) onTemplateApplied(template.name, { note: template.internalNote, shipDate: template.shipDate, code: template.offerCode });
@@ -4270,7 +4269,6 @@ function CatalogStep({ session, loyaltyPrograms, cart, onQtyChange, freeItems, o
         if (offer) setOfferIds(prev => prev.includes(offer.id) ? prev : [...prev, offer.id]);
         if (family.length > 1) setMeaVariants(prev => ({ ...prev, [prefix + "|" + v.paidSet]: { current: v.id, variants: family } }));
       }
-      if (v.code && !v.programId) onToast(`Promo « ${v.code} … » introuvable dans Odoo : la MEA est ajoutée sans remise ni gratuités automatiques`, "info");
       onToast(`${template.name} — ${added} produit${added > 1 ? "s" : ""} ajouté${added > 1 ? "s" : ""}${gifts ? ` + ${gifts} offert${gifts > 1 ? "s" : ""}` : ""}`, "success");
     } catch (e: any) { onToast("Erreur: " + e.message, "error"); }
     setApplyingMea(null);
