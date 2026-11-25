@@ -6,6 +6,15 @@ export interface ChangelogEntry { date: string; items: string[] }
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    date: "2026-11-25",
+    items: [
+      "MEA : avantages appliqués selon la promo Odoo liée (« Réductions & fidélité » dont le nom commence par le code 7 de la MEA) — éligible seulement si la promo l'est selon ses règles Odoo ET si l'article MEA (code 7) est dans la commande. Le nom du modèle (« 36 unités // 10 % ») n'est plus utilisé.",
+      "Remise de promo additionnée au tarif du client (tarif −17 % + MEA −10 % = −27 % sur le prix catalogue), et non plus en cascade ; la ligne part au prix catalogue avec la remise totale.",
+      "MEA : article code 7, PLV, présentoirs, testeurs et produits offerts du modèle (lignes avec un Type de gratuité) partent en gratuités, actives seulement si la MEA est éligible. Produits offerts par la promo : autant de fois que ses règles le prévoient.",
+      "MEA : changement automatique de palier selon la promo Odoo (ex. Essentiel choisi, 36 unités atteintes → Standard) ; les paliers d'une MEA sont les modèles de même nom avant le 1er « - » ayant les mêmes articles de vente.",
+    ],
+  },
+  {
     date: "2026-11-24",
     items: [
       "iPad : l'écran de prise de commande prend exactement la hauteur visible (le total du panier et le bas des gammes passaient sous le bord de l'écran) ; lignes des gammes / types / offres resserrées pour tout afficher.",

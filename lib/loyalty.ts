@@ -1,32 +1,39 @@
 // lib/loyalty.ts
-// Détection des remises additionnelles Odoo (module "Réductions & fidélité", loyalty.program —
-// Odoo 17+) applicables au panier en cours, et application au devis à la validation.
+// Promos Odoo (module « Réductions & fidélité », loyalty.program — Odoo 17+)
+// applicables au panier, et application au devis à la validation.
 //
-// Portée volontairement limitée pour rester fiable sur un sujet qui touche à l'argent facturé :
-// - Programmes pris en compte : trigger="auto" (pas de code promo à saisir), applies_on="current"
-// - Conditions supportées : quantité mini et/ou montant mini, sur des produits précis (product_ids)
-//   ou sans restriction (s'applique à tout le panier). Les conditions par catégorie/étiquette
-//   produit ne sont pas évaluées (trop de risque de mal interpréter la configuration Odoo) —
-//   ces règles sont simplement ignorées plutôt que mal appliquées.
-// - Récompenses supportées : remise en % (sur tout le panier, ou sur les produits concernés) et
-//   produit offert. Les récompenses "livraison gratuite" ne sont pas gérées ici (hors contexte).
+// - Programmes : automatiques (trigger « auto ») ET promos liées aux MEA (nom
+//   commençant par le code de l'article MEA, 7xxxxxx), dans leur période de validité.
+// - Éligibilité (règles Odoo) : au moins une règle satisfaite — quantité mini et
+//   montant mini (TTC ou HT selon la règle) sur les articles de la règle (produits,
+//   catégorie, étiquette ; aucun = tous), liste de prix autorisée s'il y en a une.
+//   Promo de MEA : il faut EN PLUS l'article MEA (code 7) dans la commande (OrderScreen).
+// - Récompenses : remise en % (commande, moins cher, produits / catégorie /
+//   étiquette) — ADDITIONNÉE à la remise du tarif client (règle maison, cf.
+//   linePricing dans OrderScreen) ; produit offert, autant de fois que les points
+//   gagnés le permettent. Livraison gratuite : non gérée.
 import * as odoo from "@/lib/odoo";
 
 export interface LoyaltyReward {
   id: number;
   reward_type: "discount" | "product" | "shipping" | string;
   discount: number; // %
+  discount_mode?: string;                 // "percent" (seul géré pour les remises)
   discount_applicability: "order" | "cheapest" | "specific" | string;
-  discount_product_ids: number[];
+  discount_product_ids: number[];         // produits, catégorie et étiquette résolus
   reward_product_id: number | null;
   reward_product_qty: number;
+  required_points?: number;               // points nécessaires pour 1 récompense
 }
 
 export interface LoyaltyRule {
   id: number;
-  product_ids: number[];
+  product_ids: number[];                  // vide = tous les articles ; catégorie / étiquette résolues
   minimum_qty: number;
   minimum_amount: number;
+  minimum_amount_tax_mode?: string;       // "incl" (TTC) ou "excl" (HT)
+  reward_point_amount?: number;
+  reward_point_mode?: string;             // "order" | "unit" | "money"
 }
 
 export interface LoyaltyProgram {
@@ -34,14 +41,36 @@ export interface LoyaltyProgram {
   name: string;
   rules: LoyaltyRule[];
   rewards: LoyaltyReward[];
+  // Promo liée à une MEA : son nom commence par le code de l'article MEA (7…),
+  // ex. « 7131492 MEA Laits et les Huiles de Soin 2026 - Standard (…) ».
+  meaCode?: string;
+  pricelistIds?: number[];                // restriction de liste de prix (si l'instance l'a)
+}
+
+// Code de l'article MEA (7 + 6 chiffres) en tête du nom d'une promo.
+export function meaCodeOf(name: string): string | undefined {
+  const m = /^\s*\[?(7\d{6})\b/.exec(String(name || ""));
+  return m ? m[1] : undefined;
 }
 
 export async function fetchActiveLoyaltyPrograms(session: odoo.OdooSession): Promise<LoyaltyProgram[]> {
   try {
-    const programs = await odoo.searchRead(session, "loyalty.program",
-      [["active", "=", true], ["trigger", "=", "auto"], ["applies_on", "=", "current"],
-       ["program_type", "in", ["promotion", "buy_x_get_y"]]],
-      ["id", "name", "rule_ids", "reward_ids"], 100);
+    // Promos automatiques + promos liées aux MEA (nom commençant par un code 7…,
+    // quel que soit leur déclencheur : elles ne s'appliquent qu'avec l'article MEA).
+    const domain = [["active", "=", true], ["applies_on", "=", "current"],
+      "|", "&", ["trigger", "=", "auto"], ["program_type", "in", ["promotion", "buy_x_get_y"]], ["name", "=like", "7%"]];
+    let programs: any[];
+    try {
+      programs = await odoo.searchRead(session, "loyalty.program", domain,
+        ["id", "name", "rule_ids", "reward_ids", "date_from", "date_to", "pricelist_ids"], 300);
+    } catch (e) {
+      if (odoo.isNetworkError(e)) throw e;
+      programs = await odoo.searchRead(session, "loyalty.program", domain, ["id", "name", "rule_ids", "reward_ids"], 300);
+    }
+    // Période de validité de la promo.
+    const today = new Date().toISOString().slice(0, 10);
+    programs = programs.filter((p: any) => (!p.date_from || String(p.date_from).slice(0, 10) <= today)
+      && (!p.date_to || String(p.date_to).slice(0, 10) >= today));
     if (!programs.length) return [];
 
     const ruleIds = programs.flatMap((p: any) => p.rule_ids || []);
@@ -55,9 +84,25 @@ export async function fetchActiveLoyaltyPrograms(session: odoo.OdooSession): Pro
       catch (e) { if (odoo.isNetworkError(e)) throw e; return await odoo.searchRead(session, model, [["id", "in", ids]], base, ids.length); }
     };
     const [rules, rewards] = await Promise.all([
-      readOr("loyalty.rule", ruleIds, ["id", "program_id", "product_ids", "minimum_qty", "minimum_amount"], ["product_category_id", "product_tag_id"]),
-      readOr("loyalty.reward", rewardIds, ["id", "program_id", "reward_type", "discount", "discount_applicability", "discount_product_ids", "reward_product_id", "reward_product_qty"], ["reward_product_ids"]),
+      readOr("loyalty.rule", ruleIds, ["id", "program_id", "product_ids", "minimum_qty", "minimum_amount"],
+        ["product_category_id", "product_tag_id", "minimum_amount_tax_mode", "reward_point_amount", "reward_point_mode"]),
+      readOr("loyalty.reward", rewardIds, ["id", "program_id", "reward_type", "discount", "discount_applicability", "discount_product_ids", "reward_product_id", "reward_product_qty"],
+        ["reward_product_ids", "required_points", "discount_mode", "discount_product_category_id", "discount_product_tag_id"]),
     ]);
+    // Remise sur une catégorie / étiquette de produits : ramenée à sa liste de produits.
+    for (const rw of rewards) {
+      if (rw.discount_applicability !== "specific") continue;
+      const extra: number[] = [];
+      for (const dom of [
+        Array.isArray(rw.discount_product_category_id) ? [["categ_id", "child_of", rw.discount_product_category_id[0]]] : null,
+        Array.isArray(rw.discount_product_tag_id) ? [["all_product_tag_ids", "in", [rw.discount_product_tag_id[0]]]] : null,
+      ]) {
+        if (!dom) continue;
+        try { extra.push(...(await odoo.searchRead(session, "product.product", dom, ["id"], 0)).map((x: any) => x.id)); }
+        catch (e) { if (odoo.isNetworkError(e)) throw e; }
+      }
+      if (extra.length) rw.discount_product_ids = Array.from(new Set([...(rw.discount_product_ids || []), ...extra]));
+    }
     // Règle sur une catégorie ou une étiquette produit : on la ramène à sa liste
     // de produits (avant, elle était lue comme « tout le panier »).
     for (const r of rules) {
@@ -73,6 +118,8 @@ export async function fetchActiveLoyaltyPrograms(session: odoo.OdooSession): Pro
     return programs.map((p: any) => ({
       id: p.id,
       name: p.name,
+      meaCode: meaCodeOf(p.name),
+      pricelistIds: Array.isArray(p.pricelist_ids) ? p.pricelist_ids : [],
       rules: rules
         .filter((r: any) => (Array.isArray(r.program_id) ? r.program_id[0] : r.program_id) === p.id)
         .map((r: any) => ({
@@ -80,6 +127,9 @@ export async function fetchActiveLoyaltyPrograms(session: odoo.OdooSession): Pro
           product_ids: r.product_ids || [],
           minimum_qty: r.minimum_qty || 0,
           minimum_amount: r.minimum_amount || 0,
+          minimum_amount_tax_mode: r.minimum_amount_tax_mode || "incl",
+          reward_point_amount: r.reward_point_amount ?? 1,
+          reward_point_mode: r.reward_point_mode || "order",
         })),
       rewards: rewards
         .filter((rw: any) => (Array.isArray(rw.program_id) ? rw.program_id[0] : rw.program_id) === p.id)
@@ -92,6 +142,8 @@ export async function fetchActiveLoyaltyPrograms(session: odoo.OdooSession): Pro
           // Produit offert : direct, ou le 1er des produits de l'étiquette offerte.
           reward_product_id: Array.isArray(rw.reward_product_id) ? rw.reward_product_id[0] : (rw.reward_product_ids || [])[0] ?? null,
           reward_product_qty: rw.reward_product_qty || 1,
+          required_points: rw.required_points || 1,
+          discount_mode: rw.discount_mode || "percent",
         })),
     })).filter((p: LoyaltyProgram) => p.rules.length > 0 && p.rewards.length > 0);
   } catch (e) {
@@ -113,20 +165,52 @@ export async function fetchProductBasics(session: odoo.OdooSession, productId: n
   }
 }
 
-// Un programme est "déclenché" si AU MOINS UNE de ses règles est satisfaite par le panier.
-export function isProgramTriggered(program: LoyaltyProgram, cart: CartLike): boolean {
-  return program.rules.some(rule => {
-    const items = Object.values(cart).filter(i =>
-      rule.product_ids.length === 0 || rule.product_ids.includes(i.product.id)
-    );
-    const qty = items.reduce((s, i) => s + i.qty, 0);
-    const amount = items.reduce((s, i) => s + i.qty * i.unitPrice, 0);
-    const qtyOk = rule.minimum_qty > 0 ? qty >= rule.minimum_qty : true;
-    const amountOk = rule.minimum_amount > 0 ? amount >= rule.minimum_amount : true;
-    // Au moins une des deux conditions doit être définie et respectée
-    if (rule.minimum_qty <= 0 && rule.minimum_amount <= 0) return false;
-    return qtyOk && amountOk;
-  });
+// TVA des produits de la gamme : sert seulement à comparer un « achat minimum
+// taxes incluses » (le panier de l'app est en HT).
+const VAT = 0.2;
+
+function ruleItems(rule: LoyaltyRule, cart: CartLike) {
+  return Object.values(cart).filter(i => i.qty > 0 && (rule.product_ids.length === 0 || rule.product_ids.includes(i.product.id)));
+}
+function ruleOk(rule: LoyaltyRule, cart: CartLike): boolean {
+  // Au moins une condition (quantité ou montant) doit être définie : une règle
+  // vide n'est jamais déclenchée (prudence sur ce qui touche au prix facturé).
+  if (rule.minimum_qty <= 0 && rule.minimum_amount <= 0) return false;
+  const items = ruleItems(rule, cart);
+  const qty = items.reduce((s, i) => s + i.qty, 0);
+  const ht = items.reduce((s, i) => s + i.qty * i.unitPrice, 0);
+  const amount = rule.minimum_amount_tax_mode === "excl" ? ht : ht * (1 + VAT);
+  return (rule.minimum_qty <= 0 || qty >= rule.minimum_qty) && (rule.minimum_amount <= 0 || amount >= rule.minimum_amount - 0.005);
+}
+
+// Programme éligible selon les règles d'Odoo : au moins une règle satisfaite
+// (quantité mini ET montant mini sur les articles de la règle), dans la liste de
+// prix autorisée s'il y en a une.
+export function isProgramTriggered(program: LoyaltyProgram, cart: CartLike, pricelistId?: number | null): boolean {
+  if (program.pricelistIds?.length && pricelistId && !program.pricelistIds.includes(pricelistId)) return false;
+  return program.rules.some(rule => ruleOk(rule, cart));
+}
+
+// Seuil d'un programme (pour classer les paliers d'une même MEA) : quantité mini
+// la plus haute de ses règles, puis montant mini.
+export function programThreshold(program: LoyaltyProgram): number {
+  return Math.max(0, ...program.rules.map(r => r.minimum_qty * 1e6 + r.minimum_amount));
+}
+
+// Nombre de fois qu'une récompense « produit offert » est accordée (règle Odoo :
+// points gagnés par les règles satisfaites ÷ points nécessaires, arrondi en dessous).
+export function rewardTimes(program: LoyaltyProgram, reward: LoyaltyReward, cart: CartLike): number {
+  let points = 0;
+  for (const rule of program.rules) {
+    if (!ruleOk(rule, cart)) continue;
+    const items = ruleItems(rule, cart);
+    const amount = rule.reward_point_amount ?? 1;
+    if (rule.reward_point_mode === "unit") points += amount * items.reduce((s, i) => s + i.qty, 0);
+    else if (rule.reward_point_mode === "money") points += amount * items.reduce((s, i) => s + i.qty * i.unitPrice, 0) * (1 + VAT);
+    else points += amount;
+  }
+  const need = reward.required_points || 1;
+  return Math.max(0, Math.floor(points / need + 1e-9));
 }
 
 export interface AppliedDiscountPromo { type: "discount"; program: LoyaltyProgram; reward: LoyaltyReward; }
