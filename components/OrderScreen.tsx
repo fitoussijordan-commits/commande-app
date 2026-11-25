@@ -111,7 +111,10 @@ interface Props {
 // note : ligne de commentaire (display_type Odoo) — product = { id négatif, name = texte }.
 // lineName / highlight : ligne venue de « Charger la commande » (libellé « … * RUPTURE
 // DEFINITIVE * », couleur ocr_highlight du module Odoo d'import).
-interface CartItem { product: any; qty: number; unitPrice: number; priceLocked?: boolean; bonBrut?: number; bonRemise?: number; seq?: number; group?: string; note?: "line_note" | "line_section"; lineName?: string; highlight?: string; }
+// freeType : ligne de MEA envoyée avec un « Type de gratuité » (article MEA code 7,
+// 1re ligne de la MEA dans le panier, à 0 €) — contrôle de stock comme les autres.
+interface CartItem { product: any; qty: number; unitPrice: number; priceLocked?: boolean; bonBrut?: number; bonRemise?: number; seq?: number; group?: string; note?: "line_note" | "line_section"; lineName?: string; highlight?: string; freeType?: string; }
+const noStockCheck = (i: { product: any }) => isSeparatorProduct(i.product);
 
 // Lignes du panier dans l'ordre d'ajout (paniers anciens sans seq : en tête).
 function orderedCart(cart: Record<number, CartItem>): CartItem[] {
@@ -156,7 +159,7 @@ function cartNet(cart: Record<number, CartItem>, lineDiscounts: Record<number, n
 // Lignes dont la quantité dépasse le stock prévisionnel (pastille rouge).
 function cartRuptures(cart: Record<number, CartItem>) {
   return orderedCart(cart)
-    .filter(i => !i.note && i.qty > 0 && !isSeparatorProduct(i.product) && i.qty > Math.floor(i.product.virtual_available || 0))
+    .filter(i => !i.note && i.qty > 0 && !noStockCheck(i) && i.qty > Math.floor(i.product.virtual_available || 0))
     .map(i => ({ name: String(i.product.name || ""), code: i.product.default_code || undefined, qty: i.qty, stock: Math.max(0, Math.floor(i.product.virtual_available || 0)) }));
 }
 // Recherche : chaque mot tapé doit se retrouver dans le nom, la réf. ou l'EAN
@@ -1007,7 +1010,8 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
   const removedSlots = useRef<Record<number, { seq?: number; group?: string }>>({});
   // regroup : la ligne passe dans ce groupe (une MEA ajoutée par-dessus un devis
   // d'implantation reprend les articles communs → remises de l'offre applicables).
-  const setQty = (product: any, wanted: number, unitPrice?: number, group?: string, keepZero?: boolean, regroup?: boolean) => {
+  // extra : champs de ligne en plus (freeType, seq imposée — ex. article MEA code 7 en tête de la MEA).
+  const setQty = (product: any, wanted: number, unitPrice?: number, group?: string, keepZero?: boolean, regroup?: boolean, extra?: Partial<CartItem>) => {
     setCart(prev => {
       const cur = prev[product.id];
       // Quantité minimum (« par 2 ») : toujours un multiple du pas de vente.
@@ -1028,7 +1032,7 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
       const back = slot && Object.values(prev).some(i => i.group === slot.group) ? slot : undefined;
       if (!cur) delete removedSlots.current[product.id];
       const seq = cur?.seq ?? back?.seq ?? nextSeq();
-      return { ...prev, [product.id]: { product, qty, unitPrice: price, seq, group: cur ? cur.group : group ?? back?.group } };
+      return { ...prev, [product.id]: { ...(cur?.freeType ? { freeType: cur.freeType } : {}), product, qty, unitPrice: price, seq, group: cur ? cur.group : group ?? back?.group, ...(extra || {}) } };
     });
   };
 
@@ -1194,7 +1198,7 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
             // Rupture : la quantité en stock part normalement, le manquant part
             // sur une ligne « [RUPTURE] » à 0 — visible par le client sur le
             // devis/la confirmation, sans mouvement de stock (logistique non bloquée).
-            const stock = isSeparatorProduct(item.product) ? item.qty : Math.max(0, Math.floor(item.product.virtual_available || 0));
+            const stock = noStockCheck(item) ? item.qty : Math.max(0, Math.floor(item.product.virtual_available || 0));
             const served = Math.min(item.qty, stock), missing = item.qty - served;
             const line = (qty: number, extra: any = {}) => [0, 0, {
               product_id: item.product.id,
@@ -1202,6 +1206,7 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
               price_unit: price,
               ...(disc > 0 ? { discount: disc } : {}),
               ...(item.lineName ? { name: item.lineName } : {}),
+              ...(item.freeType ? { type_gratuit: item.freeType } : {}),
               ...hl,
               ...extra,
             }];
@@ -3844,7 +3849,7 @@ function CatalogStep({ session, loyaltyPrograms, cart, onQtyChange, freeItems, o
   minShipDate?: Date | null;   // hors logistique directe : expédition au plus tôt (date des MEA)
   onChangeExpedition?: (d: Date | null) => void;
   session: odoo.OdooSession; cart: Record<number, CartItem>;
-  onQtyChange: (p: any, q: number, price?: number, group?: string, keepZero?: boolean, regroup?: boolean) => void; freeItems: FreeItem[];
+  onQtyChange: (p: any, q: number, price?: number, group?: string, keepZero?: boolean, regroup?: boolean, extra?: Partial<CartItem>) => void; freeItems: FreeItem[];
   onValidate: () => void; submitting: boolean;
   note: string; setNote: (n: string) => void; client: any;
   priceItems: PriceItem[];
@@ -4208,7 +4213,7 @@ function CatalogStep({ session, loyaltyPrograms, cart, onQtyChange, freeItems, o
   //   • autre article → article payant, au prix de la liste de prix du client ; la
   //     remise de la MEA vient de la promo liée (jamais du nom du modèle) ;
   //   • rubriques / notes / séparateurs → lignes de commentaire.
-  type MeaLine = { product: any; qty: number; price: number; kind: "paid" | "tester" | "other" };
+  type MeaLine = { product: any; qty: number; price: number; kind: "paid" | "tester" | "other" | "code"; freeType?: string };
   type MeaParsed = {
     id: number; name: string; notes: { name: string; type: "line_note" | "line_section" }[];
     items: MeaLine[]; gifts: { product: any; qty: number; type: string }[]; paid: Record<number, number>;
@@ -4270,9 +4275,15 @@ function CatalogStep({ session, loyaltyPrograms, cart, onQtyChange, freeItems, o
         const qty = Math.max(0, Math.round(line.product_uom_qty || 0));
         const discount = tlm.discount ? Number(line[tlm.discount]) || 0 : 0;
         const freeRaw = tlm.freeType ? line[tlm.freeType] : null;
-        const isCode = line === codeLine;
-        if (isCode || freeRaw || discount >= 99.99) {
-          if (!isCode && promoGifts.has(product.id)) continue;
+        // Article MEA (code 7) : 1re ligne de la MEA dans le panier (pas une gratuité
+        // de la zone Gratuités), à 0 €, avec son Type de gratuité.
+        if (line === codeLine) {
+          const item: MeaLine = { product, qty: Math.max(1, qty), price: 0, kind: "code", freeType: meaGiftType(freeRaw) };
+          out.items.push(item); out.rows.push({ item });
+          continue;
+        }
+        if (freeRaw || discount >= 99.99) {
+          if (promoGifts.has(product.id)) continue;
           out.gifts.push({ product, qty, type: meaGiftType(freeRaw) });
           continue;
         }
@@ -4334,7 +4345,7 @@ function CatalogStep({ session, loyaltyPrograms, cart, onQtyChange, freeItems, o
           if (fromImplant) { onQtyChange(it.product, have, it.price, template.name, true, true); added++; }
           continue;
         }
-        onQtyChange(it.product, have + it.qty, it.price, template.name, true, fromImplant);
+        onQtyChange(it.product, have + it.qty, it.price, template.name, true, fromImplant, it.kind === "code" ? { freeType: it.freeType } : undefined);
         added++;
       }
       const gifts = v.gifts.reduce((s, g) => s + g.qty, 0);
@@ -4362,13 +4373,14 @@ function CatalogStep({ session, loyaltyPrograms, cart, onQtyChange, freeItems, o
   // MEA déjà au panier mais pas suivie (brouillon repris, retour depuis l'accueil) :
   // ses paliers sont relus pour que le changement automatique de palier reprenne.
   const meaTrackPending = useRef<Set<string>>(new Set());
+  const meaTrackDone = useRef<Set<string>>(new Set());   // MEA déjà relues (une seule fois par panier)
   const cartGroupsKey = Array.from(new Set(Object.values(cart).map(i => i.group).filter((g): g is string => !!g && !/implantation/i.test(g)))).sort().join("|");
   useEffect(() => {
     // Promos chargées d'abord : sans elles, les paliers seraient lus sans leur promo liée.
     if (!meaTemplates.length || !cartGroupsKey || !loyaltyPrograms.length) return;
     for (const group of cartGroupsKey.split("|")) {
       if (Object.values(meaVariants).some(v => v.variants.some(x => x.name === group))) continue;
-      if (meaTrackPending.current.has(group)) continue;
+      if (meaTrackPending.current.has(group) || meaTrackDone.current.has(group)) continue;
       const t = meaTemplates.find((x: any) => x.name === group && !isImplantTemplate(x));
       if (!t) continue;
       meaTrackPending.current.add(group);
@@ -4378,10 +4390,23 @@ function CatalogStep({ session, loyaltyPrograms, cart, onQtyChange, freeItems, o
         const v = parsed[0];
         const family = parsed.filter(x => x.id === v.id || (x.paidSet && x.paidSet === v.paidSet));
         if (family.length > 1) setMeaVariants(prev => ({ ...prev, [prefix + "|" + v.paidSet]: { current: v.id, variants: family } }));
-        // Brouillon enregistré sans ses gratuités (avant cette version) : celles du
-        // modèle sont remises, dont l'article MEA code 7 sans lequel la promo ne s'applique pas.
-        if (v.gifts.length) setGiftItems(prev => prev.some(g => g.cond?.label === v.name) ? prev
-          : [...prev, ...v.gifts.map(g => ({ ...g, cond: v.programId ? meaCond(v) : { label: v.name, required: {} } }))]);
+        // Brouillon d'une version précédente : article MEA code 7 absent du panier (ou
+        // rangé dans les gratuités) → remis en 1re ligne de la MEA ; gratuités du
+        // modèle remises si le brouillon n'en avait pas.
+        const code = v.items.find(i => i.kind === "code");
+        if (code && !cart[code.product.id]) {
+          const seqs = Object.values(cart).filter(i => i.group === v.name).map(i => i.seq || 0);
+          const asGift = giftItems.find(g => g.product.id === code.product.id)?.qty;
+          onQtyChange(code.product, Math.max(1, asGift ?? code.qty), 0, v.name, true, false,
+            { freeType: code.freeType, seq: (seqs.length ? Math.min(...seqs) : 0) - 0.5 });
+        }
+        setGiftItems(prev => {
+          let n = code ? prev.filter(g => g.product.id !== code.product.id) : prev;
+          if (v.gifts.length && !n.some(g => g.cond?.label === v.name))
+            n = [...n, ...v.gifts.map(g => ({ ...g, cond: v.programId ? meaCond(v) : { label: v.name, required: {} } }))];
+          return n.length === prev.length && n.every((g, i) => g === prev[i]) ? prev : n;
+        });
+        meaTrackDone.current.add(group);
       }).catch(() => {}).finally(() => meaTrackPending.current.delete(group));
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -4408,7 +4433,14 @@ function CatalogStep({ session, loyaltyPrograms, cart, onQtyChange, freeItems, o
       const best = [...eligible].sort((a, b) => loyalty.programThreshold(prog(b)!) - loyalty.programThreshold(prog(a)!))[0];
       if (best.id === cur.id) continue;
 
-      // Gratuités (dont l'article code 7) du nouveau palier, à la place des anciennes.
+      // Article MEA (code 7) du nouveau palier, à la place de l'ancien, en tête de la MEA.
+      const curCode = cur.items.find(i => i.kind === "code"), bestCode = best.items.find(i => i.kind === "code");
+      if (curCode && bestCode && curCode.product.id !== bestCode.product.id) {
+        const old = cart[curCode.product.id];
+        onQtyChange(curCode.product, 0);
+        onQtyChange(bestCode.product, Math.max(1, old?.qty ?? bestCode.qty), 0, best.name, true, false, { freeType: bestCode.freeType, seq: old?.seq });
+      }
+      // Gratuités du nouveau palier, à la place des anciennes.
       setGiftItems(prev => [...prev.filter(x => x.cond?.label !== cur.name), ...best.gifts.map(x => ({ ...x, cond: meaCond(best) }))]);
       const own = (pm: MeaParsed) => [...pm.items, ...pm.gifts].some(i => Array.isArray(i.product?.x_offre_produit_id));
       const oldOffer = offerFor(cur.name), newOffer = own(best) ? undefined : offerFor(best.name);
@@ -4569,7 +4601,7 @@ function CatalogStep({ session, loyaltyPrograms, cart, onQtyChange, freeItems, o
   // créable : le stock bouge entre la visite et la livraison, et un devis n'est pas
   // une expédition. Les faux séparateurs (stock nul par nature) sont ignorés.
   const overStockItems = cartItems.filter(i => {
-    if (i.note || isSeparatorProduct(i.product)) return false;
+    if (i.note || noStockCheck(i)) return false;
     const stock = Math.floor(i.product.virtual_available || 0);
     return i.qty > stock;
   });
@@ -5073,7 +5105,7 @@ function CatalogStep({ session, loyaltyPrograms, cart, onQtyChange, freeItems, o
               const sepLabel = item.group !== prevGroup && (idx > 0 || item.group)
                 ? (item.group || "Autres articles") : null;
               // Pastille stock : rouge si la quantité dépasse le stock prévisionnel.
-              const stockOk = isSeparatorProduct(item.product) || item.qty <= Math.floor(item.product.virtual_available || 0);
+              const stockOk = noStockCheck(item) || item.qty <= Math.floor(item.product.virtual_available || 0);
               const pct = lineDiscounts[item.product.id] || 0;
               const groupPct = item.group ? groupDiscounts[item.group] || 0 : 0;
               const net = item.qty * linePricing(item, pct, groupPct).net;
