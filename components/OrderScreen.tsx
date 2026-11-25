@@ -129,7 +129,8 @@ function promoCart(cart: Record<number, CartItem>): Record<number, CartItem> {
 // Remise d'une promo Odoo (MEA, « Réductions & fidélité ») : ADDITIONNÉE à celle
 // de la liste de prix du client, pas en cascade comme le fait Odoo — règle maison :
 // tarif −15 % + promo −10 % = −25 % sur le prix catalogue (et non −23,5 %).
-// Remise événement / devis d'implantation : appliquées ensuite, en cascade.
+// Remise événement (10 / 15 %) : additionnée elle aussi, sur les lignes payantes
+// (tarif −17 % + événement −10 % = −27 %). Devis d'implantation : en cascade.
 // brut = prix de référence de la ligne envoyée à Odoo ; discount = % de remise de
 // la ligne (sur brut) ; net = PU net. additive : la ligne part « brut + remise ».
 function linePricing(item: { product: any; unitPrice: number; priceLocked?: boolean }, promoPct: number, otherPct: number) {
@@ -146,14 +147,18 @@ function linePricing(item: { product: any; unitPrice: number; priceLocked?: bool
   const net = brut * (1 - first / 100) * (1 - other / 100);
   return { brut, discount: brut > 0 ? (1 - net / brut) * 100 : 0, net, additive: true };
 }
-const otherPctOf = (i: CartItem, eventDiscount: number, groupDiscounts: Record<string, number>) =>
-  (eventDiscount || 0) + (i.group ? groupDiscounts[i.group] || 0 : 0);
+// % additionnés au tarif client : promo Odoo + remise événement (lignes payantes).
+const addPctOf = (i: CartItem, lineDiscounts: Record<number, number>, eventDiscount: number) =>
+  (lineDiscounts[i.product.id] || 0) + (i.unitPrice > 0 ? eventDiscount || 0 : 0);
+// % appliqué ensuite, en cascade : remise du devis d'implantation.
+const otherPctOf = (i: CartItem, groupDiscounts: Record<string, number>) =>
+  i.group ? groupDiscounts[i.group] || 0 : 0;
 
 // Total HT net du panier (remises promo + événement + implantation), hors frais de port.
 function cartNet(cart: Record<number, CartItem>, lineDiscounts: Record<number, number>, eventDiscount: number, groupDiscounts: Record<string, number>): number {
   return Object.values(cart).reduce((s, i) => {
     if (i.note) return s;
-    return s + i.qty * linePricing(i, lineDiscounts[i.product.id] || 0, otherPctOf(i, eventDiscount, groupDiscounts)).net;
+    return s + i.qty * linePricing(i, addPctOf(i, lineDiscounts, eventDiscount), otherPctOf(i, groupDiscounts)).net;
   }, 0);
 }
 // Lignes dont la quantité dépasse le stock prévisionnel (pastille rouge).
@@ -1237,7 +1242,7 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
               + (item.group ? groupDiscounts[item.group] || 0 : 0));
             // Promo Odoo : remise additionnée à celle du tarif client (cf. linePricing) →
             // la ligne part au prix catalogue avec la remise totale.
-            const lp = linePricing(item, lineDiscounts[item.product.id] || 0, otherPctOf(item, eventDiscount, groupDiscounts));
+            const lp = linePricing(item, addPctOf(item, lineDiscounts, eventDiscount), otherPctOf(item, groupDiscounts));
             // Prix d'un bon importé avec remise : brut + % comme le logiciel du client.
             // Envoyé en net, Odoo l'arrondit à 2 décimales (22,8997 → 22,90) et le
             // total dérive de quelques centimes (549,60 au lieu de 549,59).
@@ -4714,7 +4719,7 @@ function CatalogStep({ session, loyaltyPrograms, cart, onQtyChange, freeItems, o
   const discountTotal = cartItems.reduce((s, i) => {
     if (i.note) return s;
     // Promo Odoo additionnée au tarif client, puis événement / implantation (linePricing).
-    const lp = linePricing(i, lineDiscounts[i.product.id] || 0, otherPctOf(i, eventDiscount, groupDiscounts));
+    const lp = linePricing(i, addPctOf(i, lineDiscounts, eventDiscount), otherPctOf(i, groupDiscounts));
     return s + i.qty * (i.unitPrice - lp.net);
   }, 0);
   const netTotal = cartTotal - discountTotal;
@@ -5222,8 +5227,8 @@ function CatalogStep({ session, loyaltyPrograms, cart, onQtyChange, freeItems, o
                 ? (item.group || "Autres articles") : null;
               // Pastille stock : rouge si la quantité dépasse le stock prévisionnel.
               const stockOk = noStockCheck(item) || item.qty <= Math.floor(item.product.virtual_available || 0);
-              const pct = lineDiscounts[item.product.id] || 0;
-              const groupPct = item.group ? groupDiscounts[item.group] || 0 : 0;
+              const pct = addPctOf(item, lineDiscounts, eventDiscount);
+              const groupPct = otherPctOf(item, groupDiscounts);
               const net = item.qty * linePricing(item, pct, groupPct).net;
               // Prix catalogue d'origine (avant pricelist client) pour affichage barré.
               const catalog = item.product.lst_price || 0;
