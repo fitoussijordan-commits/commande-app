@@ -1022,7 +1022,10 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
 
   // Sauvegarde auto du brouillon du client courant dès que le panier ou la note change —
   // stocké par client, ne touche jamais aux brouillons des autres clients.
+  // Jamais pendant l'envoi ni après « Devis créé ! » : le brouillon vient d'être
+  // supprimé, et la remise à zéro des promos relançait cette sauvegarde.
   useEffect(() => {
+    if (submitting || done) return;
     if (client && Object.keys(cart).length > 0) {
       saveDraftForClient(client.id, {
         client, cart, note, savedAt: Date.now(), templateInfo, offerIds, giftItems, eventDiscount, groupDiscounts,
@@ -1031,7 +1034,7 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
       });
       refreshPendingDrafts();
     }
-  }, [cart, client, note, templateInfo, offerIds, giftItems, eventDiscount, groupDiscounts, orderType, wantedExpedition, appliedPromos, editOrder, importMeta, refreshPendingDrafts]);
+  }, [cart, client, note, templateInfo, offerIds, giftItems, eventDiscount, groupDiscounts, orderType, wantedExpedition, appliedPromos, editOrder, importMeta, refreshPendingDrafts, submitting, done]);
 
   // Remet TOUT l'état de la commande depuis un brouillon (reprise).
   const restoreExpRef = useRef<{ clientId: number; date: Date | null } | null>(null);
