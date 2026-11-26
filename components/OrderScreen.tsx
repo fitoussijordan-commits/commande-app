@@ -133,7 +133,8 @@ function promoCart(cart: Record<number, CartItem>): Record<number, CartItem> {
 // tarif −15 % + promo −10 % = −25 % sur le prix catalogue (et non −23,5 %).
 // Remise événement (10 / 15 %) : additionnée elle aussi, sur les lignes payantes
 // (tarif −17 % + événement −10 % = −27 %). Remise saisie sur un devis d'implantation :
-// additionnée aussi (tarif −17 % + implantation −10 % = −27 %), plus en cascade.
+// c'est la remise FINALE de la ligne sur le prix catalogue (17 % saisi = −17 %),
+// à la place de celle du tarif client et des promos.
 // brut = prix de référence de la ligne envoyée à Odoo ; discount = % de remise de
 // la ligne (sur brut) ; net = PU net. additive : la ligne part « brut + remise »,
 // comme Odoo l'affiche : prix CATALOGUE + remise totale (tarif client compris),
@@ -142,13 +143,13 @@ function linePricing(item: { product: any; unitPrice: number; priceLocked?: bool
   const unit = item.unitPrice;
   const other = Math.min(100, Math.max(0, otherPct));
   if (item.priceLocked) {
-    const disc = Math.min(100, promoPct + other);
+    const disc = other > 0 ? other : Math.min(100, promoPct);
     return { brut: unit, discount: disc, net: unit * (1 - disc / 100), additive: false };
   }
   const lst = Number(item.product?.lst_price) || 0;
   const brut = lst > unit ? lst : unit;
   const tarifPct = brut > 0 ? (1 - unit / brut) * 100 : 0;
-  const total = Math.min(100, tarifPct + promoPct + other);
+  const total = other > 0 ? other : Math.min(100, tarifPct + promoPct);
   const net = brut * (1 - total / 100);
   return { brut, discount: brut > 0 ? (1 - net / brut) * 100 : 0, net, additive: true };
 }
@@ -157,7 +158,7 @@ const isImplantLine = (i: { group?: string }) => /implantation/i.test(i.group ||
 // jamais celles d'un devis d'implantation).
 const addPctOf = (i: CartItem, lineDiscounts: Record<number, number>, eventDiscount: number) =>
   (lineDiscounts[i.product.id] || 0) + (i.unitPrice > 0 && !isImplantLine(i) ? eventDiscount || 0 : 0);
-// Remise saisie du devis d'implantation (additionnée elle aussi, cf. linePricing).
+// Remise saisie du devis d'implantation : remise finale de la ligne (cf. linePricing).
 const otherPctOf = (i: CartItem, groupDiscounts: Record<string, number>) =>
   i.group ? groupDiscounts[i.group] || 0 : 0;
 
@@ -1262,7 +1263,7 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
             const price = asBon ? item.bonBrut! : lp.additive ? lp.brut : item.unitPrice;
             const disc = asBon
               ? Math.round(10000 * (1 - (1 - item.bonRemise! / 100) * (1 - promoDisc / 100))) / 100
-              : lp.additive ? Math.round(lp.discount * 100) / 100 : promoDisc;
+              : Math.round(lp.discount * 100) / 100;
             // Rupture : l'article part TOUJOURS avec sa quantité totale (pas de ligne
             // « RUPTURE » à part) ; la rupture est signalée dans la note interne.
             const line = (qty: number, extra: any = {}) => [0, 0, {
