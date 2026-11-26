@@ -16,7 +16,13 @@ import { orderMeta } from "@/lib/orderOffers";
 import { NOT_SUPPLIER, mineDomain } from "@/lib/clients";
 
 export interface MeaOffer { id: number; name: string; variant: string }
-export interface MeaCampaign { key: string; offers: MeaOffer[]; active: boolean }
+export interface MeaCampaign {
+  key: string; offers: MeaOffer[]; active: boolean;
+  // Modèles de devis liés (contiennent un article 7… de la campagne), archivés
+  // compris, avec leur « Date début ». Absent : ancien rapprochement par le nom.
+  templateIds?: number[];
+  templateStarts?: string[];
+}
 export interface Taken { state: "pris" | "devis"; orders: string[]; offers: string[]; date: string }
 export interface Plan { id?: number; offerId: number | null; note: string; ineligible?: boolean }   // ineligible : client exclu du placement de cette MEA
 export interface TrackingModel {
@@ -64,7 +70,86 @@ export async function findTrackingModel(session: odoo.OdooSession): Promise<Trac
 // limités aux 2 000 plus gros CA N-1).
 // Campagnes MEA (offres regroupées par début de nom), chacune marquée active ou non.
 export interface CampaignSet { campaigns: MeaCampaign[]; offersField: string; offerRows: any[]; offerCampaign: Map<number, string> }
+// SOURCE DES MEA : les articles dont la référence commence par 7 (archivés
+// compris) ; chacun porte son offre (x_offre_produit_id). Une offre = une variante,
+// regroupées en campagne par leur nom (« MEA Noël 2026 - Standard » → « MEA Noël
+// 2026 »). Modèle de devis lié = modèle qui contient un de ces articles 7… ; la
+// MEA est ACTIVE si un modèle lié est actif. Base sans ces données : ancien calcul
+// (offres + noms des modèles), plus bas.
+export const TEMPLATE_START_FIELD = "x_studio_date_debut_1";
 export async function loadCampaigns(session: odoo.OdooSession): Promise<CampaignSet> {
+  const meta = await orderMeta(session);
+  const offersField = meta.offersField;
+  if (!meta.offersRelation || !offersField) throw new Error("Champ « Offres commandées » introuvable sur les commandes");
+  let sevens: any[] = [];
+  try {
+    sevens = await odoo.searchRead(session, "product.product",
+      [["default_code", "=like", "7%"], ["active", "in", [true, false]], ["x_offre_produit_id", "!=", false]],
+      ["id", "x_offre_produit_id"], 0);
+  } catch (e) { if (odoo.isNetworkError(e)) throw e; }
+  if (!sevens.length) return loadCampaignsByName(session);
+
+  // Lignes de modèles de devis portant ces articles → modèles liés (archivés compris).
+  const sevenIds = sevens.map(p => p.id);
+  const tLines: any[] = await odoo.searchRead(session, "sale.order.template.line",
+    [["product_id", "in", sevenIds]], ["product_id", "sale_order_template_id"], 0).catch(e => { if (odoo.isNetworkError(e)) throw e; return []; });
+  const tplIds = Array.from(new Set(tLines.map(l => l.sale_order_template_id?.[0]).filter(Boolean))) as number[];
+  let tpls: any[] = [];
+  if (tplIds.length) {
+    const dom = [["id", "in", tplIds], ["active", "in", [true, false]]];
+    try { tpls = await odoo.searchRead(session, "sale.order.template", dom, ["id", "name", "active", TEMPLATE_START_FIELD], 0); }
+    catch (e) {
+      if (odoo.isNetworkError(e)) throw e;
+      tpls = await odoo.searchRead(session, "sale.order.template", dom, ["id", "name", "active"], 0);   // sans « Date début »
+    }
+  }
+  // Les modèles d'implantation ne définissent pas une MEA.
+  const tplById = new Map<number, any>(tpls.filter(x => !/implantation/i.test(String(x.name || ""))).map(x => [x.id, x]));
+  const tplsOfProduct = new Map<number, number[]>();
+  for (const l of tLines) {
+    const pid = l.product_id?.[0], tid = l.sale_order_template_id?.[0];
+    if (!pid || !tid || !tplById.has(tid)) continue;
+    tplsOfProduct.set(pid, [...(tplsOfProduct.get(pid) || []), tid]);
+  }
+
+  // Offres (variantes) → campagnes.
+  const offerName = new Map<number, string>();
+  const tplsOfOffer = new Map<number, Set<number>>();
+  for (const p of sevens) {
+    const [oid, oname] = p.x_offre_produit_id;
+    offerName.set(oid, String(oname || ""));
+    const s = tplsOfOffer.get(oid) || new Set<number>();
+    (tplsOfProduct.get(p.id) || []).forEach(id => s.add(id));
+    tplsOfOffer.set(oid, s);
+  }
+  const fold = (x: string) => x.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]/g, "");
+  const byKey = new Map<string, MeaCampaign>();
+  const offerIds = Array.from(offerName.keys()).sort((a, b) => b - a);   // plus récentes d'abord
+  for (const oid of offerIds) {
+    const name = offerName.get(oid)!;
+    const { key, variant } = campaignOf(name);
+    if (!fold(key)) continue;
+    const c = byKey.get(key) || { key, offers: [], active: false, templateIds: [], templateStarts: [] };
+    c.offers.push({ id: oid, name, variant });
+    for (const tid of Array.from(tplsOfOffer.get(oid) || [])) {
+      if (c.templateIds!.includes(tid)) continue;
+      const tpl = tplById.get(tid);
+      c.templateIds!.push(tid);
+      if (tpl?.active) c.active = true;
+      if (tpl?.[TEMPLATE_START_FIELD]) c.templateStarts!.push(String(tpl[TEMPLATE_START_FIELD]).slice(0, 10));
+    }
+    byKey.set(key, c);
+  }
+  const all = Array.from(byKey.values());
+  const campaigns = [...all.filter(c => c.active), ...all.filter(c => !c.active)];
+  const offerCampaign = new Map<number, string>();
+  campaigns.forEach(c => c.offers.forEach(o => offerCampaign.set(o.id, c.key)));
+  const offerRows = offerIds.map(id => ({ id, display_name: offerName.get(id) }));
+  return { campaigns, offersField, offerRows, offerCampaign };
+}
+
+// Ancien calcul (base sans articles 7… reliés à une offre) : offres + noms des modèles.
+async function loadCampaignsByName(session: odoo.OdooSession): Promise<CampaignSet> {
   const meta = await orderMeta(session);
   const rel = meta.offersRelation, offersField = meta.offersField;
   if (!rel || !offersField) throw new Error("Champ « Offres commandées » introuvable sur les commandes");

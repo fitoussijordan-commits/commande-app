@@ -9,7 +9,7 @@
 import * as odoo from "@/lib/odoo";
 import { resolveClientFamily } from "@/lib/perimes";
 import { caDateFields } from "@/lib/salesStats";
-import { loadCampaigns, clientPlans, planKey, type MeaCampaign, type Plan, type TrackingModel } from "@/lib/meaTracking";
+import { loadCampaigns, clientPlans, planKey, TEMPLATE_START_FIELD, type MeaCampaign, type Plan, type TrackingModel } from "@/lib/meaTracking";
 import { templateLineMeta } from "@/lib/orderOffers";
 import { optionalProductFields, saleStep, ppcOf } from "@/lib/productFields";
 
@@ -153,8 +153,11 @@ const snap = (p: any, q: number) => { const s = saleStep(p); return q <= 0 ? 0 :
 export interface TemplateCtx { tLines: any[]; tlm: { discount?: string; freeType?: string }; pMap: Map<number, any>; templates: any[] }
 export interface CampaignBase { campaign: MeaCampaign; variants: PrepVariant[]; tpls: any[]; prodLines: any[]; kit: { code: string; name: string }[]; linesOf: (tpl: any) => any[]; isKit: (l: any) => boolean; pMap: Map<number, any>; discountField?: string }
 
+// Modèles de devis d'une campagne : ceux qui contiennent un de ses articles 7…
+// (lib/meaTracking) ; à défaut, rapprochement par le nom.
 export const templatesOf = (templates: any[], c: MeaCampaign) =>
-  fold(c.key) ? templates.filter(t => fold(String(t.name || "")).startsWith(fold(c.key)) && !/implantation/i.test(String(t.name))) : [];
+  c.templateIds ? templates.filter(t => c.templateIds!.includes(t.id))
+  : fold(c.key) ? templates.filter(t => fold(String(t.name || "")).startsWith(fold(c.key)) && !/implantation/i.test(String(t.name))) : [];
 
 // Palier et remise écrits dans le nom du modèle : « Standard (24 unités // 20% remise) ».
 export const nameUnits = (n: string) => Number((/(\d+)\s*unit[ée]s?/i.exec(n) || [])[1]) || 0;
@@ -262,23 +265,23 @@ export function propose(base: CampaignBase, n1Map: Map<number, { qty: number }>,
   };
 }
 
-// Campagnes dont un modèle de devis (archivés compris) commence dans l'année
-// `y` (champ Studio « Date début »). Sans modèle daté pour la campagne (ou champ
-// absent de la base) : l'année écrite dans le nom (« MEA Noël 2026 »).
-export const TEMPLATE_START_FIELD = "x_studio_date_debut_1";
+// Campagnes de l'année `y` : un modèle de devis lié (archivés compris) a sa
+// « Date début » (x_studio_date_debut_1) dans l'année. Sans modèle daté : l'année
+// écrite dans le nom (« MEA Noël 2026 »).
 export async function currentYearCampaigns(session: odoo.OdooSession, campaigns: MeaCampaign[], y: number): Promise<MeaCampaign[]> {
-  let tpls: any[];
-  try {
-    tpls = await odoo.searchRead(session, "sale.order.template", [["active", "in", [true, false]]],
-      ["id", "name", TEMPLATE_START_FIELD], 0);
-  } catch (e) {
-    if (odoo.isNetworkError(e)) throw e;
-    tpls = [];   // champ inconnu sur cette base : année du nom
-  }
   const inName = (c: MeaCampaign) => new RegExp(`\\b${y}\\b`).test(c.key);
+  // Ancien calcul (pas de modèles liés connus) : dates lues via le nom des modèles.
+  let tpls: any[] = [];
+  if (campaigns.some(c => !c.templateIds)) {
+    try {
+      tpls = await odoo.searchRead(session, "sale.order.template", [["active", "in", [true, false]]],
+        ["id", "name", TEMPLATE_START_FIELD], 0);
+    } catch (e) { if (odoo.isNetworkError(e)) throw e; }
+  }
   return campaigns.filter(c => {
-    const dated = templatesOf(tpls, c).filter(t => t[TEMPLATE_START_FIELD]);
-    return dated.length ? dated.some(t => String(t[TEMPLATE_START_FIELD]).slice(0, 4) === String(y)) : inName(c);
+    const starts = c.templateIds ? c.templateStarts || []
+      : templatesOf(tpls, c).map(t => t[TEMPLATE_START_FIELD]).filter(Boolean).map(String);
+    return starts.length ? starts.some(d => d.slice(0, 4) === String(y)) : inName(c);
   });
 }
 

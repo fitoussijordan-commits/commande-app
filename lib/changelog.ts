@@ -8,6 +8,7 @@ export const CHANGELOG: ChangelogEntry[] = [
   {
     date: "2026-11-26",
     items: [
+      "MEA (Préparation de RDV, Mes MEA, tableau de bord) : la liste vient maintenant des articles dont la référence commence par 7 (archivés compris) et de leur offre (x_offre_produit_id). Une MEA est reliée aux modèles de devis qui contiennent un de ses articles 7… (archivés compris, hors implantation) ; elle est active si l'un de ces modèles est actif. Année en cours : « Date début » de ces modèles, sinon l'année écrite dans le nom.",
       "Préparation de RDV : seules les offres de l'année en cours sont affichées — une offre est de l'année si l'un de ses modèles de devis (archivés compris) a sa « Date début » (x_studio_date_debut_1) dans l'année ; sans modèle daté, l'année écrite dans le nom de l'offre (« MEA Noël 2026 »). Les offres marquées N/A passent en fin de liste. Les compteurs « faites / à proposer » suivent.",
       "Retour périmés : l'emplacement « Rebut … » du mois et le transfert de reprise sont créés par Odoo avec les droits du module de lecture des commandes (version 1.54 requise) — les commerciaux n'ont plus besoin de droits Inventaire (erreur « Vous n'êtes pas autorisé à créer des enregistrements Inventory Locations »). Sans le module 1.54, l'app fait comme avant.",
       "Bouton « Accueil » placé tout à gauche de l'en-tête, avant la flèche retour, sur tous les écrans.",
