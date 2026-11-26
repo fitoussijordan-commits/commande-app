@@ -603,6 +603,66 @@ export async function resolveRebutLocation(
   }
 }
 
+// Textes du transfert de rebut (origine, note, libellé de chaque ligne) — les
+// mêmes que l'app crée le transfert elle-même ou que le module Odoo le fasse.
+type RebutOpts = {
+  clientId: number; clientName: string; clientRef?: string; repName: string;
+  lines: PerimeLine[]; localRef: string; orderName?: string;
+};
+function rebutTexts(opts: RebutOpts): { origin: string; note: string; labels: string[] } {
+  const dateStr = new Date().toLocaleDateString("fr-FR");
+  // origin = « Document d'origine » d'Odoo : c'est LE champ qu'un gestionnaire
+  // regarde et qui est indexé dans la recherche. On y met le n° de BC, et la
+  // clé locale derrière pour l'anti-doublon.
+  const origin = [opts.orderName, `Retour périmés`, opts.localRef].filter(Boolean).join(" · ");
+  const note = [
+    `RETOUR PÉRIMÉS`,
+    `Client : ${opts.clientName}${opts.clientRef ? ` (${opts.clientRef})` : ""}`,
+    `Commercial : ${opts.repName}`,
+    `Date de reprise : ${dateStr}`,
+    opts.orderName ? `Échange : BC ${opts.orderName}` : `Échange : BC en attente`,
+    ``,
+    `Produits repris :`,
+    ...opts.lines.map(l =>
+      `• ${l.product.name}${l.lot ? ` — lot ${l.lot}` : ""} × ${l.qty}`
+      + ` — ${l.source === "facture" ? "payé" : "estimé"} ${l.basePrice.toFixed(2)} €`
+      + ` → reprise ${l.unitPrice.toFixed(2)} €`),
+  ].join("\n");
+  // Le libellé de ligne porte lot + BC + date : dans l'entrepôt, on lit la
+  // ligne du mouvement, pas la note du transfert.
+  const labels = opts.lines.map(l => {
+    const parts = [l.product.name];
+    if (l.lot) parts.push(`lot ${l.lot}`);
+    parts.push(`retour périmé ${opts.clientName}`);
+    if (opts.orderName) parts.push(`éch. ${opts.orderName}`);
+    parts.push(dateStr);
+    return parts.join(" — ");
+  });
+  return { origin, note, labels };
+}
+
+// Module Odoo « Import de commandes clients par Claude » 1.54+ : il crée
+// l'emplacement rebut du mois ET le transfert avec ses propres droits — les
+// commerciaux n'ont pas les droits Inventaire. null = module absent ou plus
+// ancien (l'app fait alors le travail elle-même, comme avant).
+async function rebutViaModule(
+  session: odoo.OdooSession, opts: RebutOpts,
+): Promise<{ id: number; name: string; warning?: string } | { error: string } | null> {
+  const { origin, note, labels } = rebutTexts(opts);
+  try {
+    const r: any = await odoo.callMethod(session, "flow.rebut", "flow_rebut_transfer", [
+      rebutLocationName(opts.repName), opts.clientId, origin, opts.localRef, note,
+      opts.lines.map((l, i) => ({ product_id: l.product.id, qty: l.qty, label: labels[i], lot: l.lot || null, lot_id: l.lotId || null })),
+    ]);
+    return { id: r.id, name: r.name, ...(r.warning ? { warning: r.warning } : {}) };
+  } catch (e: any) {
+    if (odoo.isNetworkError(e)) throw e;
+    const msg = String(e?.message || e);
+    if (/flow\.rebut|flow_rebut_transfer|does not exist|n'existe pas|not found/i.test(msg)) return null;
+    return { error: `transfert : ${msg}` };
+  }
+}
+
 // Réception des produits repris vers l'emplacement rebut.
 // `localRef` sert de clé anti-doublon : on ne crée rien si un picking porte déjà
 // cette origine (rejeu de la file de synchro après coupure réseau).
@@ -639,27 +699,7 @@ export async function createRebutPicking(
     const uomByProduct = new Map<number, number>(
       uoms.map((p: any) => [p.id, p.uom_id?.[0]]).filter((e: any) => e[1]));
 
-    const dateStr = new Date().toLocaleDateString("fr-FR");
-
-    // origin = « Document d'origine » d'Odoo : c'est LE champ qu'un gestionnaire
-    // regarde et qui est indexé dans la recherche. On y met le n° de BC, et la
-    // clé locale derrière pour l'anti-doublon.
-    const origin = [opts.orderName, `Retour périmés`, opts.localRef]
-      .filter(Boolean).join(" · ");
-
-    const note = [
-      `RETOUR PÉRIMÉS`,
-      `Client : ${opts.clientName}${opts.clientRef ? ` (${opts.clientRef})` : ""}`,
-      `Commercial : ${opts.repName}`,
-      `Date de reprise : ${dateStr}`,
-      opts.orderName ? `Échange : BC ${opts.orderName}` : `Échange : BC en attente`,
-      ``,
-      `Produits repris :`,
-      ...opts.lines.map(l =>
-        `• ${l.product.name}${l.lot ? ` — lot ${l.lot}` : ""} × ${l.qty}`
-        + ` — ${l.source === "facture" ? "payé" : "estimé"} ${l.basePrice.toFixed(2)} €`
-        + ` → reprise ${l.unitPrice.toFixed(2)} €`),
-    ].join("\n");
+    const { origin, note, labels } = rebutTexts(opts);
 
     // user_id = le commercial connecté. Sans ce champ, le seul moyen de savoir qui
     // a fait la reprise serait de lire le NOM de l'emplacement — impossible à
@@ -690,13 +730,8 @@ export async function createRebutPicking(
     // Un stock.move par ligne de reprise → correspondance 1:1 avec son lot.
     const lineByMove = new Map<number, PerimeLine>();
     for (const l of opts.lines) {
-      const parts = [l.product.name];
-      if (l.lot) parts.push(`lot ${l.lot}`);
-      parts.push(`retour périmé ${opts.clientName}`);
-      if (opts.orderName) parts.push(`éch. ${opts.orderName}`);
-      parts.push(dateStr);
       const uom = uomByProduct.get(l.product.id);
-      const label = parts.join(" — ");
+      const label = labels[opts.lines.indexOf(l)];
       // name ET description_picking : c'est `description_picking` qui s'affiche
       // sur la ligne d'un transfert et sur le bon imprimé, `name` reste le
       // libellé technique du mouvement.
@@ -1095,15 +1130,18 @@ export async function submitReprise(
 
   // Volet stock. Un échec ici ne doit pas faire perdre le BC : il est déjà créé,
   // et le rejeu retombera sur le court-circuit d'idempotence ci-dessus.
-  const loc = await resolveRebutLocation(session, input.repName);
-  if ("error" in loc) {
-    return { orderId, orderName, pickingName: null, stockError: loc.error };
-  }
-  const r = await createRebutPicking(session, {
+  const rebutOpts: RebutOpts = {
     clientId: input.clientId, clientName: input.clientName, clientRef: input.clientRef,
-    repName: input.repName, locationId: loc.id, lines: input.returns,
-    localRef: input.localRef, orderName,
-  });
+    repName: input.repName, lines: input.returns, localRef: input.localRef, orderName,
+  };
+  let r = await rebutViaModule(session, rebutOpts);
+  if (!r) {
+    const loc = await resolveRebutLocation(session, input.repName);
+    if ("error" in loc) {
+      return { orderId, orderName, pickingName: null, stockError: loc.error };
+    }
+    r = await createRebutPicking(session, { ...rebutOpts, locationId: loc.id });
+  }
   if ("error" in r) {
     return { orderId, orderName, pickingName: null, stockError: r.error };
   }
