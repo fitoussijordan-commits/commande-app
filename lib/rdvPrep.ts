@@ -263,7 +263,8 @@ export function propose(base: CampaignBase, n1Map: Map<number, { qty: number }>,
 }
 
 // Campagnes dont un modèle de devis (archivés compris) commence dans l'année
-// `y` (champ Studio « Date début »). Champ absent de la base : aucun filtre.
+// `y` (champ Studio « Date début »). Sans modèle daté pour la campagne (ou champ
+// absent de la base) : l'année écrite dans le nom (« MEA Noël 2026 »).
 export const TEMPLATE_START_FIELD = "x_studio_date_debut_1";
 export async function currentYearCampaigns(session: odoo.OdooSession, campaigns: MeaCampaign[], y: number): Promise<MeaCampaign[]> {
   let tpls: any[];
@@ -272,9 +273,13 @@ export async function currentYearCampaigns(session: odoo.OdooSession, campaigns:
       ["id", "name", TEMPLATE_START_FIELD], 0);
   } catch (e) {
     if (odoo.isNetworkError(e)) throw e;
-    return campaigns;   // champ inconnu sur cette base
+    tpls = [];   // champ inconnu sur cette base : année du nom
   }
-  return campaigns.filter(c => templatesOf(tpls, c).some(t => String(t[TEMPLATE_START_FIELD] || "").slice(0, 4) === String(y)));
+  const inName = (c: MeaCampaign) => new RegExp(`\\b${y}\\b`).test(c.key);
+  return campaigns.filter(c => {
+    const dated = templatesOf(tpls, c).filter(t => t[TEMPLATE_START_FIELD]);
+    return dated.length ? dated.some(t => String(t[TEMPLATE_START_FIELD]).slice(0, 4) === String(y)) : inName(c);
+  });
 }
 
 // Contexte des modèles (lignes, articles) pour une liste de campagnes.

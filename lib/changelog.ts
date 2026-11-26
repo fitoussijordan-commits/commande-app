@@ -8,7 +8,7 @@ export const CHANGELOG: ChangelogEntry[] = [
   {
     date: "2026-11-26",
     items: [
-      "Préparation de RDV : seules les offres de l'année en cours sont affichées — une offre est de l'année si l'un de ses modèles de devis (archivés compris) a sa « Date début » (x_studio_date_debut_1) dans l'année ; les offres marquées N/A passent en fin de liste. Les compteurs « faites / à proposer » suivent.",
+      "Préparation de RDV : seules les offres de l'année en cours sont affichées — une offre est de l'année si l'un de ses modèles de devis (archivés compris) a sa « Date début » (x_studio_date_debut_1) dans l'année ; sans modèle daté, l'année écrite dans le nom de l'offre (« MEA Noël 2026 »). Les offres marquées N/A passent en fin de liste. Les compteurs « faites / à proposer » suivent.",
       "Retour périmés : l'emplacement « Rebut … » du mois et le transfert de reprise sont créés par Odoo avec les droits du module de lecture des commandes (version 1.54 requise) — les commerciaux n'ont plus besoin de droits Inventaire (erreur « Vous n'êtes pas autorisé à créer des enregistrements Inventory Locations »). Sans le module 1.54, l'app fait comme avant.",
       "Bouton « Accueil » placé tout à gauche de l'en-tête, avant la flèche retour, sur tous les écrans.",
       "Prise de commande plus rapide : le catalogue s'affiche tout de suite depuis la copie gardée sur l'appareil, puis se met à jour avec Odoo en arrière-plan (stocks frais une ou deux secondes après) — au lieu d'attendre Odoo environ 3,5 s. Et le relais entre l'app et Odoo tourne maintenant à Paris au lieu de Washington : chaque échange avec Odoo est plus rapide.",
