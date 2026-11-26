@@ -311,6 +311,12 @@ export async function hasCache(): Promise<boolean> {
 
 // ---- Lecture depuis le cache (mode hors ligne) ----
 
+// Catalogue complet reçu d'Odoo à l'ouverture de la prise de commande : gardé
+// sur l'appareil pour l'afficher instantanément la fois suivante (et hors ligne).
+export async function cacheProducts(products: any[]): Promise<void> {
+  if (products.length) await db.kvSet(db.STORES.products, KEY, products);
+}
+
 export async function getCachedProducts(): Promise<any[]> {
   return (await db.kvGet<any[]>(db.STORES.products, KEY)) || [];
 }

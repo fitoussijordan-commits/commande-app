@@ -4567,7 +4567,16 @@ function CatalogStep({ session, loyaltyPrograms, cart, onQtyChange, freeItems, o
 
   // Chargement initial : tous les produits vendables actifs
   const loadAll = useCallback(async (q: string) => {
-    setProdLoading(true);
+    const byStock = (list: any[]) => [...list].sort((a: any, b: any) => (b.virtual_available || 0) - (a.virtual_available || 0));
+    // Catalogue complet : affiché TOUT DE SUITE depuis la copie gardée sur l'appareil
+    // (préchargement hors ligne), puis remplacé par la version fraîche d'Odoo dès
+    // qu'elle arrive (stocks à jour). Avant, l'écran attendait Odoo : ~3,5 s.
+    let shown = false;
+    if (!q) {
+      const cached = await sync.getCachedProducts().catch(() => [] as any[]);
+      if (cached.length) { setAllProducts(byStock(cached)); shown = true; }
+    }
+    setProdLoading(!shown);
     // Vendables + testeurs (réf. en 3), même si « Peut être vendu » est décoché :
     // on les commande souvent en gratuité.
     const domain: any[] = [
@@ -4595,11 +4604,13 @@ function CatalogStep({ session, loyaltyPrograms, cart, onQtyChange, freeItems, o
         p = await odoo.searchRead(session, "product.product", domain, BASE_FIELDS, q.trim().length >= 2 ? 500 : 0, "name");
       }
       // Produits en stock en premier, puis les autres
-      p.sort((a: any, b: any) => (b.virtual_available || 0) - (a.virtual_available || 0));
-      if (!q) setAllProducts(p);
+      p = byStock(p);
+      if (!q) { setAllProducts(p); void sync.cacheProducts(p).catch(() => {}); }
       else { setProdLoading(false); return p; } // pour la recherche, retourner sans stocker
     } catch {
-      // Réseau indisponible → on lit le catalogue préchargé en local.
+      // Réseau indisponible → on lit le catalogue préchargé en local (déjà
+      // affiché pour le catalogue complet).
+      if (shown) { setProdLoading(false); return; }
       try {
         const cached = q.trim().length >= 2
           ? await sync.searchCachedProducts(q.trim(), 500)
