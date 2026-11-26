@@ -332,19 +332,25 @@ export async function loadBatchBdc(session: odoo.OdooSession, campaign: MeaCampa
 }
 
 export async function loadRdvPrep(session: odoo.OdooSession, client: any): Promise<RdvPrep> {
-  const family = await resolveClientFamily(session, client).catch(() => [client.id]);
   const now = new Date(), y = now.getFullYear();
   const todayN = ymd(now);
-  const sameDayN1 = new Date(now); sameDayN1.setFullYear(y - 1);
 
-  // ── CA à date (champs Odoo) + tarif ──
-  const caF = await caDateFields(session);
-  const [cRow] = await odoo.searchRead(session, "res.partner", [["id", "=", client.id]],
-    ["property_product_pricelist", ...(caF.n ? [caF.n] : []), ...(caF.n1 ? [caF.n1] : [])], 1);
+  // Lectures indépendantes EN PARALLÈLE (avant : l'une après l'autre, ~20 allers-
+  // retours avec Odoo) : famille du client, CA à date + tarif, campagnes, suivi MEA.
+  const [family, { caF, cRow }, { campaigns, offersField, offerCampaign, offerRows }, { tracking, plans }] = await Promise.all([
+    resolveClientFamily(session, client).catch(() => [client.id]),
+    (async () => {
+      const caF = await caDateFields(session);
+      const [cRow] = await odoo.searchRead(session, "res.partner", [["id", "=", client.id]],
+        ["property_product_pricelist", ...(caF.n ? [caF.n] : []), ...(caF.n1 ? [caF.n1] : [])], 1);
+      return { caF, cRow };
+    })(),
+    loadCampaigns(session),
+    clientPlans(session, client.id),
+  ]);
   const pricelist = Array.isArray(cRow?.property_product_pricelist) ? String(cRow.property_product_pricelist[1]) : null;
 
-  // ── Campagnes du cycle + statut pour ce client ──
-  const { campaigns, offersField, offerCampaign, offerRows } = await loadCampaigns(session);
+  // ── Campagnes + statut pour ce client ──
   const valid = campaigns.filter(c => fold(c.key));
   const offerIds = valid.flatMap(c => c.offers.map(o => o.id));
   const taken = new Map<string, { state: "pris" | "devis"; orders: string[]; variants: string[] }>();
@@ -363,7 +369,6 @@ export async function loadRdvPrep(session: odoo.OdooSession, client: any): Promi
       taken.set(key, t);
     }
   }
-  const { tracking, plans } = await clientPlans(session, client.id);
   // Offres du cycle : MEA actives + toute MEA déjà faite / en devis par le
   // client, même terminée (ex. « ON PACK 2026 » passée par l'AZUR).
   const active0 = valid.filter(c => c.active || taken.has(c.key));
@@ -393,28 +398,10 @@ export async function loadRdvPrep(session: odoo.OdooSession, client: any): Promi
     };
   });
 
-  // ── Plus grosses baisses (quantités à date N vs même période N-1) ──
-  const [allN1, allN] = await Promise.all([
-    qtyByProduct(session, family, `${y - 1}-01-01`, ymd(sameDayN1)),
-    qtyByProduct(session, family, `${y}-01-01`, todayN),
-  ]);
-  const ids = new Set<number>([...Array.from(allN1.keys()), ...Array.from(allN.keys())]);
-  const trends: ProductTrend[] = Array.from(ids).map(id => {
-    const a = allN1.get(id), b = allN.get(id);
-    const { code, name } = splitCode(a?.label || b?.label || "");
-    return { product: { id }, code, name, n1: a?.qty || 0, n: b?.qty || 0, diff: (b?.qty || 0) - (a?.qty || 0), amountN1: a?.amount || 0, amountN: b?.amount || 0 };
-  });
-  // Produits désactivés (éditions limitées, arrêts) : leur « baisse » n'en est
-  // pas une — exclus des baisses et des hausses.
-  const gone = new Set<number>();
-  if (ids.size) {
-    const inactive: any[] = await odoo.searchRead(session, "product.product", [["id", "in", Array.from(ids)], ["active", "=", false]], ["id"], 0).catch(() => []);
-    inactive.forEach(r => gone.add(r.id));
-  }
-  const limited = (t: ProductTrend) => gone.has(t.product.id) || /[ée]dition\s+limit|limited\s+edition|\bLE\b/i.test(t.name);
-  const kept = trends.filter(t => !limited(t));
-  const drops = kept.filter(d => d.diff < 0 && d.amountN1 > 0).sort((p, q) => (p.amountN - p.amountN1) - (q.amountN - q.amountN1)).slice(0, 15);
-  const rises = kept.filter(d => d.diff > 0 && d.amountN > 0).sort((p, q) => (q.amountN - q.amountN1) - (p.amountN - p.amountN1)).slice(0, 15);
+  // « Plus grosses baisses / hausses » par produit : bloc retiré de l'écran, plus
+  // calculé (c'était la lecture la plus lourde : tous les mouvements du client sur
+  // deux ans).
+  const drops: ProductTrend[] = [], rises: ProductTrend[] = [];
 
   return {
     ca: { n: caF.n ? Number(cRow?.[caF.n]) || 0 : null, n1: caF.n1 ? Number(cRow?.[caF.n1]) || 0 : null },

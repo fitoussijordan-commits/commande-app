@@ -140,11 +140,11 @@ export default function RdvPrepModal({ session, client, onClose: onCloseProp, on
             <Kpi label="CA à date N" value={data.ca.n != null ? <CountUp fromZero value={data.ca.n} format={eur} /> : "—"} />
             <Kpi label="CA à date N-1" value={data.ca.n1 != null ? <CountUp fromZero value={data.ca.n1} format={eur} /> : "—"} />
             <Kpi label="Évolution" value={evo == null ? "—" : `${evo >= 0 ? "+" : ""}${evo.toFixed(1)} %`} color={evo == null ? C.text : evo >= 0 ? C.green : C.red} />
-            <Kpi label="Offres du cycle" value={`${counts.pris} faite${counts.pris > 1 ? "s" : ""} · ${counts.todo} à proposer`} small />
+            <Kpi label={`Offres ${new Date().getFullYear()}`} value={`${counts.pris} faite${counts.pris > 1 ? "s" : ""} · ${counts.todo} à proposer`} small />
           </div>
 
-          {/* Offres du cycle */}
-          <SectionTitle>Offres du cycle</SectionTitle>
+          {/* Offres de l'année en cours */}
+          <SectionTitle>Offres {new Date().getFullYear()}</SectionTitle>
           {!data.tracking && <div style={{ fontSize: 11.5, color: C.orange, margin: "-4px 2px 8px" }}>Offre prévue et notes gardées sur cet appareil (modèle Odoo « Suivi MEA » absent).</div>}
           {campaigns.length === 0 && <div style={{ color: C.muted, fontSize: 13, padding: 10 }}>Aucune MEA {new Date().getFullYear()}.</div>}
           <div className="stagger" style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 22 }}>
