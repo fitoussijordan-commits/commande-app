@@ -11,7 +11,7 @@ import { IS_ODOO } from "@/lib/appTarget";
 // Ping : une réponse HTTP du proxy prouve que le réseau est là. Avec l'URL Odoo
 // (et la session), le proxy teste AUSSI la base Odoo : `odoo` vaut alors
 // true/false. Sans cible, `odoo` reste null (non testé).
-export interface Probe { net: boolean; odoo: boolean | null; odooError?: string }
+export interface Probe { net: boolean; odoo: boolean | null; odooError?: string; sessionExpired?: boolean }
 export interface OdooTarget { odooUrl: string; sessionId?: string }
 
 export async function probeOdoo(target?: OdooTarget, timeoutMs = 9000): Promise<Probe> {
@@ -27,8 +27,9 @@ export async function probeOdoo(target?: OdooTarget, timeoutMs = 9000): Promise<
         body: JSON.stringify({ jsonrpc: "2.0", method: "call", id: Date.now(), params: {} }),
       });
       const d = await res.json().catch(() => null);
-      const ok = !!d && (!!d.result || /SessionExpired/i.test(JSON.stringify(d?.error || "")));
-      return { net: true, odoo: target ? ok : null, odooError: ok ? undefined : (d?.error?.data?.message || `HTTP ${res.status}`) };
+      const expired = /SessionExpired/i.test(JSON.stringify(d?.error || "")) || (!!d?.result && !d.result.uid);
+      const ok = !!d && (!!d.result || expired);
+      return { net: true, odoo: target ? ok : null, odooError: ok ? undefined : (d?.error?.data?.message || `HTTP ${res.status}`), sessionExpired: expired };
     }
     const res = await fetch(apiUrl("/api/odoo/proxy"), {
       method: "POST",
@@ -38,7 +39,7 @@ export async function probeOdoo(target?: OdooTarget, timeoutMs = 9000): Promise<
       cache: "no-store",
     });
     const d = await res.json().catch(() => ({}));
-    return { net: res.status > 0, odoo: typeof d.odoo === "boolean" ? d.odoo : null, odooError: d.odooError };
+    return { net: res.status > 0, odoo: typeof d.odoo === "boolean" ? d.odoo : null, odooError: d.odooError, sessionExpired: d.sessionExpired === true };
   } catch {
     return { net: false, odoo: null };
   } finally {
@@ -52,6 +53,7 @@ export interface NetworkState {
   recheck: () => void;    // force une revérification
   odooUp: boolean | null; // la base Odoo répond (null = pas encore testé)
   odooError?: string;     // cause quand odooUp === false
+  sessionExpired: boolean; // session Odoo expirée : l'app est de fait hors ligne
 }
 
 // Hook React : expose l'état réseau confirmé et le revérifie
@@ -65,6 +67,7 @@ export function useNetwork(pollMs = 30000, target?: OdooTarget): NetworkState {
   const [checking, setChecking] = useState(false);
   const [odooUp, setOdooUp] = useState<boolean | null>(null);
   const [odooError, setOdooError] = useState<string | undefined>(undefined);
+  const [sessionExpired, setSessionExpired] = useState(false);
   const mounted = useRef(true);
   const targetRef = useRef(target);
   targetRef.current = target;
@@ -85,7 +88,11 @@ export function useNetwork(pollMs = 30000, target?: OdooTarget): NetworkState {
     if (mounted.current) {
       // Le ping ne décide que de l'état ODOO : réseau KO sur ping → on ne sait
       // pas (CORS…), on garde le dernier état connu.
-      if (p.net && p.odoo !== null) { setOdooUp(p.odoo); setOdooError(p.odoo ? undefined : p.odooError); }
+      if (p.net && p.odoo !== null) {
+        setOdooUp(p.odoo); setOdooError(p.odoo ? undefined : p.odooError);
+        // Base joignable : le ping dit aussi si la session est encore valide.
+        if (p.odoo) setSessionExpired(!!p.sessionExpired);
+      }
       setChecking(false);
     }
   }, []);
@@ -96,8 +103,11 @@ export function useNetwork(pollMs = 30000, target?: OdooTarget): NetworkState {
 
     const onOnline = () => run();
     const onOffline = () => setOnline(false);
+    // Un appel Odoo vient d'échouer pour session expirée (lib/odoo.ts) : tout de suite.
+    const onExpired = () => { if (mounted.current) setSessionExpired(true); };
     window.addEventListener("online", onOnline);
     window.addEventListener("offline", onOffline);
+    window.addEventListener("odoo:session-expired", onExpired);
 
     const interval = setInterval(() => {
       if (typeof document === "undefined" || document.visibilityState === "visible") run();
@@ -107,9 +117,10 @@ export function useNetwork(pollMs = 30000, target?: OdooTarget): NetworkState {
       mounted.current = false;
       window.removeEventListener("online", onOnline);
       window.removeEventListener("offline", onOffline);
+      window.removeEventListener("odoo:session-expired", onExpired);
       clearInterval(interval);
     };
   }, [run, pollMs]);
 
-  return { online, checking, recheck: run, odooUp, odooError };
+  return { online, checking, recheck: run, odooUp, odooError, sessionExpired };
 }

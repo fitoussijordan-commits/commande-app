@@ -8,6 +8,7 @@ export const CHANGELOG: ChangelogEntry[] = [
   {
     date: "2026-11-26",
     items: [
+      "Pastille réseau : « Hors ligne » quand la session Odoo a expiré, même avec Internet (avant : « En ligne »). Le panneau explique qu'il faut se reconnecter ; synchro et préchargement attendent la reconnexion.",
       "Devis d'implantation : une ligne de commentaire qui sépare un groupe d'articles n'est plus envoyée dans Odoo quand tous les articles de ce groupe sont à 0.",
       "Panier en grand (vue liste) : interrupteur ON/OFF « Articles en rupture » dans l'en-tête, à gauche de l'icône panier, pour n'afficher que les articles (et gratuités) en rupture dans une longue liste. Absent du petit panier.",
       "Ruptures : l'article est TOUJOURS saisi dans Odoo avec la quantité totale commandée (articles payants et gratuités), sans ligne « RUPTURE » à 0 à part. La rupture reste signalée dans le panier, au contrôle et dans la note interne du devis (« RUPTURES … dem. / … en stock »).",

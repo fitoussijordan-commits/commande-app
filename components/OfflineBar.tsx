@@ -42,9 +42,11 @@ export default function OfflineBar({
   session: odoo.OdooSession;
   onToast?: (msg: string, type?: "success" | "error" | "info") => void;
 }) {
-  const { online, checking, recheck, odooUp, odooError } = useNetwork(30000, { odooUrl: session.config.url, sessionId: session.sessionId });
+  const { online, checking, recheck, odooUp, odooError, sessionExpired } = useNetwork(30000, { odooUrl: session.config.url, sessionId: session.sessionId });
   // Internet OK mais base Odoo hors service (serveur arrêté, base test HS…).
   const odooDown = online && odooUp === false;
+  // Session Odoo expirée = hors ligne de fait : ni synchro ni préchargement possibles.
+  const usable = online && !sessionExpired;
   const [queue, setQueue] = useState<QueuedOrder[]>([]);
   const [lastSync, setLastSync] = useState<number | undefined>(undefined);
   const [preloading, setPreloading] = useState(false);
@@ -73,21 +75,21 @@ export default function OfflineBar({
   // Numéros de commande manquants (commandes envoyées avant cette version ou
   // lecture du numéro en échec) : complétés à l'ouverture du panneau, en ligne.
   useEffect(() => {
-    if (!showPanel || !online || odooDown) return;
+    if (!showPanel || !usable || odooDown) return;
     if (!queue.some(o => o.status === "synced" && o.odooId && !o.odooName)) return;
     sync.backfillOrderNames(session).then(ch => { if (ch) refreshStatus(); }).catch(() => {});
-  }, [showPanel, online, odooDown]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [showPanel, usable, odooDown]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Synchro automatique dès qu'on repasse en ligne s'il y a des commandes en attente.
   useEffect(() => {
-    if (online && !odooDown && pending > 0 && !syncing) {
+    if (usable && !odooDown && pending > 0 && !syncing) {
       void doSync();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [online, odooDown]);
+  }, [usable, odooDown]);
 
   const doPreload = async () => {
-    if (!online) { onToast?.("Connexion requise pour préparer le hors-ligne", "error"); return; }
+    if (!usable) { onToast?.(online ? "Session Odoo expirée — reconnecte-toi d'abord" : "Connexion requise pour préparer le hors-ligne", "error"); return; }
     setPreloadError("");
     setPreloading(true);
     setProgress({ step: "Démarrage", done: 0, total: 5 });
@@ -116,7 +118,7 @@ export default function OfflineBar({
   };
 
   const doSync = async () => {
-    if (!online) { onToast?.("Hors ligne — synchro impossible", "error"); return; }
+    if (!usable) { onToast?.(online ? "Session Odoo expirée — reconnecte-toi d'abord" : "Hors ligne — synchro impossible", "error"); return; }
     setSyncing(true);
     try {
       const res = await sync.flushQueue(session);
@@ -145,7 +147,7 @@ export default function OfflineBar({
   const pct = progress && progress.total > 0 ? Math.round((progress.done / progress.total) * 100) : 0;
   const pill = preloading
     ? { bg: "#f0fdfa", border: "#99f6e4", color: "#0f766e", dot: "#0d9488", label: progress && progress.total > 10 ? `Images ${pct}%` : (progress?.step || "Préparation…") }
-    : !online
+    : !online || sessionExpired
       ? { bg: "#fef2f2", border: "#fecaca", color: "#991b1b", dot: "#dc2626", label: "Hors ligne" }
       : odooDown
         ? { bg: "#fff7ed", border: "#fed7aa", color: "#9a3412", dot: "#ea580c", label: "Odoo injoignable" }
@@ -195,14 +197,19 @@ export default function OfflineBar({
             <div style={{ padding: "14px 18px", borderBottom: "1px solid #e2e8f0", display: "flex", alignItems: "center", gap: 10 }}>
               <span style={{ width: 9, height: 9, borderRadius: "50%", background: pill.dot, flexShrink: 0 }} />
               <div style={{ fontSize: 14, fontWeight: 800, color: "#0f172a", flex: 1 }}>
-                {checking ? "Vérification…" : !online ? "Hors ligne" : odooDown ? "Odoo injoignable" : "En ligne"}
+                {checking ? "Vérification…" : !online || sessionExpired ? "Hors ligne" : odooDown ? "Odoo injoignable" : "En ligne"}
+                {online && sessionExpired && (
+                  <div style={{ fontSize: 11.5, fontWeight: 600, color: "#991b1b", marginTop: 2 }}>
+                    Internet fonctionne, mais ta session Odoo a expiré : rien ne part vers Odoo. Déconnecte-toi puis reconnecte-toi. Les commandes en file partiront ensuite.
+                  </div>
+                )}
                 {odooDown && (
                   <div style={{ fontSize: 11.5, fontWeight: 600, color: "#9a3412", marginTop: 2 }}>
                     Internet fonctionne, mais la base {session.config.db} ne répond pas{odooError ? ` (${odooError})` : ""}. Les commandes restent en file et partiront à son retour.
                   </div>
                 )}
               </div>
-              {(!online || odooDown) && (
+              {(!online || odooDown || sessionExpired) && (
                 <button onClick={recheck} style={btnStyle(false, "#4b5563")}>Revérifier</button>
               )}
               <button onClick={() => setShowPanel(false)}
@@ -218,7 +225,7 @@ export default function OfflineBar({
                     {progress ? `${progress.step} — ${progress.done}/${progress.total}` : `Dernière mise à jour : ${fmtDate(lastSync)}`}
                   </div>
                 </div>
-                <button onClick={doPreload} disabled={preloading || !online} style={btnStyle(preloading || !online)}>
+                <button onClick={doPreload} disabled={preloading || !usable} style={btnStyle(preloading || !usable)}>
                   {preloading ? "Téléchargement…" : "Télécharger"}
                 </button>
               </div>
@@ -240,7 +247,7 @@ export default function OfflineBar({
                 File d'envoi ({queue.length})
               </div>
               {pending > 0 && (
-                <button onClick={doSync} disabled={syncing || !online} style={btnStyle(syncing || !online, "#0f766e")}>
+                <button onClick={doSync} disabled={syncing || !usable} style={btnStyle(syncing || !usable, "#0f766e")}>
                   {syncing ? "Synchro…" : "Tout réessayer"}
                 </button>
               )}

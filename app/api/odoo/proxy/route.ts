@@ -100,6 +100,10 @@ export async function POST(req: NextRequest) {
         if (d?.error && /SessionExpired|session.expired/i.test(errText)) {
           return J({ pong: true, odoo: true, sessionExpired: true });
         }
+        // Session invalide sans erreur explicite : get_session_info sans utilisateur.
+        if (sessionId && r.ok && d?.result && !d.result.uid) {
+          return J({ pong: true, odoo: true, sessionExpired: true });
+        }
         if (!r.ok || !d || d.error) {
           const why = d?.error?.data?.message || d?.error?.message || `HTTP ${r.status}`;
           return J({ pong: true, odoo: false, odooError: String(why).slice(0, 200) });
