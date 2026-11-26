@@ -8,6 +8,8 @@ export const CHANGELOG: ChangelogEntry[] = [
   {
     date: "2026-11-26",
     items: [
+      "Bouton « Accueil » sur tous les écrans (fiche client, prise de commande, historique, périmés, import de bon, tableau de bord, Mes MEA, préparation de RDV…), juste après la flèche retour : ferme l'écran en cours et revient à la page d'accueil ; le panier en cours reste dans les brouillons.",
+      "Devis d'implantation : la remise saisie s'additionne maintenant à la remise du tarif client (tarif −17 % + implantation −10 % = −27 % sur le prix catalogue), au lieu de s'appliquer en cascade.",
       "« Charger la commande » : les articles sont maintenant cherchés par Odoo, avec exactement le même traitement que le bouton « Charger la commande » d'Odoo (code, EAN, lots de miniatures / échantillons, archivés et non vendables, recherche par le nom, sections cabine / revente, UG, « À SAISIR »). Nécessite le module de lecture des commandes 1.53 ; avec un module plus ancien, l'app fait la recherche elle-même comme avant.",
       "Devis créés depuis l'app : case « Flow » (x_studio_flow) cochée dans Odoo, et 1re ligne du chatter « Devis créé dans Flow » (au lieu de « Devis créé »). Avec le module de lecture des commandes 1.50, étiquette « Flow » sur le devis, à côté de « Lu par Claude ».",
       "Bouton « Se déconnecter » présent sur tous les écrans (accueil, fiche client, prise de commande, historique, périmés, tableau de bord, Mes MEA, préparation de RDV…), toujours le dernier à droite de l'en-tête, avec confirmation.",

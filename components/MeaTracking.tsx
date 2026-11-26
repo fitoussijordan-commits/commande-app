@@ -4,6 +4,7 @@
 // sont à proposer, leur prochain RDV (ou « Planifier ») et la prévision du
 // commercial (offre envisagée + note) — pour préparer ses RDV.
 import LogoutButton from "@/components/LogoutButton";
+import HomeButton from "@/components/HomeButton";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { TubeLoader } from "@/components/motion";
 import * as odoo from "@/lib/odoo";
@@ -194,6 +195,7 @@ export default function MeaDashboard({ session, onClose, onOpenClient, onToast }
               style={{ width: 36, height: 36, borderRadius: 10, border: `1px solid ${C.border}`, background: C.white, cursor: "pointer", color: C.textSec, display: "flex", alignItems: "center", justifyContent: "center" }}>
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4"><path d="M15 18l-6-6 6-6"/></svg>
             </button>
+            <HomeButton />
             <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{ fontSize: 22, fontWeight: 800, color: C.text }}>Mes MEA</div>
               <div style={{ fontSize: 12.5, color: C.muted }}>Qui a pris, à qui les proposer, et quand je les vois</div>

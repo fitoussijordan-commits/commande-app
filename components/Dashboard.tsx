@@ -3,6 +3,7 @@
 // chiffres clés de l'année vs N-1, CA par mois, top / flop 20, meilleurs CA,
 // suivi des MEA et clients à visiter.
 import LogoutButton from "@/components/LogoutButton";
+import HomeButton from "@/components/HomeButton";
 import { useEffect, useState } from "react";
 import { CountUp, Sk } from "@/components/motion";
 import * as odoo from "@/lib/odoo";
@@ -121,11 +122,7 @@ export default function Dashboard({ session, onClose, onOpenClient, onToast }: {
       <div style={{ maxWidth: 1200, margin: "0 auto", padding: "20px 24px 40px" }}>
         {/* En-tête */}
         <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 18 }}>
-          <button onClick={onClose} title="Revenir à l'accueil"
-            style={{ height: 38, padding: "0 14px", borderRadius: 11, border: `1px solid ${C.border}`, background: C.white, cursor: "pointer", color: C.textSec, display: "flex", alignItems: "center", gap: 7, fontFamily: "inherit", fontSize: 13, fontWeight: 700 }}>
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/></svg>
-            Accueil
-          </button>
+          <HomeButton size={38} />
           <div style={{ flex: 1 }}>
             <div style={{ fontSize: 24, fontWeight: 800, color: C.text }}>Mon tableau de bord</div>
             <div style={{ fontSize: 12.5, color: C.muted }}>Du 1er janvier au {today} {st?.year || ""}, comparé à la même période {st ? st.year - 1 : "N-1"} · {st?.caFromOdoo ? "CA : champs Odoo « CA à date » (comme la fiche client) · commandes et graphique : commandes confirmées HT" : "commandes confirmées, CA HT"}</div>

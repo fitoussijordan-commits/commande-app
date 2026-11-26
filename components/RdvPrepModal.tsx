@@ -3,6 +3,7 @@
 // prévue + note), quantités proposées par produit (modifiables) avec export du
 // BDC Excel (case N/A : offre non proposée au client).
 import LogoutButton from "@/components/LogoutButton";
+import HomeButton from "@/components/HomeButton";
 import { useEffect, useMemo, useState } from "react";
 import * as odoo from "@/lib/odoo";
 import { loadRdvPrep, type RdvPrep, type PrepCampaign } from "@/lib/rdvPrep";
@@ -108,6 +109,7 @@ export default function RdvPrepModal({ session, client, onClose: onCloseProp, on
         <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16 }}>
           <button onClick={onClose} aria-label="Retour"
             style={{ width: 38, height: 38, borderRadius: 11, border: `1px solid ${C.border}`, background: C.white, cursor: "pointer", fontSize: 16 }}>←</button>
+          <HomeButton size={38} />
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ fontSize: 12, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: "0.06em" }}>Préparation de RDV</div>
             <div style={{ fontSize: 22, fontWeight: 800, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{client.name}</div>

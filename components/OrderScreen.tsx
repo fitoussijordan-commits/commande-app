@@ -1,5 +1,6 @@
 "use client";
 import LogoutButton from "@/components/LogoutButton";
+import HomeButton, { HOME_EVENT } from "@/components/HomeButton";
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import * as odoo from "@/lib/odoo";
 import AppointmentModal from "@/components/AppointmentModal";
@@ -131,7 +132,8 @@ function promoCart(cart: Record<number, CartItem>): Record<number, CartItem> {
 // de la liste de prix du client, pas en cascade comme le fait Odoo — règle maison :
 // tarif −15 % + promo −10 % = −25 % sur le prix catalogue (et non −23,5 %).
 // Remise événement (10 / 15 %) : additionnée elle aussi, sur les lignes payantes
-// (tarif −17 % + événement −10 % = −27 %). Devis d'implantation : en cascade.
+// (tarif −17 % + événement −10 % = −27 %). Remise saisie sur un devis d'implantation :
+// additionnée aussi (tarif −17 % + implantation −10 % = −27 %), plus en cascade.
 // brut = prix de référence de la ligne envoyée à Odoo ; discount = % de remise de
 // la ligne (sur brut) ; net = PU net. additive : la ligne part « brut + remise »,
 // comme Odoo l'affiche : prix CATALOGUE + remise totale (tarif client compris),
@@ -146,8 +148,8 @@ function linePricing(item: { product: any; unitPrice: number; priceLocked?: bool
   const lst = Number(item.product?.lst_price) || 0;
   const brut = lst > unit ? lst : unit;
   const tarifPct = brut > 0 ? (1 - unit / brut) * 100 : 0;
-  const first = Math.min(100, tarifPct + promoPct);
-  const net = brut * (1 - first / 100) * (1 - other / 100);
+  const total = Math.min(100, tarifPct + promoPct + other);
+  const net = brut * (1 - total / 100);
   return { brut, discount: brut > 0 ? (1 - net / brut) * 100 : 0, net, additive: true };
 }
 const isImplantLine = (i: { group?: string }) => /implantation/i.test(i.group || "");
@@ -155,7 +157,7 @@ const isImplantLine = (i: { group?: string }) => /implantation/i.test(i.group ||
 // jamais celles d'un devis d'implantation).
 const addPctOf = (i: CartItem, lineDiscounts: Record<number, number>, eventDiscount: number) =>
   (lineDiscounts[i.product.id] || 0) + (i.unitPrice > 0 && !isImplantLine(i) ? eventDiscount || 0 : 0);
-// % appliqué ensuite, en cascade : remise du devis d'implantation.
+// Remise saisie du devis d'implantation (additionnée elle aussi, cf. linePricing).
 const otherPctOf = (i: CartItem, groupDiscounts: Record<string, number>) =>
   i.group ? groupDiscounts[i.group] || 0 : 0;
 
@@ -848,6 +850,21 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
   // Semaine à ouvrir dans le planning quand on vient de l'agenda de l'accueil.
   const [planningDate, setPlanningDate] = useState<Date | null>(null);
   const [showDash, setShowDash] = useState(false);   // tableau de bord du commercial
+  // Bouton « Accueil » (components/HomeButton) de n'importe quel écran : ferme les
+  // écrans ouverts par-dessus et revient à l'accueil, sans client (comme le ✕ du
+  // badge client ; le panier en cours reste dans les brouillons).
+  const goHomeRef = useRef<() => void>(() => {});
+  goHomeRef.current = () => {
+    setShowDash(false); setShowPrep(false); setShowAppointment(false); setShowClientNote(false);
+    setShowDraftsPanel(false); setShowPromoPanel(false); setShowPending(false);
+    setDone(null); setNote(""); setResumePrompt(null);
+    setClient(null); setCart({}); setAppliedPromos({}); setStep("client");
+  };
+  useEffect(() => {
+    const on = () => goHomeRef.current();
+    window.addEventListener(HOME_EVENT, on);
+    return () => window.removeEventListener(HOME_EVENT, on);
+  }, []);
   // Fichier à analyser : choisi via un bouton « Importer », ou ouvert dans l'app
   // depuis Mail (partager → Commande).
   const [incomingFile, setIncomingFile] = useState<File | null>(null);
@@ -1595,6 +1612,8 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={C.text} strokeWidth="2.5"><path d="M19 12H5M12 5l-7 7 7 7"/></svg>
           </button>
         )}
+        {/* Accueil : sur tous les écrans sauf l'accueil lui-même */}
+        {step !== "client" && <HomeButton />}
 
         {/* Fil d'ariane simple : où on en est pour ce client */}
         <div style={{ fontSize: 13, fontWeight: 700, color: C.muted, minWidth: 0, flexShrink: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>
