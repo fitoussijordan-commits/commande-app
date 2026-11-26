@@ -4769,7 +4769,8 @@ function CatalogStep({ session, loyaltyPrograms, cart, onQtyChange, freeItems, o
   const overStockItems = cartItems.filter(isOverStock);
   const giftRuptures = giftItems.filter(g => giftActive(g, cart) && g.qty > 0 && giftShortage(g, cart) > 0).length;
   const hasStockIssue = overStockItems.length + giftRuptures > 0;
-  useEffect(() => { if (!hasStockIssue && onlyRuptures) setOnlyRuptures(false); }, [hasStockIssue, onlyRuptures]);
+  // Filtre coupé quand il n'y a plus de rupture ou que le panier repasse en petit.
+  useEffect(() => { if ((!hasStockIssue || !listView) && onlyRuptures) setOnlyRuptures(false); }, [hasStockIssue, listView, onlyRuptures]);
   // Produits de vente (réf. en 1) : nombre de références et quantité totale — suivis par les DC.
   // Compteurs par famille de référence (1 vente, 3 testeur, 5 échantillon, 7 MEA) :
   // lignes du panier + gratuités (un testeur offert reste un testeur).
@@ -5188,6 +5189,17 @@ function CatalogStep({ session, loyaltyPrograms, cart, onQtyChange, freeItems, o
         {/* Header panier */}
         <div style={{ padding: listView ? "5px 12px" : "12px 14px", background: "#0f766e", color: "#fff", ...(listView ? { display: "flex", alignItems: "center", gap: 14 } : {}) }}>
           <div style={{ fontSize: 13, fontWeight: 700, display: "flex", alignItems: "center", gap: 7, ...(listView ? { order: 2, flexShrink: 0 } : {}) }}>
+            {/* Filtre ON/OFF « Articles en rupture » : panier en grand (vue liste) seulement */}
+            {listView && hasStockIssue && (
+              <button onClick={() => setOnlyRuptures(v => !v)} role="switch" aria-checked={onlyRuptures}
+                title={onlyRuptures ? "Afficher toutes les lignes" : "N'afficher que les articles en rupture"}
+                style={{ flexShrink: 0, display: "flex", alignItems: "center", gap: 7, height: 28, padding: "0 5px 0 10px", marginRight: 4, borderRadius: 999, border: "none", background: onlyRuptures ? "#fff" : "rgba(255,255,255,0.15)", color: onlyRuptures ? C.red : "#fff", fontSize: 11.5, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>
+                Articles en rupture
+                <span style={{ width: 30, height: 17, borderRadius: 999, background: onlyRuptures ? C.red : "rgba(255,255,255,0.35)", position: "relative" as const, transition: "background 0.15s" }}>
+                  <span style={{ position: "absolute" as const, top: 2, left: onlyRuptures ? 15 : 2, width: 13, height: 13, borderRadius: "50%", background: "#fff", transition: "left 0.15s" }} />
+                </span>
+              </button>
+            )}
             <Icon name="cart" size={14} />
             <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const, ...(listView ? { display: "none" } : {}) }}>Panier — {client.name}</span>
             {/* Loupe : chercher dans le panier */}
@@ -5492,15 +5504,6 @@ function CatalogStep({ session, loyaltyPrograms, cart, onQtyChange, freeItems, o
             <span style={{ flex: 1, minWidth: 0 }}>
               {overStockItems.length + giftRuptures} rupture{overStockItems.length + giftRuptures > 1 ? "s" : ""} : signalée{overStockItems.length + giftRuptures > 1 ? "s" : ""} dans la note interne du devis (quantité totale saisie)
             </span>
-            {/* Filtre ON/OFF : n'afficher que les lignes en rupture */}
-            <button onClick={() => setOnlyRuptures(v => !v)} role="switch" aria-checked={onlyRuptures}
-              title={onlyRuptures ? "Afficher toutes les lignes" : "N'afficher que les articles en rupture"}
-              style={{ flexShrink: 0, display: "flex", alignItems: "center", gap: 7, padding: "3px 4px 3px 10px", borderRadius: 999, border: `1px solid ${onlyRuptures ? C.red : C.red + "55"}`, background: onlyRuptures ? C.redSoft : "#fff", color: C.red, fontSize: 11.5, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>
-              Ruptures seules
-              <span style={{ width: 30, height: 17, borderRadius: 999, background: onlyRuptures ? C.red : "#cbd5e1", position: "relative" as const, transition: "background 0.15s" }}>
-                <span style={{ position: "absolute" as const, top: 2, left: onlyRuptures ? 15 : 2, width: 13, height: 13, borderRadius: "50%", background: "#fff", transition: "left 0.15s" }} />
-              </span>
-            </button>
           </div>
         )}
 
