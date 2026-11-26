@@ -3923,7 +3923,7 @@ function ClientHistory({ session, client }: { session: odoo.OdooSession; client:
 // ÉTAPE 2 — Catalogue + Panier persistant
 // ═══════════════════════════════════════════════════════════════════════════
 // Vue liste du panier : largeurs des colonnes, partagées par l'en-tête et les lignes.
-const LV = { code: 78, ean: 108, qty: 125, brut: 72, remise: 58, net: 72, total: 80, x: 42 };
+const LV = { code: 66, ean: 104, qty: 100, brut: 66, remise: 54, net: 66, total: 74, x: 30 };
 function CatalogStep({ session, loyaltyPrograms, cart, onQtyChange, freeItems, onValidate, submitting, note, setNote, client, priceItems, onToast, appliedPromos, giftItems, setGiftItems, freeTypes, eventDiscount, setEventDiscount, shipping, minShipDate, onChangeExpedition, onAddNote, onNoteText, groupDiscounts, setGroupDiscounts, orderType, setOrderType, offerIds, setOfferIds, autoOffers, onTemplateApplied, onRenameGroup, onClearCart, pendingQuote, onPendingQuoteDone }: {
   loyaltyPrograms: loyalty.LoyaltyProgram[];
   onAddNote: (text: string, kind?: "line_note" | "line_section", group?: string) => void;
@@ -4049,6 +4049,7 @@ function CatalogStep({ session, loyaltyPrograms, cart, onQtyChange, freeItems, o
   // du total) : il mangeait la moitié de la hauteur du panier. Choix mémorisé.
   const allOffers = Array.from(new Set([...autoOffers.map(o => o.id), ...offerIds])).map(id => ({ id }));
   const [recapOpen, setRecapOpen] = useState(() => { try { return localStorage.getItem("wms_recap_open") === "1"; } catch { return false; } });
+  const slim = listView && !recapOpen;   // vue liste, récap replié : bloc Total sur une ligne
   // Retrait d'une ligne du panier : elle se replie, puis disparaît vraiment.
   const [removing, setRemoving] = useState<Set<number>>(new Set());
   const removeLine = (product: any) => {
@@ -5159,10 +5160,10 @@ function CatalogStep({ session, loyaltyPrograms, cart, onQtyChange, freeItems, o
           <div style={{ width: 5, height: 44, borderRadius: 3, background: C.border, boxShadow: "0 0 0 2px #fff" }} />
         </div>}
         {/* Header panier */}
-        <div style={{ padding: "12px 14px", background: "#0f766e", color: "#fff" }}>
-          <div style={{ fontSize: 13, fontWeight: 700, display: "flex", alignItems: "center", gap: 7 }}>
+        <div style={{ padding: listView ? "5px 12px" : "12px 14px", background: "#0f766e", color: "#fff", ...(listView ? { display: "flex", alignItems: "center", gap: 14 } : {}) }}>
+          <div style={{ fontSize: 13, fontWeight: 700, display: "flex", alignItems: "center", gap: 7, ...(listView ? { order: 2, flexShrink: 0 } : {}) }}>
             <Icon name="cart" size={14} />
-            <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>Panier — {client.name}</span>
+            <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const, ...(listView ? { display: "none" } : {}) }}>Panier — {client.name}</span>
             {/* Loupe : chercher dans le panier */}
             <button onClick={() => setCartSearch(v => v === null ? "" : null)} title="Chercher dans le panier"
               style={{ width: 30, height: 30, borderRadius: 8, background: cartSearch !== null ? "#fff" : "rgba(255,255,255,0.15)", border: "none", color: cartSearch !== null ? "#0f766e" : "#fff", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
@@ -5186,7 +5187,8 @@ function CatalogStep({ session, loyaltyPrograms, cart, onQtyChange, freeItems, o
               <Icon name="list" size={15} />
             </button>
           </div>
-          <div style={{ fontSize: 11, opacity: 0.85, marginTop: 2 }}>
+          <div style={{ fontSize: 11, opacity: 0.85, marginTop: listView ? 0 : 2, ...(listView ? { flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const } : {}) }}>
+            {listView && <strong style={{ fontSize: 12.5, opacity: 1, marginRight: 8 }}>Panier — {client.name}</strong>}
             <span key={cartCount} className="qty-pop" style={{ fontWeight: 800, marginRight: 2 }}>{cartCount}</span> article{cartCount > 1 ? "s" : ""} · <CountUp value={cartTotal} format={fmtPrice} />
             {familyCounts.map(c => <span key={c.label} style={{ marginLeft: 6 }}>· {c.label} : {c.refs} réf. / {c.qty} pcs</span>)}
             {freeCount > 0 && <span style={{ marginLeft: 6, background: "rgba(255,255,255,0.2)", borderRadius: 5, padding: "1px 6px" }}>+{freeCount} offerts</span>}
@@ -5202,7 +5204,7 @@ function CatalogStep({ session, loyaltyPrograms, cart, onQtyChange, freeItems, o
           </div>
         )}
         {/* Liste articles */}
-        <div style={{ flex: 1, overflowY: "auto" as const, padding: "10px 12px" }}>
+        <div style={{ flex: 1, overflowY: "auto" as const, padding: listView ? "2px 10px 4px" : "10px 12px" }}>
           {cartItems.length === 0 ? (
             <div className="fade-in" style={{ textAlign: "center", padding: "32px 12px", color: C.muted }}>
               <div style={{ marginBottom: 8 }}><Icon name="cart" size={28} color={C.border} /></div>
@@ -5215,7 +5217,7 @@ function CatalogStep({ session, loyaltyPrograms, cart, onQtyChange, freeItems, o
                 <span style={{ width: w, flex: w ? undefined : 1, minWidth: 0, flexShrink: 0, textAlign: right ? "right" as const : "left" as const, fontSize: 10.5, fontWeight: 800, color: C.muted, textTransform: "uppercase" as const, letterSpacing: "0.04em", whiteSpace: "nowrap" as const }}>{label}</span>
               );
               return (
-                <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "4px 6px 6px", borderBottom: `1.5px solid ${C.border}`, position: "sticky" as const, top: -10, background: C.white, zIndex: 1 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "3px 6px 3px", borderBottom: `1.5px solid ${C.border}`, position: "sticky" as const, top: -2, background: C.white, zIndex: 1 }}>
                   <span style={{ width: 8, flexShrink: 0 }} />
                   {h(LV.code, "Code")}
                   {h(LV.ean, "EAN")}
@@ -5306,17 +5308,17 @@ function CatalogStep({ session, loyaltyPrograms, cart, onQtyChange, freeItems, o
                   </div>
                 ) : listView ? (
                   /* Vue liste : une ligne par article */
-                  <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "5px 6px", borderBottom: `1px solid ${C.border}` }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "1px 6px", minHeight: 26, borderBottom: `1px solid ${C.border}` }}>
                     <span title={stockOk ? "En stock" : `Stock insuffisant : ${Math.floor(item.product.virtual_available || 0)} dispo`}
                       style={{ width: 8, height: 8, borderRadius: "50%", flexShrink: 0, background: stockOk ? C.green : C.red }} />
-                    <span style={{ width: LV.code, flexShrink: 0, fontSize: 11, fontFamily: "monospace", color: C.muted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>{item.product.default_code}</span>
-                    <span style={{ width: LV.ean, flexShrink: 0, fontSize: 11, fontFamily: "monospace", color: C.muted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>{item.product.barcode ? <Ean code={item.product.barcode} /> : ""}</span>
-                    <span style={{ flex: 1, minWidth: 0, fontSize: 12.5, fontWeight: 600, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>{item.product.name}</span>
+                    <span style={{ width: LV.code, flexShrink: 0, fontSize: 10.5, fontFamily: "monospace", color: C.muted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>{item.product.default_code}</span>
+                    <span style={{ width: LV.ean, flexShrink: 0, fontSize: 10.5, fontFamily: "monospace", color: C.muted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>{item.product.barcode ? <Ean code={item.product.barcode} /> : ""}</span>
+                    <span style={{ flex: 1, minWidth: 0, fontSize: 12, fontWeight: 600, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>{item.product.name}</span>
                     {Array.isArray(item.product.x_offre_produit_id) && <OfferTag name={item.product.x_offre_produit_id[1]} />}
                     <div style={{ width: LV.qty, justifyContent: "center", display: "flex", alignItems: "center", gap: 3, flexShrink: 0 }}>
-                      <button onClick={() => onQtyChange(item.product, item.qty - 1)} disabled={codeLocked} style={{ width: 36, height: 36, borderRadius: 9, background: C.redSoft, border: "none", cursor: codeLocked ? "default" : "pointer", color: C.red, fontSize: 17, fontWeight: 700, visibility: codeLocked ? "hidden" : "visible" }}>−</button>
-                      <button onClick={() => !codeLocked && setPad({ product: item.product })} style={{ minWidth: 44, height: 36, borderRadius: 9, background: "#fff", border: `1px solid ${C.border}`, cursor: "pointer", fontSize: 13, fontWeight: 800, color: C.text, fontFamily: "inherit" }}><span key={item.qty} className="qty-pop">{item.qty}</span></button>
-                      <button onClick={() => onQtyChange(item.product, item.qty + 1)} disabled={codeLocked} style={{ width: 36, height: 36, borderRadius: 9, background: C.tealSoft, border: "none", cursor: codeLocked ? "default" : "pointer", color: C.teal, fontSize: 17, fontWeight: 700, visibility: codeLocked ? "hidden" : "visible" }}>+</button>
+                      <button onClick={() => onQtyChange(item.product, item.qty - 1)} disabled={codeLocked} style={{ width: 26, height: 24, borderRadius: 6, padding: 0, lineHeight: 1, background: C.redSoft, border: "none", cursor: codeLocked ? "default" : "pointer", color: C.red, fontSize: 17, fontWeight: 700, visibility: codeLocked ? "hidden" : "visible" }}>−</button>
+                      <button onClick={() => !codeLocked && setPad({ product: item.product })} style={{ minWidth: 38, height: 24, borderRadius: 6, padding: "0 4px", background: "#fff", border: `1px solid ${C.border}`, cursor: "pointer", fontSize: 12, fontWeight: 800, color: C.text, fontFamily: "inherit" }}><span key={item.qty} className="qty-pop">{item.qty}</span></button>
+                      <button onClick={() => onQtyChange(item.product, item.qty + 1)} disabled={codeLocked} style={{ width: 26, height: 24, borderRadius: 6, padding: 0, lineHeight: 1, background: C.tealSoft, border: "none", cursor: codeLocked ? "default" : "pointer", color: C.teal, fontSize: 17, fontWeight: 700, visibility: codeLocked ? "hidden" : "visible" }}>+</button>
                     </div>
                     {(() => {
                       // PU brut = prix catalogue (avant liste de prix du client) ;
@@ -5331,8 +5333,8 @@ function CatalogStep({ session, loyaltyPrograms, cart, onQtyChange, freeItems, o
                         <span style={{ width: LV.net, flexShrink: 0, textAlign: "right" as const, fontSize: 11.5, fontWeight: 700, color: C.text }}>{fmtPrice(unitNet)}</span>
                       </>;
                     })()}
-                    <span style={{ width: LV.total, flexShrink: 0, textAlign: "right" as const, fontSize: 13, fontWeight: 800, color: C.text }}>{fmtPrice(net)}</span>
-                    {codeLocked ? lockedMark : <button onClick={() => removeLine(item.product)} title="Retirer" style={{ flexShrink: 0, width: 36, height: 36, marginLeft: 6, background: "transparent", border: "none", cursor: "pointer", color: C.muted, fontSize: 14 }}>✕</button>}
+                    <span style={{ width: LV.total, flexShrink: 0, textAlign: "right" as const, fontSize: 12, fontWeight: 800, color: C.text }}>{fmtPrice(net)}</span>
+                    {codeLocked ? lockedMark : <button onClick={() => removeLine(item.product)} title="Retirer" style={{ flexShrink: 0, width: LV.x, height: 24, padding: 0, background: "transparent", border: "none", cursor: "pointer", color: C.muted, fontSize: 14 }}>✕</button>}
                   </div>
                 ) : (
                 /* Vue compacte : panier étroit → nom sur toute la largeur, détails et
@@ -5466,11 +5468,12 @@ function CatalogStep({ session, loyaltyPrograms, cart, onQtyChange, freeItems, o
         )}
 
         {/* Bloc récap sombre — note + total + validation */}
-        <div style={{ padding: "0 12px 12px" }}>
-          <div style={{ background: "#0f172a", borderRadius: 18, padding: recapOpen ? "14px 14px 16px" : "10px 12px 12px", boxShadow: "0 12px 28px rgba(15,23,42,0.35)" }}>
+        {/* Vue liste, récap replié : tout sur UNE ligne (plus de lignes d'articles visibles). */}
+        <div style={{ padding: slim ? "0 10px 6px" : "0 12px 12px" }}>
+          <div style={{ background: "#0f172a", borderRadius: slim ? 14 : 18, padding: recapOpen ? "14px 14px 16px" : slim ? "6px 8px 6px 12px" : "10px 12px 12px", boxShadow: "0 12px 28px rgba(15,23,42,0.35)", ...(slim ? { display: "flex", alignItems: "center", gap: 16 } : {}) }}>
             {/* Résumé cliquable : ouvre / replie le détail */}
             <button onClick={toggleRecap} title={recapOpen ? "Replier" : "Expédition, type, offres, note"}
-              style={{ width: "100%", display: "flex", alignItems: "center", gap: 6, padding: "4px 2px", marginBottom: recapOpen ? 10 : 8, background: "none", border: "none", cursor: "pointer", fontFamily: "inherit", color: "rgba(255,255,255,0.7)", fontSize: 11.5, fontWeight: 700, textAlign: "left" as const, minWidth: 0 }}>
+              style={{ width: slim ? undefined : "100%", flex: slim ? "1 1 0" : undefined, display: "flex", alignItems: "center", gap: 6, padding: "4px 2px", marginBottom: recapOpen ? 10 : slim ? 0 : 8, background: "none", border: "none", cursor: "pointer", fontFamily: "inherit", color: "rgba(255,255,255,0.7)", fontSize: 11.5, fontWeight: 700, textAlign: "left" as const, minWidth: 0 }}>
               <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>
                 {[
                   shipping ? `Expé. ${shipping.expedition.toLocaleDateString("fr-FR", { day: "2-digit", month: "2-digit" })}`
@@ -5554,7 +5557,7 @@ function CatalogStep({ session, loyaltyPrograms, cart, onQtyChange, freeItems, o
               rows={2} style={{ width: "100%", boxSizing: "border-box" as const, marginBottom: 12, padding: "9px 11px", border: "1px solid rgba(255,255,255,0.12)", borderRadius: 10, fontSize: 12, fontFamily: "inherit", resize: "none" as const, background: "rgba(255,255,255,0.06)", color: "#fff", outline: "none" }} />
             </div>}
 
-            <div style={{ borderTop: recapOpen ? "1px solid rgba(255,255,255,0.1)" : "none", paddingTop: recapOpen ? 10 : 0, display: "flex", flexDirection: "column" as const, gap: 5, marginBottom: recapOpen ? 12 : 8 }}>
+            <div style={{ borderTop: recapOpen ? "1px solid rgba(255,255,255,0.1)" : "none", paddingTop: recapOpen ? 10 : 0, display: "flex", flexDirection: "column" as const, gap: slim ? 2 : 5, marginBottom: recapOpen ? 12 : slim ? 0 : 8, ...(slim ? { width: 340, flexShrink: 0 } : {}) }}>
               {recapOpen && <div className="reveal" style={{ display: "flex", flexDirection: "column" as const, gap: 5 }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                 <span style={{ fontSize: 12, color: "rgba(255,255,255,0.55)" }}>Sous-total</span>
@@ -5583,18 +5586,18 @@ function CatalogStep({ session, loyaltyPrograms, cart, onQtyChange, freeItems, o
                     </button>
                   )}
                 </span>
-                <span style={{ fontSize: 20, fontWeight: 800, color: "#5eead4", fontVariantNumeric: "tabular-nums" as const }}><CountUp value={netTotal + (shippingFee ? SHIPPING_FEE_HT : 0)} format={fmtPrice} /></span>
+                <span style={{ fontSize: slim ? 17 : 20, fontWeight: 800, color: "#5eead4", fontVariantNumeric: "tabular-nums" as const }}><CountUp value={netTotal + (shippingFee ? SHIPPING_FEE_HT : 0)} format={fmtPrice} /></span>
               </div>
               {/* Franco de port : la barre se remplit, et s'illumine au seuil */}
               {netTotal > 0 && (() => {
                 const reached = !shippingFee;
                 return (
-                  <div title={`Franco de port : ${FRANCO_HT} € HT`} style={{ marginTop: 3 }}>
+                  <div title={`Franco de port : ${FRANCO_HT} € HT`} style={{ marginTop: slim ? 0 : 3 }}>
                     <div style={{ height: 4, borderRadius: 999, background: "rgba(255,255,255,0.12)" }}>
                       <div key={reached ? "hit" : "fill"} className={reached ? "franco-fill hit" : "franco-fill"}
                         style={{ width: `${Math.min(100, (netTotal / FRANCO_HT) * 100)}%`, background: reached ? "#2dd4bf" : "#fbbf24" }} />
                     </div>
-                    <div style={{ marginTop: 4, fontSize: 10.5, fontWeight: 700, color: reached ? "#5eead4" : "#fbbf24" }}>
+                    <div style={{ marginTop: slim ? 2 : 4, fontSize: 10.5, fontWeight: 700, color: reached ? "#5eead4" : "#fbbf24" }}>
                       {reached ? "✓ Franco de port atteint" : `Franco : encore ${fmtPrice(FRANCO_HT - netTotal)}`}
                     </div>
                   </div>
@@ -5606,7 +5609,7 @@ function CatalogStep({ session, loyaltyPrograms, cart, onQtyChange, freeItems, o
                  ligne — pas de surprise après coup. */}
             {/* Le check s'ouvre d'office : la création se confirme depuis le check */}
             <button onClick={() => setShowCheck("validate")} disabled={submitting || cartCount === 0}
-              style={{ width: "100%", padding: recapOpen ? "14px 0" : "11px 0", background: cartCount === 0 ? "rgba(255,255,255,0.12)" : submitting ? "rgba(94,234,212,0.4)" : "#2dd4bf", color: cartCount === 0 ? "rgba(255,255,255,0.4)" : "#0f172a", border: "none", borderRadius: 999, fontSize: 14, fontWeight: 800, cursor: cartCount === 0 ? "default" : "pointer", fontFamily: "inherit", transition: "all 0.2s" }}>
+              style={{ width: slim ? 240 : "100%", flexShrink: 0, padding: recapOpen ? "14px 0" : slim ? "10px 0" : "11px 0", background: cartCount === 0 ? "rgba(255,255,255,0.12)" : submitting ? "rgba(94,234,212,0.4)" : "#2dd4bf", color: cartCount === 0 ? "rgba(255,255,255,0.4)" : "#0f172a", border: "none", borderRadius: 999, fontSize: 14, fontWeight: 800, cursor: cartCount === 0 ? "default" : "pointer", fontFamily: "inherit", transition: "all 0.2s" }}>
               {submitting ? "Création…"
                 : cartCount === 0 ? "Panier vide"
                 : !navOnline ? "Enregistrer hors ligne · envoi auto"

@@ -6,6 +6,12 @@ export interface ChangelogEntry { date: string; items: string[] }
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    date: "2026-11-26",
+    items: [
+      "Panier en vue liste : lignes resserrées (polices et boutons plus petits), en-tête du panier sur une ligne et bloc Total sur une seule ligne (récap replié) — environ 12 articles visibles sur un petit écran au lieu de 5, davantage sur un grand.",
+    ],
+  },
+  {
     date: "2026-11-25",
     items: [
       "MEA : l'article MEA code 7 est verrouillé dans le panier (ni quantité ni ✕, 🔒) — sans lui l'étiquette de l'offre ne part pas dans Odoo. Il part avec le bouton « Retirer » de la MEA.",
