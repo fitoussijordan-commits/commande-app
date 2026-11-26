@@ -437,9 +437,25 @@ export async function transmitJoined(
 // « note », imprimé en bas du devis). Portée dans le payload sous CHATTER_KEY,
 // retirée avant la création — aussi pour les commandes rejouées hors ligne.
 export const CHATTER_KEY = "__chatter_note";
+// Case Studio « Flow » (x_studio_flow) : cochée sur chaque devis créé depuis l'app,
+// si elle existe dans cette base (badge « Flow » sur le devis, module OCR).
+const FLOW_FIELD = "x_studio_flow";
+let _flowField: Promise<boolean> | null = null;
+function hasFlowField(session: odoo.OdooSession): Promise<boolean> {
+  if (!_flowField) _flowField = odoo.callMethod(session, "sale.order", "fields_get", [[FLOW_FIELD]], { attributes: ["type"] })
+    .then((f: any) => !!f?.[FLOW_FIELD])
+    .catch(e => { _flowField = null; if (odoo.isNetworkError(e)) throw e; return false; });
+  return _flowField;
+}
+
 export async function createOrder(session: odoo.OdooSession, payload: any): Promise<number> {
   const { [CHATTER_KEY]: text, ...vals } = payload;
-  const id = await odoo.create(session, "sale.order", vals);
+  if (await hasFlowField(session)) vals[FLOW_FIELD] = true;
+  // Sans le message automatique « Devis créé » d'Odoo : remplacé par « Devis créé
+  // dans Flow », 1re ligne du chatter.
+  const id = await odoo.callMethod(session, "sale.order", "create", [vals], { context: { mail_create_nolog: true } });
+  await odoo.callMethod(session, "sale.order", "message_post", [[id]],
+    { body: "Devis créé dans Flow", message_type: "notification", subtype_xmlid: "mail.mt_note" }).catch(() => {});
   if (text && String(text).trim()) {
     const html = String(text).trim().split("\n").map(l => l.replace(/&/g, "&amp;").replace(/</g, "&lt;")).join("<br/>");
     await odoo.callMethod(session, "sale.order", "message_post", [[id]],

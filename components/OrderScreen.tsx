@@ -1498,7 +1498,7 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
         setSubmitStep("gratuit");
         freePayload.note = `Articles offerts — lié au devis #${mainId}`;
         try {
-          freeId = await odoo.create(session, "sale.order", freePayload);
+          freeId = await sync.createOrder(session, freePayload);   // case Flow + « Devis créé dans Flow »
         } catch (e: any) {
           if (odoo.isNetworkError(e)) {
             await sync.queueOrder(client.name, 0, [freePayload], `BC gratuit — ${client.name}`);

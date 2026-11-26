@@ -8,6 +8,7 @@ export const CHANGELOG: ChangelogEntry[] = [
   {
     date: "2026-11-26",
     items: [
+      "Devis créés depuis l'app : case « Flow » (x_studio_flow) cochée dans Odoo, et 1re ligne du chatter « Devis créé dans Flow » (au lieu de « Devis créé »). Avec le module de lecture des commandes 1.50, étiquette « Flow » sur le devis, à côté de « Lu par Claude ».",
       "Bouton « Se déconnecter » présent sur tous les écrans (accueil, fiche client, prise de commande, historique, périmés, tableau de bord, Mes MEA, préparation de RDV…), toujours le dernier à droite de l'en-tête, avec confirmation.",
       "Pastille réseau : « Hors ligne » quand la session Odoo a expiré, même avec Internet (avant : « En ligne »). Le panneau explique qu'il faut se reconnecter ; synchro et préchargement attendent la reconnexion.",
       "Devis d'implantation : une ligne de commentaire qui sépare un groupe d'articles n'est plus envoyée dans Odoo quand tous les articles de ce groupe sont à 0.",
