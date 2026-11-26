@@ -203,16 +203,6 @@ function giftShortage(g: GiftItem, cart: Record<number, { qty: number }>): numbe
   const paid = cart[g.product.id]?.qty || 0;
   return Math.max(0, g.qty - Math.max(0, stock - paid));
 }
-// Libellé de la ligne « RUPTURE » (réf., EAN et nom séparés : cf. cartLineCmds).
-function ruptureLabel(product: any, missing: number): string {
-  const pname = String(product.name || "").replace(/^\[[^\]]*\]\s*/, "");
-  return [
-    `RUPTURE — ${missing} manquant${missing > 1 ? "s" : ""} (non livré${missing > 1 ? "s" : ""})`,
-    product.default_code ? `Réf. ${product.default_code}` : "",
-    product.barcode ? `EAN ${product.barcode}` : "",
-    pname,
-  ].filter(Boolean).join(" · ");
-}
 
 // Place des gratuités dans le panier et le devis :
 //   • UG d'un bon chargé → juste après la ligne payante du même article ;
@@ -1206,13 +1196,13 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
       // service client + notes de suivi des campagnes ajoutées (ex. SERUM26).
       const ruptures = [
         ...cartRuptures(cart),
-        // Gratuités en rupture (le manquant part à 0, comme pour un article payant).
+        // Gratuités en rupture (signalées comme un article payant).
         ...giftItems.filter(g => giftActive(g, cart) && g.qty > 0 && giftShortage(g, cart) > 0)
           .map(g => ({ name: String(g.product.name || ""), code: g.product.default_code || undefined, qty: g.qty, stock: g.qty - giftShortage(g, cart) })),
       ];
       const groupsInCart = new Set(Object.values(cart).map(i => i.group).filter(Boolean) as string[]);
       const internalLines = [
-        ...(ruptures.length ? [`RUPTURES (manquant envoyé à 0 sur le devis) : ${ruptures.map(r => `${r.code || r.name} (${r.qty} dem. / ${r.stock} livrés)`).join(", ")}`] : []),
+        ...(ruptures.length ? [`RUPTURES (quantité totale saisie sur le devis, stock insuffisant) : ${ruptures.map(r => `${r.code || r.name} (${r.qty} dem. / ${r.stock} en stock)`).join(", ")}`] : []),
         ...Object.entries(templateInfo).filter(([g, t]) => groupsInCart.has(g) && t.note).map(([, t]) => String(t.note)),
       ];
       const internalNote = internalLines.join("\n");
@@ -1236,7 +1226,7 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
 
       // Commande + toutes ses lignes créées en UN SEUL appel Odoo (commandes one2many [0,0,{...}])
       // au lieu d'un appel par ligne — c'est ça qui rendait les gros devis lents.
-      // Une ligne du panier → ligne(s) de devis (ligne « RUPTURE » à 0 juste après si besoin).
+      // Une ligne du panier → une ligne de devis, quantité totale (même en rupture).
       const cartLineCmds = (item: CartItem): any[] => {
             const hl = item.highlight && imp?.line.has("ocr_highlight") ? { ocr_highlight: item.highlight } : {};
             if (item.note) return [[0, 0, { display_type: item.note, name: String(item.product.name).trim(), ...hl }]];
@@ -1255,11 +1245,8 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
             const disc = asBon
               ? Math.round(10000 * (1 - (1 - item.bonRemise! / 100) * (1 - promoDisc / 100))) / 100
               : lp.additive ? Math.round(lp.discount * 100) / 100 : promoDisc;
-            // Rupture : la quantité en stock part normalement, le manquant part
-            // sur une ligne « [RUPTURE] » à 0 — visible par le client sur le
-            // devis/la confirmation, sans mouvement de stock (logistique non bloquée).
-            const stock = noStockCheck(item) ? item.qty : Math.max(0, Math.floor(item.product.virtual_available || 0));
-            const served = Math.min(item.qty, stock), missing = item.qty - served;
+            // Rupture : l'article part TOUJOURS avec sa quantité totale (pas de ligne
+            // « RUPTURE » à part) ; la rupture est signalée dans la note interne.
             const line = (qty: number, extra: any = {}) => [0, 0, {
               product_id: item.product.id,
               product_uom_qty: qty,
@@ -1272,25 +1259,11 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
               ...hl,
               ...extra,
             }];
-            // Libellé de la ligne rupture : référence, EAN et nom écrits séparément.
-            // Surtout PAS « [réf] nom » tel quel : Odoo retire du libellé affiché
-            // le nom complet de l'article (identique), et il ne restait que
-            // « RUPTURE — — 1 manquant ».
-            const pname = String(item.product.name || "").replace(/^\[[^\]]*\]\s*/, "");
-            const ruptureName = [
-              `RUPTURE — ${missing} manquant${missing > 1 ? "s" : ""} (non livré${missing > 1 ? "s" : ""})`,
-              item.product.default_code ? `Réf. ${item.product.default_code}` : "",
-              item.product.barcode ? `EAN ${item.product.barcode}` : "",
-              pname,
-            ].filter(Boolean).join(" · ");
-            return [
-              ...(served > 0 ? [line(served)] : []),
-              ...(missing > 0 ? [line(0, { name: ruptureName })] : []),
-            ];
+            return [line(item.qty)];
       };
       // Gratuité → ligne de devis : TOUTES (bouton cadeau, UG d'un bon, MEA, devis
-      // d'implantation) au prix normal du client avec 100 % de remise, et contrôle de
-      // stock comme un article payant (manquant sur une ligne « RUPTURE » à 0 juste après).
+      // d'implantation) au prix normal du client avec 100 % de remise, quantité totale
+      // même en rupture (signalée dans la note interne, comme un article payant).
       const giftCmds = (g: GiftItem): any[] => {
         const base = {
           product_id: g.product.id,
@@ -1298,9 +1271,7 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
           ...(g.highlight && imp?.line.has("ocr_highlight") ? { ocr_highlight: g.highlight } : {}),
         };
         const price = g.fullDiscountPrice ?? applyPricelist(g.product.lst_price || 0, g.product.id, g.product.product_tmpl_id?.[0] || 0, priceItems, Math.max(1, g.qty));
-        const missing = giftShortage(g, cart), served = g.qty - missing;
-        const line = (qty: number, extra: any = {}) => [0, 0, { ...base, product_uom_qty: qty, price_unit: price, discount: 100, ...extra }];
-        return [...(served > 0 ? [line(served)] : []), ...(missing > 0 ? [line(0, { name: ruptureLabel(g.product, missing) })] : [])];
+        return [[0, 0, { ...base, product_uom_qty: g.qty, price_unit: price, discount: 100 }]];
       };
       // Gratuités placées comme dans le panier (placeGifts) : celles d'une MEA dans
       // son bloc, les UG d'un bon chargé après leur article payant ; le reste en fin.
@@ -1565,7 +1536,7 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
           )}
           {!!done.ruptures && (
             <div style={{ marginTop: 14, padding: "10px 12px", borderRadius: 12, background: C.orangeSoft, color: C.orange, fontSize: 13.5, fontWeight: 700, lineHeight: 1.45 }}>
-              {done.ruptures} article{done.ruptures > 1 ? "s" : ""} en rupture : la quantité manquante figure à 0 sur le devis (« RUPTURE »).
+              {done.ruptures} article{done.ruptures > 1 ? "s" : ""} en rupture : saisi{done.ruptures > 1 ? "s" : ""} avec la quantité totale, signalé{done.ruptures > 1 ? "s" : ""} dans la note interne du devis.
             </div>
           )}
         </div>
@@ -4707,7 +4678,7 @@ function CatalogStep({ session, loyaltyPrograms, cart, onQtyChange, freeItems, o
                   <button onClick={() => setGiftItems(prev => prev.filter((_, j) => j !== i))} title="Retirer"
                     style={{ flexShrink: 0, width: 32, height: 32, marginLeft: 4, background: "none", border: "none", cursor: "pointer", color: C.muted, fontSize: 12, padding: 0, ...(inline ? { order: -2 } : {}) }}>✕</button>
                   {giftActive(g, cart) && g.qty > 0 && giftShortage(g, cart) > 0 && (
-                    <span title="Stock prévisionnel insuffisant : le manquant part à 0 sur le devis (« RUPTURE »)"
+                    <span title="Stock prévisionnel insuffisant : quantité totale saisie sur le devis, rupture signalée dans la note interne"
                       style={{ flexBasis: "100%", order: 5, fontSize: 10.5, fontWeight: 700, color: C.red }}>
                       Rupture : {giftShortage(g, cart)} manquant{giftShortage(g, cart) > 1 ? "s" : ""} (stock {Math.max(0, Math.floor(g.product.virtual_available || 0))})
                     </span>
@@ -4730,7 +4701,7 @@ function CatalogStep({ session, loyaltyPrograms, cart, onQtyChange, freeItems, o
     const setGiftQty = (n: number) => setGiftItems(prev => prev.map((x, j) => j === i ? { ...x, qty: Math.max(0, n) } : x));
     const brut = g.fullDiscountPrice ?? (g.product.lst_price || 0);
     return (
-      <div key={`gift-${i}`} title={!active ? (g.cond?.mea ? `MEA « ${g.cond?.label} » non éligible : promo Odoo non atteinte ou article MEA (code 7) absent` : `Offre suspendue : total d'articles de « ${g.cond?.label} » non atteint`) : short > 0 ? `Rupture : ${short} manquant${short > 1 ? "s" : ""} — le manquant part à 0 sur le devis` : undefined}
+      <div key={`gift-${i}`} title={!active ? (g.cond?.mea ? `MEA « ${g.cond?.label} » non éligible : promo Odoo non atteinte ou article MEA (code 7) absent` : `Offre suspendue : total d'articles de « ${g.cond?.label} » non atteint`) : short > 0 ? `Rupture : ${short} manquant${short > 1 ? "s" : ""} — quantité totale saisie, rupture signalée dans la note interne` : undefined}
         style={{ display: "flex", alignItems: "center", gap: 8, padding: "1px 6px", minHeight: 26, borderBottom: `1px solid ${C.border}`, background: C.greenSoft, opacity: !active ? 0.45 : g.qty === 0 ? 0.7 : 1 }}>
         <span style={{ width: 8, flexShrink: 0, display: "inline-flex", justifyContent: "center", color: short > 0 ? C.red : C.green }}><Icon name="gift" size={10} /></span>
         <span style={{ width: LV.code, flexShrink: 0, fontSize: 10.5, fontFamily: "monospace", color: C.muted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>{g.product.default_code || ""}</span>
@@ -5504,7 +5475,7 @@ function CatalogStep({ session, loyaltyPrograms, cart, onQtyChange, freeItems, o
         {hasStockIssue && (
           <div style={{ margin: "0 12px 8px", display: "flex", alignItems: "center", gap: 6, fontSize: 11.5, fontWeight: 700, color: C.red }}>
             <span style={{ width: 8, height: 8, borderRadius: "50%", background: C.red }} />
-            {overStockItems.length} rupture{overStockItems.length > 1 ? "s" : ""} : le manquant partira à 0 sur le devis
+            {overStockItems.length} rupture{overStockItems.length > 1 ? "s" : ""} : signalée{overStockItems.length > 1 ? "s" : ""} dans la note interne du devis (quantité totale saisie)
           </div>
         )}
 

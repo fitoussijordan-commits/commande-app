@@ -92,7 +92,7 @@ export default function OrderCheck({ session, client, netTotal, giftValue, giftC
         <Row tone={ruptures.length ? "red" : "green"} title="Ruptures">
           {ruptures.length === 0 ? "Tout est en stock." : <>
             {ruptures.map((r, i) => <div key={i}>• {r.code ? `${r.code} — ` : ""}{r.name} : {r.qty} demandé{r.qty > 1 ? "s" : ""}, {r.stock} livré{r.stock > 1 ? "s" : ""}</div>)}
-            <div style={{ marginTop: 4 }}>Le manquant figure à 0 sur le devis (ligne « RUPTURE »), sans bloquer la préparation.</div>
+            <div style={{ marginTop: 4 }}>Quantité totale saisie sur le devis ; la rupture est signalée dans la note interne.</div>
           </>}
         </Row>
 
