@@ -8,6 +8,8 @@ export const CHANGELOG: ChangelogEntry[] = [
   {
     date: "2026-11-26",
     items: [
+      "Devis d'implantation : une ligne de commentaire qui sépare un groupe d'articles n'est plus envoyée dans Odoo quand tous les articles de ce groupe sont à 0.",
+      "Panier : bouton ON/OFF « Ruptures seules » à côté du rappel des ruptures, pour n'afficher que les articles (et gratuités) en rupture dans une longue liste.",
       "Ruptures : l'article est TOUJOURS saisi dans Odoo avec la quantité totale commandée (articles payants et gratuités), sans ligne « RUPTURE » à 0 à part. La rupture reste signalée dans le panier, au contrôle et dans la note interne du devis (« RUPTURES … dem. / … en stock »).",
       "Devis Odoo : la remise du tarif client n'est plus appliquée deux fois. Chaque ligne part au prix catalogue avec la remise totale (ex. 17,06 € −13 %), comme dans le panier ; avant, une ligne sans promo partait au prix déjà remisé et Odoo y ajoutait encore les 13 %. Frais de port envoyés sans remise.",
       "Panier en vue liste : chaque gratuité tient sur une seule ligne, de la même hauteur qu'un article payant, avec le Type de gratuité (ex. Coffre DC) à droite du code article ; remise 100 %, « Offert », rupture signalée sur la ligne.",

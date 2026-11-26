@@ -1277,11 +1277,22 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
       // son bloc, les UG d'un bon chargé après leur article payant ; le reste en fin.
       const ordered = orderedCart(cart);
       const gp = placeGifts(ordered, giftItems.filter(g => giftActive(g, cart) && g.qty > 0));
-      const orderBody: any[] = [];
+      // Devis d'implantation : une ligne de commentaire / section qui sépare un groupe
+      // d'articles est retirée si TOUT son groupe est à 0 (rien n'en part dans Odoo).
+      const entries: { sep: boolean; group?: string; cmds: any[] }[] = [];
+      const giftEntry = (g: GiftItem) => ({ sep: false, group: g.cond?.label, cmds: giftCmds(g) });
       ordered.forEach((item, i) => {
-        orderBody.push(...(gp.before.get(i) || []).flatMap(giftCmds));
-        if (item.note ? !!String(item.product.name || "").trim() : item.qty > 0) orderBody.push(...cartLineCmds(item));
-        orderBody.push(...(gp.after.get(i) || []).flatMap(giftCmds));
+        entries.push(...(gp.before.get(i) || []).map(giftEntry));
+        if (item.note) {
+          if (String(item.product.name || "").trim()) entries.push({ sep: isImplantLine(item), group: item.group, cmds: cartLineCmds(item) });
+        } else entries.push({ sep: false, group: item.group, cmds: item.qty > 0 ? cartLineCmds(item) : [] });
+        entries.push(...(gp.after.get(i) || []).map(giftEntry));
+      });
+      const orderBody: any[] = entries.flatMap((e, i) => {
+        if (!e.sep) return e.cmds;
+        for (let j = i + 1; j < entries.length && !entries[j].sep && entries[j].group === e.group; j++)
+          if (entries[j].cmds.length) return e.cmds;
+        return [];
       });
 
       const mainPayload: any = {
@@ -4654,7 +4665,11 @@ function CatalogStep({ session, loyaltyPrograms, cart, onQtyChange, freeItems, o
   // Loupe du panier : filtre les lignes (nom, réf., EAN) sans toucher au panier.
   const [cartSearch, setCartSearch] = useState<string | null>(null);
   const cartWords = fold(cartSearch || "").split(/\s+/).filter(Boolean);
-  const shownCartItems = cartWords.length ? cartItems.filter(i => !i.note && matchesSearch(i.product, cartWords)) : cartItems;
+  // Filtre « Ruptures » (ON/OFF) : seulement les lignes dont la quantité dépasse le stock.
+  const [onlyRuptures, setOnlyRuptures] = useState(false);
+  const isOverStock = (i: CartItem) => !i.note && !noStockCheck(i) && i.qty > Math.floor(i.product.virtual_available || 0);
+  const shownCartItems = onlyRuptures ? cartItems.filter(isOverStock)
+    : cartWords.length ? cartItems.filter(i => !i.note && matchesSearch(i.product, cartWords)) : cartItems;
   // Ligne d'une gratuité (zone « Gratuités », ou sous sa MEA / son article : inline).
   const giftRow = (g: GiftItem, inline: boolean) => {
     const i = giftItems.indexOf(g);
@@ -4730,7 +4745,8 @@ function CatalogStep({ session, loyaltyPrograms, cart, onQtyChange, freeItems, o
     );
   };
   // Gratuités sous leur MEA / après leur article (pas pendant une recherche dans le panier).
-  const giftPlacement = placeGifts(shownCartItems, cartWords.length ? [] : giftItems);
+  const giftPlacement = placeGifts(shownCartItems, cartWords.length ? []
+    : onlyRuptures ? giftItems.filter(g => giftActive(g, cart) && g.qty > 0 && giftShortage(g, cart) > 0) : giftItems);
   const cartCount = cartItems.reduce((s, i) => s + i.qty, 0);
   const cartTotal = cartItems.reduce((s, i) => s + i.qty * i.unitPrice, 0);
   const freeCount = freeItems.reduce((s, i) => s + i.qty, 0);
@@ -4750,12 +4766,10 @@ function CatalogStep({ session, loyaltyPrograms, cart, onQtyChange, freeItems, o
   // prévisionnel (virtual_available). AVERTISSEMENT seulement — le devis reste
   // créable : le stock bouge entre la visite et la livraison, et un devis n'est pas
   // une expédition. Les faux séparateurs (stock nul par nature) sont ignorés.
-  const overStockItems = cartItems.filter(i => {
-    if (i.note || noStockCheck(i)) return false;
-    const stock = Math.floor(i.product.virtual_available || 0);
-    return i.qty > stock;
-  });
-  const hasStockIssue = overStockItems.length > 0;
+  const overStockItems = cartItems.filter(isOverStock);
+  const giftRuptures = giftItems.filter(g => giftActive(g, cart) && g.qty > 0 && giftShortage(g, cart) > 0).length;
+  const hasStockIssue = overStockItems.length + giftRuptures > 0;
+  useEffect(() => { if (!hasStockIssue && onlyRuptures) setOnlyRuptures(false); }, [hasStockIssue, onlyRuptures]);
   // Produits de vente (réf. en 1) : nombre de références et quantité totale — suivis par les DC.
   // Compteurs par famille de référence (1 vente, 3 testeur, 5 échantillon, 7 MEA) :
   // lignes du panier + gratuités (un testeur offert reste un testeur).
@@ -5474,8 +5488,19 @@ function CatalogStep({ session, loyaltyPrograms, cart, onQtyChange, freeItems, o
             ligne ; ici un simple rappel. Informatif — le devis reste créable. */}
         {hasStockIssue && (
           <div style={{ margin: "0 12px 8px", display: "flex", alignItems: "center", gap: 6, fontSize: 11.5, fontWeight: 700, color: C.red }}>
-            <span style={{ width: 8, height: 8, borderRadius: "50%", background: C.red }} />
-            {overStockItems.length} rupture{overStockItems.length > 1 ? "s" : ""} : signalée{overStockItems.length > 1 ? "s" : ""} dans la note interne du devis (quantité totale saisie)
+            <span style={{ width: 8, height: 8, borderRadius: "50%", background: C.red, flexShrink: 0 }} />
+            <span style={{ flex: 1, minWidth: 0 }}>
+              {overStockItems.length + giftRuptures} rupture{overStockItems.length + giftRuptures > 1 ? "s" : ""} : signalée{overStockItems.length + giftRuptures > 1 ? "s" : ""} dans la note interne du devis (quantité totale saisie)
+            </span>
+            {/* Filtre ON/OFF : n'afficher que les lignes en rupture */}
+            <button onClick={() => setOnlyRuptures(v => !v)} role="switch" aria-checked={onlyRuptures}
+              title={onlyRuptures ? "Afficher toutes les lignes" : "N'afficher que les articles en rupture"}
+              style={{ flexShrink: 0, display: "flex", alignItems: "center", gap: 7, padding: "3px 4px 3px 10px", borderRadius: 999, border: `1px solid ${onlyRuptures ? C.red : C.red + "55"}`, background: onlyRuptures ? C.redSoft : "#fff", color: C.red, fontSize: 11.5, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>
+              Ruptures seules
+              <span style={{ width: 30, height: 17, borderRadius: 999, background: onlyRuptures ? C.red : "#cbd5e1", position: "relative" as const, transition: "background 0.15s" }}>
+                <span style={{ position: "absolute" as const, top: 2, left: onlyRuptures ? 15 : 2, width: 13, height: 13, borderRadius: "50%", background: "#fff", transition: "left 0.15s" }} />
+              </span>
+            </button>
           </div>
         )}
 
