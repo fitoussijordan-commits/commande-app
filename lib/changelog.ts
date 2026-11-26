@@ -8,6 +8,7 @@ export const CHANGELOG: ChangelogEntry[] = [
   {
     date: "2026-11-26",
     items: [
+      "« Charger la commande » : les articles sont maintenant cherchés par Odoo, avec exactement le même traitement que le bouton « Charger la commande » d'Odoo (code, EAN, lots de miniatures / échantillons, archivés et non vendables, recherche par le nom, sections cabine / revente, UG, « À SAISIR »). Nécessite le module de lecture des commandes 1.53 ; avec un module plus ancien, l'app fait la recherche elle-même comme avant.",
       "Devis créés depuis l'app : case « Flow » (x_studio_flow) cochée dans Odoo, et 1re ligne du chatter « Devis créé dans Flow » (au lieu de « Devis créé »). Avec le module de lecture des commandes 1.50, étiquette « Flow » sur le devis, à côté de « Lu par Claude ».",
       "Bouton « Se déconnecter » présent sur tous les écrans (accueil, fiche client, prise de commande, historique, périmés, tableau de bord, Mes MEA, préparation de RDV…), toujours le dernier à droite de l'en-tête, avec confirmation.",
       "Pastille réseau : « Hors ligne » quand la session Odoo a expiré, même avec Internet (avant : « En ligne »). Le panneau explique qu'il faut se reconnecter ; synchro et préchargement attendent la reconnexion.",

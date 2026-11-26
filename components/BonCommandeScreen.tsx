@@ -6,8 +6,9 @@
 //    clé API et son modèle Claude ; lecture directe pour les « Accord périmés »)
 //    → lignes brutes : code article, EAN,
 //    désignation, quantité, unités gratuites (UG). Aucun prix ni remise du bon.
-// 2. Chaque ligne est cherchée dans le catalogue Odoo avec les règles du module
-//    (lib/bonMatch.ts) : code, EAN, miniatures / échantillons → lots, article
+// 2. Chaque ligne est cherchée PAR ODOO (option resolve, module 1.53+ : même code
+//    que son bouton « Charger la commande »). Module plus ancien : recherche faite
+//    ici avec une copie des règles (lib/bonMatch.ts) : code, EAN, miniatures / échantillons → lots, article
 //    archivé ou non vendable → remplaçant ou note de rupture, recherche par le nom,
 //    « ⚠ À SAISIR » sinon.
 // 3. Le commercial vérifie, corrige, puis les lignes remplissent le panier
@@ -54,6 +55,31 @@ interface BonLu {
 interface Ligne extends Resolved {
   include: boolean;
   suggestions: any[];      // ligne « À SAISIR » : articles proposés d'après la désignation
+}
+
+// Ligne déjà cherchée par Odoo (flow_read_document avec resolve, module 1.53+) :
+// mêmes règles que le bouton « Charger la commande » d'Odoo.
+const normCode = (s: any) => String(s || "").replace(/\s/g, "").toUpperCase();
+function fromOdoo(r: any, key: number): Resolved {
+  const p = r.product || null;
+  const by = r.by_name || undefined;
+  let matchedBy: Resolved["matchedBy"] = null;
+  if (p) {
+    if (/remplacé via le nom/.test(by || "")) matchedBy = "remplacement";
+    else if (by) matchedBy = "nom";
+    else if (r.in_lots) matchedBy = "lot";
+    else if (r.code && normCode(p.default_code) === normCode(r.code)) matchedBy = "code";
+    else if (r.ean) matchedBy = "ean";
+    else matchedBy = "code";
+  }
+  return {
+    key,
+    lue: { code: r.code || "", ean: r.ean || "", label: r.label || "", qty: r.ordered_qty || 0, free: r.ordered_free || 0, comment: r.comment || "" },
+    kind: r.kind === "rupture" || r.kind === "saisir" ? r.kind : "product",
+    product: p, qty: r.qty || 0, freeQty: r.free_qty || 0, inLots: !!r.in_lots, matchedBy,
+    description: r.description || undefined, highlight: r.highlight || undefined,
+    byName: by, lotNote: r.lot_note || undefined, note: r.note || undefined, reason: r.reason || undefined,
+  };
 }
 
 // Résultat transmis à la prise de commande.
@@ -383,7 +409,15 @@ export default function BonCommandeScreen({ session, client, priceItems, onApply
       const sentName = kind === "image" ? `${(file.name || "photo").replace(/\.[^.]+$/, "")}.jpg` : (file.name || "commande");
       let data: any;
       try {
-        data = await odoo.callMethod(session, "sale.order.ocr.import", "flow_read_document", [payload.data, sentName, payload.mediaType]);
+        // resolve : Odoo (module 1.53+) cherche aussi les articles, avec les règles
+        // exactes de son bouton « Charger la commande ». Module plus ancien : il
+        // refuse l'option → lecture seule, recherche faite ici (lib/bonMatch).
+        try {
+          data = await odoo.callMethod(session, "sale.order.ocr.import", "flow_read_document", [payload.data, sentName, payload.mediaType], { resolve: true });
+        } catch (e: any) {
+          if (!/unexpected keyword|resolve/i.test(String(e?.message || e))) throw e;
+          data = await odoo.callMethod(session, "sale.order.ocr.import", "flow_read_document", [payload.data, sentName, payload.mediaType]);
+        }
       } catch (e: any) {
         const msg = String(e?.message || e);
         if (/sale\.order\.ocr\.import|flow_read_document|does not exist|n'existe pas/i.test(msg)) {
@@ -396,9 +430,16 @@ export default function BonCommandeScreen({ session, client, priceItems, onApply
       const lu: BonLu = data.bon;
       if (data.previewHtml) setPreview({ url: "", kind: "html", html: data.previewHtml });
       setBon(lu);
-      setLoading("catalogue");
-      const cat = await loadCatalog(session);
-      const { lines, skipped } = resolveLines(cat, lu.lignes || []);
+      let lines: Resolved[], skipped: number, cat: { offline?: boolean } = {};
+      if (Array.isArray(data.resolved)) {
+        lines = data.resolved.map(fromOdoo);
+        skipped = data.skipped || 0;
+      } else {
+        setLoading("catalogue");
+        const local = await loadCatalog(session);
+        cat = local;
+        ({ lines, skipped } = resolveLines(local, lu.lignes || []));
+      }
       setInfo({
         model: data.model || null, bdcOffline: !!data.bdcOffline, skipped,
         file: { name: kind === "image" && !/\.(jpe?g)$/i.test(file.name) ? `${file.name.replace(/\.[^.]+$/, "")}.jpg` : file.name || "commande", data: original },
