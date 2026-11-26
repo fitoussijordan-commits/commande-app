@@ -107,9 +107,9 @@ export default function RdvPrepModal({ session, client, onClose: onCloseProp, on
       <div style={{ maxWidth: 1100, margin: "0 auto", padding: "18px 22px 40px" }}>
         {/* En-tête */}
         <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16 }}>
+          <HomeButton size={38} />
           <button onClick={onClose} aria-label="Retour"
             style={{ width: 38, height: 38, borderRadius: 11, border: `1px solid ${C.border}`, background: C.white, cursor: "pointer", fontSize: 16 }}>←</button>
-          <HomeButton size={38} />
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ fontSize: 12, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: "0.06em" }}>Préparation de RDV</div>
             <div style={{ fontSize: 22, fontWeight: 800, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{client.name}</div>

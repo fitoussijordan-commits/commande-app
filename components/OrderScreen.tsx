@@ -1597,6 +1597,8 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
 
       {/* ── Top bar ── */}
       <div style={{ height: 56, background: "#fff", borderBottom: `1px solid ${C.border}`, display: "flex", alignItems: "center", padding: "0 16px", gap: 10, flexShrink: 0, boxShadow: C.shadow }}>
+        {/* Accueil : le plus à gauche, sur tous les écrans sauf l'accueil lui-même */}
+        {step !== "client" && <HomeButton />}
         {/* Flèche retour — jamais sur l'écran racine (avant, elle déconnectait : un tap
              accidentel en tournée = impossible de se reconnecter hors ligne). */}
         {step !== "client" && (
@@ -1612,8 +1614,6 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={C.text} strokeWidth="2.5"><path d="M19 12H5M12 5l-7 7 7 7"/></svg>
           </button>
         )}
-        {/* Accueil : sur tous les écrans sauf l'accueil lui-même */}
-        {step !== "client" && <HomeButton />}
 
         {/* Fil d'ariane simple : où on en est pour ce client */}
         <div style={{ fontSize: 13, fontWeight: 700, color: C.muted, minWidth: 0, flexShrink: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>

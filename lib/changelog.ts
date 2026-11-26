@@ -8,6 +8,7 @@ export const CHANGELOG: ChangelogEntry[] = [
   {
     date: "2026-11-26",
     items: [
+      "Bouton « Accueil » placé tout à gauche de l'en-tête, avant la flèche retour, sur tous les écrans.",
       "Prise de commande plus rapide : le catalogue s'affiche tout de suite depuis la copie gardée sur l'appareil, puis se met à jour avec Odoo en arrière-plan (stocks frais une ou deux secondes après) — au lieu d'attendre Odoo environ 3,5 s. Et le relais entre l'app et Odoo tourne maintenant à Paris au lieu de Washington : chaque échange avec Odoo est plus rapide.",
       "Bouton « Accueil » sur tous les écrans (fiche client, prise de commande, historique, périmés, import de bon, tableau de bord, Mes MEA, préparation de RDV…), juste après la flèche retour : ferme l'écran en cours et revient à la page d'accueil ; le panier en cours reste dans les brouillons.",
       "Devis d'implantation : la remise saisie s'additionne maintenant à la remise du tarif client (tarif −17 % + implantation −10 % = −27 % sur le prix catalogue), au lieu de s'appliquer en cascade.",
