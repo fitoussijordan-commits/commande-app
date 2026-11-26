@@ -4683,6 +4683,7 @@ function CatalogStep({ session, loyaltyPrograms, cart, onQtyChange, freeItems, o
   // Ligne d'une gratuité (zone « Gratuités », ou sous sa MEA / son article : inline).
   const giftRow = (g: GiftItem, inline: boolean) => {
     const i = giftItems.indexOf(g);
+    if (listView) return giftListRow(g, i);
     return (
                 <div key={`gift-${i}`} title={!giftActive(g, cart) ? (g.cond?.mea ? `MEA « ${g.cond?.label} » non éligible : promo Odoo non atteinte ou article MEA (code 7) absent` : `Offre suspendue : total d'articles de « ${g.cond?.label} » non atteint`) : undefined}
                   style={{ display: "flex", alignItems: "center", gap: 6, padding: "3px 0", borderBottom: inline ? "none" : `1px solid ${C.green}22`, ...(inline ? { background: C.greenSoft, borderRadius: 8, padding: "3px 6px", margin: "2px 0 4px 14px" } : {}), flexWrap: inline || !g.type ? "wrap" as const : "nowrap" as const, opacity: !giftActive(g, cart) ? 0.45 : g.qty === 0 ? 0.7 : 1 }}>
@@ -4715,6 +4716,42 @@ function CatalogStep({ session, loyaltyPrograms, cart, onQtyChange, freeItems, o
                     {freeTypes.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
                   </select>
                 </div>
+    );
+  };
+  // Vue liste : gratuité sur UNE ligne, mêmes colonnes et même hauteur qu'un article
+  // payant ; le Type de gratuité prend la place de l'EAN, à droite du code article.
+  const giftListRow = (g: GiftItem, i: number) => {
+    const active = giftActive(g, cart);
+    const short = active && g.qty > 0 ? giftShortage(g, cart) : 0;
+    const setGiftQty = (n: number) => setGiftItems(prev => prev.map((x, j) => j === i ? { ...x, qty: Math.max(0, n) } : x));
+    const brut = g.fullDiscountPrice ?? (g.product.lst_price || 0);
+    return (
+      <div key={`gift-${i}`} title={!active ? (g.cond?.mea ? `MEA « ${g.cond?.label} » non éligible : promo Odoo non atteinte ou article MEA (code 7) absent` : `Offre suspendue : total d'articles de « ${g.cond?.label} » non atteint`) : short > 0 ? `Rupture : ${short} manquant${short > 1 ? "s" : ""} — le manquant part à 0 sur le devis` : undefined}
+        style={{ display: "flex", alignItems: "center", gap: 8, padding: "1px 6px", minHeight: 26, borderBottom: `1px solid ${C.border}`, background: C.greenSoft, opacity: !active ? 0.45 : g.qty === 0 ? 0.7 : 1 }}>
+        <span style={{ width: 8, flexShrink: 0, display: "inline-flex", justifyContent: "center", color: short > 0 ? C.red : C.green }}><Icon name="gift" size={10} /></span>
+        <span style={{ width: LV.code, flexShrink: 0, fontSize: 10.5, fontFamily: "monospace", color: C.muted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>{g.product.default_code || ""}</span>
+        <select value={g.type} title="Type de gratuité de cette ligne"
+          onChange={e => setGiftItems(prev => prev.map((x, j) => j === i ? { ...x, type: e.target.value } : x))}
+          style={{ width: LV.ean, flexShrink: 0, height: 22, padding: "0 2px", fontSize: 10.5, fontWeight: 700, borderRadius: 5, border: `1px solid ${g.type ? C.green + "66" : C.red}`, background: "#fff", color: g.type ? C.green : C.red, fontFamily: "inherit" }}>
+          <option value="">— Type —</option>
+          {freeTypes.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
+        </select>
+        <span style={{ flex: 1, minWidth: 0, fontSize: 12, fontWeight: 600, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const, textDecoration: active ? "none" : "line-through" }}>
+          {g.product.name}
+          {short > 0 && <span style={{ marginLeft: 6, fontSize: 10.5, fontWeight: 700, color: C.red }}>Rupture : {short} manquant{short > 1 ? "s" : ""}</span>}
+        </span>
+        <div style={{ width: LV.qty, justifyContent: "center", display: "flex", alignItems: "center", gap: 3, flexShrink: 0 }}>
+          <button onClick={() => setGiftQty(g.qty - 1)} style={{ width: 26, height: 24, borderRadius: 6, padding: 0, lineHeight: 1, background: C.redSoft, border: "none", cursor: "pointer", color: C.red, fontSize: 17, fontWeight: 700 }}>−</button>
+          <span key={g.qty} className="qty-pop" style={{ minWidth: 38, height: 24, boxSizing: "border-box" as const, borderRadius: 6, border: `1px solid ${C.border}`, background: "#fff", display: "inline-flex", alignItems: "center", justifyContent: "center", fontSize: 12, fontWeight: 800, color: C.text }}>{g.qty}</span>
+          <button onClick={() => setGiftQty(g.qty + 1)} style={{ width: 26, height: 24, borderRadius: 6, padding: 0, lineHeight: 1, background: C.tealSoft, border: "none", cursor: "pointer", color: C.teal, fontSize: 17, fontWeight: 700 }}>+</button>
+        </div>
+        <span style={{ width: LV.brut, flexShrink: 0, textAlign: "right" as const, fontSize: 11.5, color: C.textSec }}>{brut > 0 ? fmtPrice(brut) : "—"}</span>
+        <span style={{ width: LV.remise, flexShrink: 0, textAlign: "right" as const, fontSize: 11.5, fontWeight: 700, color: C.green }}>100 %</span>
+        <span style={{ width: LV.net, flexShrink: 0, textAlign: "right" as const, fontSize: 11.5, fontWeight: 700, color: C.text }}>{fmtPrice(0)}</span>
+        <span style={{ width: LV.total, flexShrink: 0, textAlign: "right" as const, fontSize: 12, fontWeight: 800, color: C.green }}>Offert</span>
+        <button onClick={() => setGiftItems(prev => prev.filter((_, j) => j !== i))} title="Retirer"
+          style={{ flexShrink: 0, width: LV.x, height: 24, padding: 0, background: "transparent", border: "none", cursor: "pointer", color: C.muted, fontSize: 14 }}>✕</button>
+      </div>
     );
   };
   // Gratuités sous leur MEA / après leur article (pas pendant une recherche dans le panier).
