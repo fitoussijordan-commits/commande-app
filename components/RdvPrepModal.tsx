@@ -43,17 +43,16 @@ export default function RdvPrepModal({ session, client, onClose: onCloseProp, on
   useEffect(() => {
     let alive = true;
     loadRdvPrep(session, client)
-      .then(d => { if (!alive) return; setData(d); setOpen(d.campaigns.find(c => c.status === "todo" && !c.plan?.ineligible && new RegExp(`\\b${new Date().getFullYear()}\\b`).test(c.campaign.key))?.campaign.key || null); })
+      .then(d => { if (!alive) return; setData(d); setOpen(d.campaigns.find(c => c.status === "todo" && !c.plan?.ineligible)?.campaign.key || null); })
       .catch(e => { if (alive) setError(odoo.isNetworkError(e) ? "Préparation indisponible hors ligne." : `Lecture impossible : ${e?.message || e}`); });
     return () => { alive = false; };
   }, [session, client]);
 
-  // Offres de l'année en cours seulement (l'année figure dans le nom : « MEA Noël
-  // 2026 ») ; les MEA marquées N/A passent en fin de liste.
+  // Offres de l'année en cours (filtrées par lib/rdvPrep sur la « Date début » des
+  // modèles de devis) ; les MEA marquées N/A passent en fin de liste.
   const campaigns = useMemo(() => {
-    const year = String(new Date().getFullYear());
     const isNa = (x: PrepCampaign) => x.status === "todo" && !!x.plan?.ineligible;
-    const cur = (data?.campaigns || []).filter(x => new RegExp(`\\b${year}\\b`).test(x.campaign.key));
+    const cur = data?.campaigns || [];
     return [...cur.filter(x => !isNa(x)), ...cur.filter(isNa)];
   }, [data]);
 

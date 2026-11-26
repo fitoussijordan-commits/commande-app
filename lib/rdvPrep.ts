@@ -262,6 +262,21 @@ export function propose(base: CampaignBase, n1Map: Map<number, { qty: number }>,
   };
 }
 
+// Campagnes dont un modèle de devis (archivés compris) commence dans l'année
+// `y` (champ Studio « Date début »). Champ absent de la base : aucun filtre.
+export const TEMPLATE_START_FIELD = "x_studio_date_debut_1";
+export async function currentYearCampaigns(session: odoo.OdooSession, campaigns: MeaCampaign[], y: number): Promise<MeaCampaign[]> {
+  let tpls: any[];
+  try {
+    tpls = await odoo.searchRead(session, "sale.order.template", [["active", "in", [true, false]]],
+      ["id", "name", TEMPLATE_START_FIELD], 0);
+  } catch (e) {
+    if (odoo.isNetworkError(e)) throw e;
+    return campaigns;   // champ inconnu sur cette base
+  }
+  return campaigns.filter(c => templatesOf(tpls, c).some(t => String(t[TEMPLATE_START_FIELD] || "").slice(0, 4) === String(y)));
+}
+
 // Contexte des modèles (lignes, articles) pour une liste de campagnes.
 export async function loadTemplateCtx(session: odoo.OdooSession, campaigns: MeaCampaign[]): Promise<TemplateCtx> {
   const tlm = await templateLineMeta(session);
@@ -343,7 +358,10 @@ export async function loadRdvPrep(session: odoo.OdooSession, client: any): Promi
   const { tracking, plans } = await clientPlans(session, client.id);
   // Offres du cycle : MEA actives + toute MEA déjà faite / en devis par le
   // client, même terminée (ex. « ON PACK 2026 » passée par l'AZUR).
-  const active = valid.filter(c => c.active || taken.has(c.key));
+  const active0 = valid.filter(c => c.active || taken.has(c.key));
+  // Offres de l'ANNÉE EN COURS seulement : un modèle de devis de la campagne
+  // (archivé compris) a sa « Date début » (x_studio_date_debut_1) dans l'année.
+  const active = await currentYearCampaigns(session, active0, y);
 
   // ── Modèles de devis des campagnes (produits mis en avant + kit) ──
   const { tLines, tlm, templates, pMap } = await loadTemplateCtx(session, active);
