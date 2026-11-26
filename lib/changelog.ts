@@ -8,6 +8,7 @@ export const CHANGELOG: ChangelogEntry[] = [
   {
     date: "2026-11-26",
     items: [
+      "Devis Odoo : la remise du tarif client n'est plus appliquée deux fois. Chaque ligne part au prix catalogue avec la remise totale (ex. 17,06 € −13 %), comme dans le panier ; avant, une ligne sans promo partait au prix déjà remisé et Odoo y ajoutait encore les 13 %. Frais de port envoyés sans remise.",
       "Panier en vue liste : chaque gratuité tient sur une seule ligne, de la même hauteur qu'un article payant, avec le Type de gratuité (ex. Coffre DC) à droite du code article ; remise 100 %, « Offert », rupture signalée sur la ligne.",
       "Panier en vue liste : lignes resserrées (polices et boutons plus petits), en-tête du panier sur une ligne et bloc Total sur une seule ligne (récap replié) — environ 12 articles visibles sur un petit écran au lieu de 5, davantage sur un grand.",
     ],

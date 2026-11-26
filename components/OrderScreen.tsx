@@ -132,11 +132,13 @@ function promoCart(cart: Record<number, CartItem>): Record<number, CartItem> {
 // Remise événement (10 / 15 %) : additionnée elle aussi, sur les lignes payantes
 // (tarif −17 % + événement −10 % = −27 %). Devis d'implantation : en cascade.
 // brut = prix de référence de la ligne envoyée à Odoo ; discount = % de remise de
-// la ligne (sur brut) ; net = PU net. additive : la ligne part « brut + remise ».
+// la ligne (sur brut) ; net = PU net. additive : la ligne part « brut + remise »,
+// comme Odoo l'affiche : prix CATALOGUE + remise totale (tarif client compris),
+// même sans promo — envoyée en net sans remise, Odoo y ajoutait la remise du tarif.
 function linePricing(item: { product: any; unitPrice: number; priceLocked?: boolean }, promoPct: number, otherPct: number) {
   const unit = item.unitPrice;
   const other = Math.min(100, Math.max(0, otherPct));
-  if (!promoPct || item.priceLocked) {
+  if (item.priceLocked) {
     const disc = Math.min(100, promoPct + other);
     return { brut: unit, discount: disc, net: unit * (1 - disc / 100), additive: false };
   }
@@ -1262,7 +1264,9 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
               product_id: item.product.id,
               product_uom_qty: qty,
               price_unit: price,
-              ...(disc > 0 ? { discount: disc } : {}),
+              // Remise TOUJOURS envoyée (même 0) : sans elle, Odoo y met la remise
+              // de la liste de prix du client, en plus d'un prix déjà remisé.
+              discount: disc,
               ...(item.lineName ? { name: item.lineName } : {}),
               ...(item.freeType ? { type_gratuit: item.freeType } : {}),
               ...hl,
@@ -1326,13 +1330,13 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
           ...promoFreeLines.map(p => [0, 0, {
             product_id: p.reward.reward_product_id,
             product_uom_qty: p.reward.reward_product_qty * Math.max(1, loyalty.rewardTimes(p.program, p.reward, promoCart(cart))),
-            price_unit: 0,
+            price_unit: 0, discount: 0,
             type_gratuit: "gratuites_des_offres",
           }]),
           // Gratuités hors MEA (bouton Offrir, bon chargé…) et celles d'une MEA retirée.
           ...gp.rest.flatMap(giftCmds),
           // Franco non atteint : frais de livraison.
-          ...(feeProduct ? [[0, 0, { product_id: feeProduct.id, product_uom_qty: 1, price_unit: SHIPPING_FEE_HT }]] : []),
+          ...(feeProduct ? [[0, 0, { product_id: feeProduct.id, product_uom_qty: 1, price_unit: SHIPPING_FEE_HT, discount: 0 }]] : []),
         ],
       };
 
@@ -1385,7 +1389,7 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
         order_line: freeItems.map(fi => [0, 0, {
           product_id: fi.product.id,
           product_uom_qty: fi.qty,
-          price_unit: 0,
+          price_unit: 0, discount: 0,
         }]),
       } : null;
 
