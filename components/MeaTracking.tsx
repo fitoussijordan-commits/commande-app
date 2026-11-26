@@ -3,6 +3,7 @@
 // pour chaque MEA active, les clients du commercial qui ont pris / ont un devis /
 // sont à proposer, leur prochain RDV (ou « Planifier ») et la prévision du
 // commercial (offre envisagée + note) — pour préparer ses RDV.
+import LogoutButton from "@/components/LogoutButton";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { TubeLoader } from "@/components/motion";
 import * as odoo from "@/lib/odoo";
@@ -211,6 +212,7 @@ export default function MeaDashboard({ session, onClose, onOpenClient, onToast }
             )}
             <input value={q} onChange={e => setQ(e.target.value)} placeholder="Chercher un client…"
               style={{ width: 230, height: 38, padding: "0 12px", borderRadius: 10, border: `1.5px solid ${C.border}`, fontSize: 13, fontFamily: "inherit", outline: "none" }} />
+            <LogoutButton size={38} />
           </div>
 
           {/* Campagnes actives */}

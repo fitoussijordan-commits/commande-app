@@ -251,6 +251,14 @@ export default function HomePage() {
     if (IS_ODOO) { location.href = `/web/session/logout?redirect=${encodeURIComponent(asset("/"))}`; return; }
     setSession(null);
   };
+  // Bouton « Se déconnecter » de n'importe quel écran (components/LogoutButton).
+  const logoutRef = useRef(handleLogout);
+  logoutRef.current = handleLogout;
+  useEffect(() => {
+    const on = () => logoutRef.current();
+    window.addEventListener("flow:logout", on);
+    return () => window.removeEventListener("flow:logout", on);
+  }, []);
 
   if (!ready) return null;
 

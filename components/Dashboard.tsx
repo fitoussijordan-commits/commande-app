@@ -2,6 +2,7 @@
 // Tableau de bord du commercial (écran à part, ouvert depuis l'accueil) :
 // chiffres clés de l'année vs N-1, CA par mois, top / flop 20, meilleurs CA,
 // suivi des MEA et clients à visiter.
+import LogoutButton from "@/components/LogoutButton";
 import { useEffect, useState } from "react";
 import { CountUp, Sk } from "@/components/motion";
 import * as odoo from "@/lib/odoo";
@@ -129,6 +130,7 @@ export default function Dashboard({ session, onClose, onOpenClient, onToast }: {
             <div style={{ fontSize: 24, fontWeight: 800, color: C.text }}>Mon tableau de bord</div>
             <div style={{ fontSize: 12.5, color: C.muted }}>Du 1er janvier au {today} {st?.year || ""}, comparé à la même période {st ? st.year - 1 : "N-1"} · {st?.caFromOdoo ? "CA : champs Odoo « CA à date » (comme la fiche client) · commandes et graphique : commandes confirmées HT" : "commandes confirmées, CA HT"}</div>
           </div>
+          <LogoutButton />
         </div>
 
         {error && <div style={{ padding: 30, textAlign: "center" as const, color: C.muted }}>{error}</div>}

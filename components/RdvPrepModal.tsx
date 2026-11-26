@@ -2,6 +2,7 @@
 // Préparation de RDV : CA à date, offres du cycle faites / à faire (offre
 // prévue + note), quantités proposées par produit (modifiables) avec export du
 // BDC Excel (case N/A : offre non proposée au client).
+import LogoutButton from "@/components/LogoutButton";
 import { useEffect, useMemo, useState } from "react";
 import * as odoo from "@/lib/odoo";
 import { loadRdvPrep, type RdvPrep, type PrepCampaign } from "@/lib/rdvPrep";
@@ -112,6 +113,7 @@ export default function RdvPrepModal({ session, client, onClose: onCloseProp, on
             <div style={{ fontSize: 22, fontWeight: 800, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{client.name}</div>
           </div>
           {data?.pricelist && <span style={{ fontSize: 12, fontWeight: 700, color: C.tealDark, background: C.tealSoft, borderRadius: 999, padding: "4px 10px" }}>{data.pricelist}</span>}
+          <LogoutButton size={38} />
         </div>
 
         {error && <div style={{ padding: 40, textAlign: "center", color: C.muted }}>{error}</div>}

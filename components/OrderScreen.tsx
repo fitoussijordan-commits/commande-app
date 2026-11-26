@@ -1,4 +1,5 @@
 "use client";
+import LogoutButton from "@/components/LogoutButton";
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import * as odoo from "@/lib/odoo";
 import AppointmentModal from "@/components/AppointmentModal";
@@ -1720,19 +1721,6 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
           );
         })()}
 
-        {/* Déconnexion — uniquement sur l'écran racine, avec confirmation explicite
-             (hors ligne, impossible de se reconnecter : Odoo doit vérifier le mot de passe). */}
-        {step === "client" && (
-          <button
-            onClick={() => {
-              if (window.confirm("Se déconnecter d'Odoo ?\n\nAttention : hors ligne, impossible de se reconnecter. En tournée, reste connecté.")) onBack();
-            }}
-            title="Se déconnecter"
-            style={{ width: 36, height: 36, borderRadius: 10, background: C.bg, border: `1px solid ${C.border}`, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={C.red} strokeWidth="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="M16 17l5-5-5-5M21 12H9"/></svg>
-          </button>
-        )}
-
         {/* Client badge — cliquable pour revenir au hub de ce client depuis n'importe où */}
         {client && (
           <div
@@ -1782,6 +1770,9 @@ export default function OrderScreen({ session, onBack, onToast, desktop }: Props
             ⚙️
           </button>
         )}
+
+        {/* Déconnexion : sur tous les écrans, toujours le dernier bouton (à droite). */}
+        <LogoutButton />
       </div>
 
       {/* ── Bandeau reprise — scopé UNIQUEMENT au client qu'on vient de sélectionner,

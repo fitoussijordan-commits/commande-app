@@ -8,6 +8,7 @@ export const CHANGELOG: ChangelogEntry[] = [
   {
     date: "2026-11-26",
     items: [
+      "Bouton « Se déconnecter » présent sur tous les écrans (accueil, fiche client, prise de commande, historique, périmés, tableau de bord, Mes MEA, préparation de RDV…), toujours le dernier à droite de l'en-tête, avec confirmation.",
       "Pastille réseau : « Hors ligne » quand la session Odoo a expiré, même avec Internet (avant : « En ligne »). Le panneau explique qu'il faut se reconnecter ; synchro et préchargement attendent la reconnexion.",
       "Devis d'implantation : une ligne de commentaire qui sépare un groupe d'articles n'est plus envoyée dans Odoo quand tous les articles de ce groupe sont à 0.",
       "Panier en grand (vue liste) : interrupteur ON/OFF « Articles en rupture » dans l'en-tête, à gauche de l'icône panier, pour n'afficher que les articles (et gratuités) en rupture dans une longue liste. Absent du petit panier.",
