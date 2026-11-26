@@ -43,17 +43,26 @@ export default function RdvPrepModal({ session, client, onClose: onCloseProp, on
   useEffect(() => {
     let alive = true;
     loadRdvPrep(session, client)
-      .then(d => { if (!alive) return; setData(d); setOpen(d.campaigns.find(c => c.status === "todo")?.campaign.key || null); })
+      .then(d => { if (!alive) return; setData(d); setOpen(d.campaigns.find(c => c.status === "todo" && !c.plan?.ineligible && new RegExp(`\\b${new Date().getFullYear()}\\b`).test(c.campaign.key))?.campaign.key || null); })
       .catch(e => { if (alive) setError(odoo.isNetworkError(e) ? "Préparation indisponible hors ligne." : `Lecture impossible : ${e?.message || e}`); });
     return () => { alive = false; };
   }, [session, client]);
 
+  // Offres de l'année en cours seulement (l'année figure dans le nom : « MEA Noël
+  // 2026 ») ; les MEA marquées N/A passent en fin de liste.
+  const campaigns = useMemo(() => {
+    const year = String(new Date().getFullYear());
+    const isNa = (x: PrepCampaign) => x.status === "todo" && !!x.plan?.ineligible;
+    const cur = (data?.campaigns || []).filter(x => new RegExp(`\\b${year}\\b`).test(x.campaign.key));
+    return [...cur.filter(x => !isNa(x)), ...cur.filter(isNa)];
+  }, [data]);
+
   const evo = data && data.ca.n != null && data.ca.n1 ? ((data.ca.n - data.ca.n1) / data.ca.n1) * 100 : null;
   const counts = useMemo(() => {
     const c = { pris: 0, devis: 0, todo: 0 };
-    data?.campaigns.forEach(x => { if (!(x.status === "todo" && x.plan?.ineligible)) c[x.status]++; });
+    campaigns.forEach(x => { if (!(x.status === "todo" && x.plan?.ineligible)) c[x.status]++; });
     return c;
-  }, [data]);
+  }, [campaigns]);
 
   // Variante affichée / exportée : choisie à la main, sinon celle de l'« Offre
   // prévue » (même nom que le modèle), sinon la variante conseillée.
@@ -138,9 +147,9 @@ export default function RdvPrepModal({ session, client, onClose: onCloseProp, on
           {/* Offres du cycle */}
           <SectionTitle>Offres du cycle</SectionTitle>
           {!data.tracking && <div style={{ fontSize: 11.5, color: C.orange, margin: "-4px 2px 8px" }}>Offre prévue et notes gardées sur cet appareil (modèle Odoo « Suivi MEA » absent).</div>}
-          {data.campaigns.length === 0 && <div style={{ color: C.muted, fontSize: 13, padding: 10 }}>Aucune MEA active.</div>}
+          {campaigns.length === 0 && <div style={{ color: C.muted, fontSize: 13, padding: 10 }}>Aucune MEA {new Date().getFullYear()}.</div>}
           <div className="stagger" style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 22 }}>
-            {data.campaigns.map(pc0 => {
+            {campaigns.map(pc0 => {
               const pc = viewOf(pc0);
               // N/A : le DC ne proposera pas cette offre au client (champ « éligible » du suivi MEA).
               const na = pc.status === "todo" && !!pc.plan?.ineligible;
