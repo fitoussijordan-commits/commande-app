@@ -9,7 +9,7 @@
 import * as odoo from "@/lib/odoo";
 import { resolveClientFamily } from "@/lib/perimes";
 import { caDateFields } from "@/lib/salesStats";
-import { loadCampaigns, clientPlans, planKey, TEMPLATE_START_FIELD, FAMILLE_FIELD, hasFamilleField, meaTargets, type MeaCampaign, type Plan, type TrackingModel } from "@/lib/meaTracking";
+import { loadCampaigns, clientPlans, planKey, TEMPLATE_START_FIELD, FAMILLE_FIELD, hasFamilleField, meaTargets, clientKind, nameFits, type MeaCampaign, type Plan, type TrackingModel } from "@/lib/meaTracking";
 import { templateLineMeta } from "@/lib/orderOffers";
 import { optionalProductFields, saleStep, ppcOf } from "@/lib/productFields";
 
@@ -388,8 +388,20 @@ export async function loadRdvPrep(session: odoo.OdooSession, client: any): Promi
     qtyByProduct(session, family, `${y}-01-01`, todayN, productIds),
   ]) : [new Map(), new Map()];
 
-  const ctx: TemplateCtx = { tLines, tlm, pMap, templates };
-  const prepCampaigns: PrepCampaign[] = active.map(c => {
+  // Variantes réservées à l'autre type de client (« Essentiel RETAIL » pour un
+  // institut…) : ni proposées ni dans « Offre prévue ». Si plus rien ne reste,
+  // on garde tout (MEA déjà prise par le client, par exemple).
+  const kind = clientKind(cRow);
+  const dropped = new Set<number>();
+  for (const c of active) {
+    const tpls = templatesOf(templates, c);
+    const unfit = tpls.filter(tp => !nameFits(String(tp.name || ""), kind));
+    if (unfit.length < tpls.length) unfit.forEach(tp => dropped.add(tp.id));
+  }
+  const ctx: TemplateCtx = { tLines, tlm, pMap, templates: templates.filter(tp => !dropped.has(tp.id)) };
+  const prepCampaigns: PrepCampaign[] = active.map(c0 => {
+    const fit = c0.offers.filter(o => nameFits(o.variant, kind));
+    const c = fit.length ? { ...c0, offers: fit } : c0;
     const t = taken.get(c.key);
     const base = campaignBase(ctx, c);
     const { chosen, reason, products: prods, free, options } = propose(base, n1Map, nMap, y);

@@ -22,8 +22,8 @@ export interface MeaCampaign {
   // compris, avec leur « Date début ». Absent : ancien rapprochement par le nom.
   templateIds?: number[];
   templateStarts?: string[];
-  // « Exclusif Institut » / « Exclusif Revendeur » ou « Retail » (nom de l'offre, de la
-  // campagne ou d'un modèle de devis lié) : réservée à ce type de client.
+  // MEA réservée à un type de client (« Institut », « Retail » / « Revendeur »
+  // dans son nom ou dans toutes ses variantes), cf. campaignExclusive.
   exclusive?: ClientKind | null;
 }
 
@@ -37,12 +37,24 @@ export function clientKind(client: any): ClientKind {
   const label = Array.isArray(v) ? String(v[1] || "") : typeof v === "string" ? v : "";
   return /institut|esth/i.test(label) ? "institut" : "revendeur";
 }
-export function exclusiveOf(...names: string[]): ClientKind | null {
-  const s = names.join(" ");
-  if (/exclusi\w*\W+institut/i.test(s)) return "institut";
-  if (/exclusi\w*\W+(revendeur|retail)/i.test(s)) return "revendeur";   // « Exclusif Retail » = revendeur
+// Un nom (offre, variante, modèle de devis) réservé à un type de client :
+// « Retail » (ou « Revendeur ») → REVENDEUR, « Institut » → INSTITUT.
+export function exclusiveOf(name: string): ClientKind | null {
+  if (/\binstitut/i.test(name)) return "institut";
+  if (/\b(retail|revendeur)/i.test(name)) return "revendeur";
   return null;
 }
+// Une MEA entière est réservée si son nom l'est, ou si TOUTES ses variantes le
+// sont pour le même type. Variantes mêlées (« Essentiel » + « Essentiel RETAIL ») :
+// MEA pour tous, et seules les variantes du bon type sont proposées au client.
+export function campaignExclusive(key: string, offerNames: string[]): ClientKind | null {
+  const k = exclusiveOf(key);
+  if (k) return k;
+  const kinds = offerNames.map(n => exclusiveOf(campaignOf(n).variant));
+  return kinds.length && kinds.every(x => x && x === kinds[0]) ? kinds[0] : null;
+}
+// Ce nom (variante, modèle) convient-il à ce type de client ?
+export const nameFits = (name: string, kind: ClientKind) => { const e = exclusiveOf(name); return !e || e === kind; };
 // La MEA s'adresse-t-elle à ce client ? (sans exclusivité : à tous)
 export const meaTargets = (c: MeaCampaign, client: any) => !c.exclusive || c.exclusive === clientKind(client);
 // Le champ Famille existe-t-il sur res.partner ? (lu une fois)
@@ -170,7 +182,7 @@ export async function loadCampaigns(session: odoo.OdooSession): Promise<Campaign
     byKey.set(key, c);
   }
   const all = Array.from(byKey.values());
-  all.forEach(c => { c.exclusive = exclusiveOf(c.key, ...c.offers.map(o => o.name), ...(c.templateIds || []).map(id => String(tplById.get(id)?.name || ""))); });
+  all.forEach(c => { c.exclusive = campaignExclusive(c.key, c.offers.map(o => o.name)); });
   const campaigns = [...all.filter(c => c.active), ...all.filter(c => !c.active)];
   const offerCampaign = new Map<number, string>();
   campaigns.forEach(c => c.offers.forEach(o => offerCampaign.set(o.id, c.key)));
