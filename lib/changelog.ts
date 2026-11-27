@@ -6,6 +6,12 @@ export interface ChangelogEntry { date: string; items: string[] }
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    date: "2026-11-27",
+    items: [
+      "Préparation de RDV : plus aucune MEA dépliée à l'ouverture de la page ; on ouvre celle qu'on veut.",
+    ],
+  },
+  {
     date: "2026-11-26",
     items: [
       "Préparation de RDV : « Offres du cycle » devient « Offres 2026 » (année en cours). Chargement plus rapide : lectures Odoo faites en parallèle, et le calcul des baisses / hausses par produit (bloc retiré de l'écran, la lecture la plus lourde) n'est plus fait.",

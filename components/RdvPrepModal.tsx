@@ -43,7 +43,7 @@ export default function RdvPrepModal({ session, client, onClose: onCloseProp, on
   useEffect(() => {
     let alive = true;
     loadRdvPrep(session, client)
-      .then(d => { if (!alive) return; setData(d); setOpen(d.campaigns.find(c => c.status === "todo" && !c.plan?.ineligible)?.campaign.key || null); })
+      .then(d => { if (!alive) return; setData(d); setOpen(null); })   // aucune MEA dépliée à l'ouverture
       .catch(e => { if (alive) setError(odoo.isNetworkError(e) ? "Préparation indisponible hors ligne." : `Lecture impossible : ${e?.message || e}`); });
     return () => { alive = false; };
   }, [session, client]);
