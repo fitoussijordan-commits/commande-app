@@ -22,7 +22,7 @@ export interface MeaCampaign {
   // compris, avec leur « Date début ». Absent : ancien rapprochement par le nom.
   templateIds?: number[];
   templateStarts?: string[];
-  // « Exclusif Institut » / « Exclusif Revendeur » (nom de l'offre, de la
+  // « Exclusif Institut » / « Exclusif Revendeur » ou « Retail » (nom de l'offre, de la
   // campagne ou d'un modèle de devis lié) : réservée à ce type de client.
   exclusive?: ClientKind | null;
 }
@@ -40,7 +40,7 @@ export function clientKind(client: any): ClientKind {
 export function exclusiveOf(...names: string[]): ClientKind | null {
   const s = names.join(" ");
   if (/exclusi\w*\W+institut/i.test(s)) return "institut";
-  if (/exclusi\w*\W+revendeur/i.test(s)) return "revendeur";
+  if (/exclusi\w*\W+(revendeur|retail)/i.test(s)) return "revendeur";   // « Exclusif Retail » = revendeur
   return null;
 }
 // La MEA s'adresse-t-elle à ce client ? (sans exclusivité : à tous)
