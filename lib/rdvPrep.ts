@@ -9,7 +9,7 @@
 import * as odoo from "@/lib/odoo";
 import { resolveClientFamily } from "@/lib/perimes";
 import { caDateFields } from "@/lib/salesStats";
-import { loadCampaigns, clientPlans, planKey, TEMPLATE_START_FIELD, type MeaCampaign, type Plan, type TrackingModel } from "@/lib/meaTracking";
+import { loadCampaigns, clientPlans, planKey, TEMPLATE_START_FIELD, FAMILLE_FIELD, hasFamilleField, meaTargets, type MeaCampaign, type Plan, type TrackingModel } from "@/lib/meaTracking";
 import { templateLineMeta } from "@/lib/orderOffers";
 import { optionalProductFields, saleStep, ppcOf } from "@/lib/productFields";
 
@@ -340,9 +340,9 @@ export async function loadRdvPrep(session: odoo.OdooSession, client: any): Promi
   const [family, { caF, cRow }, { campaigns, offersField, offerCampaign, offerRows }, { tracking, plans }] = await Promise.all([
     resolveClientFamily(session, client).catch(() => [client.id]),
     (async () => {
-      const caF = await caDateFields(session);
+      const [caF, famille] = await Promise.all([caDateFields(session), hasFamilleField(session)]);
       const [cRow] = await odoo.searchRead(session, "res.partner", [["id", "=", client.id]],
-        ["property_product_pricelist", ...(caF.n ? [caF.n] : []), ...(caF.n1 ? [caF.n1] : [])], 1);
+        ["property_product_pricelist", ...(caF.n ? [caF.n] : []), ...(caF.n1 ? [caF.n1] : []), ...(famille ? [FAMILLE_FIELD] : [])], 1);
       return { caF, cRow };
     })(),
     loadCampaigns(session),
@@ -371,7 +371,9 @@ export async function loadRdvPrep(session: odoo.OdooSession, client: any): Promi
   }
   // Offres du cycle : MEA actives + toute MEA déjà faite / en devis par le
   // client, même terminée (ex. « ON PACK 2026 » passée par l'AZUR).
-  const active0 = valid.filter(c => c.active || taken.has(c.key));
+  // MEA « Exclusif Institut / Revendeur » : seulement pour ce type de client
+  // (champ Famille), sauf si le client l'a déjà prise.
+  const active0 = valid.filter(c => taken.has(c.key) || (c.active && meaTargets(c, cRow)));
   // Offres de l'ANNÉE EN COURS seulement : un modèle de devis de la campagne
   // (archivé compris) a sa « Date début » (x_studio_date_debut_1) dans l'année.
   const active = await currentYearCampaigns(session, active0, y);

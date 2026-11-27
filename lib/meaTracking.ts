@@ -22,6 +22,35 @@ export interface MeaCampaign {
   // compris, avec leur « Date début ». Absent : ancien rapprochement par le nom.
   templateIds?: number[];
   templateStarts?: string[];
+  // « Exclusif Institut » / « Exclusif Revendeur » (nom de l'offre, de la
+  // campagne ou d'un modèle de devis lié) : réservée à ce type de client.
+  exclusive?: ClientKind | null;
+}
+
+// ── Type de client : INSTITUT ou REVENDEUR ──────────────────────────────────
+// Champ « Famille » (x_famille_id) : contient « Institut » ou « Esth » → INSTITUT,
+// sinon REVENDEUR (champ vide compris).
+export type ClientKind = "institut" | "revendeur";
+export const FAMILLE_FIELD = "x_famille_id";
+export function clientKind(client: any): ClientKind {
+  const v = client?.[FAMILLE_FIELD];
+  const label = Array.isArray(v) ? String(v[1] || "") : typeof v === "string" ? v : "";
+  return /institut|esth/i.test(label) ? "institut" : "revendeur";
+}
+export function exclusiveOf(...names: string[]): ClientKind | null {
+  const s = names.join(" ");
+  if (/exclusi\w*\W+institut/i.test(s)) return "institut";
+  if (/exclusi\w*\W+revendeur/i.test(s)) return "revendeur";
+  return null;
+}
+// La MEA s'adresse-t-elle à ce client ? (sans exclusivité : à tous)
+export const meaTargets = (c: MeaCampaign, client: any) => !c.exclusive || c.exclusive === clientKind(client);
+// Le champ Famille existe-t-il sur res.partner ? (lu une fois)
+let _famille: Promise<boolean> | null = null;
+export function hasFamilleField(session: odoo.OdooSession): Promise<boolean> {
+  if (!_famille) _famille = odoo.callMethod(session, "res.partner", "fields_get", [[FAMILLE_FIELD]], { attributes: ["type"] })
+    .then((f: any) => !!f?.[FAMILLE_FIELD]).catch(e => { _famille = null; if (odoo.isNetworkError(e)) throw e; return false; });
+  return _famille;
 }
 export interface Taken { state: "pris" | "devis"; orders: string[]; offers: string[]; date: string }
 export interface Plan { id?: number; offerId: number | null; note: string; ineligible?: boolean }   // ineligible : client exclu du placement de cette MEA
@@ -141,6 +170,7 @@ export async function loadCampaigns(session: odoo.OdooSession): Promise<Campaign
     byKey.set(key, c);
   }
   const all = Array.from(byKey.values());
+  all.forEach(c => { c.exclusive = exclusiveOf(c.key, ...c.offers.map(o => o.name), ...(c.templateIds || []).map(id => String(tplById.get(id)?.name || ""))); });
   const campaigns = [...all.filter(c => c.active), ...all.filter(c => !c.active)];
   const offerCampaign = new Map<number, string>();
   campaigns.forEach(c => c.offers.forEach(o => offerCampaign.set(o.id, c.key)));
@@ -214,7 +244,8 @@ export async function loadMeaData(session: odoo.OdooSession, mine = true): Promi
   // Clients du commercial (sociétés), hors fournisseurs.
   const clients = await odoo.searchRead(session, "res.partner",
     [...mineDomain(session.uid, mine), ["customer_rank", ">", 0], ["parent_id", "=", false], ["active", "=", true], NOT_SUPPLIER],
-    ["id", "name", "ref", "city", "x_ca_n_1", "phone", "street", "zip", "property_product_pricelist", "category_id", "is_company", "type", "customer_rank", "user_id"], mine ? 0 : 2000, "x_ca_n_1 desc");
+    ["id", "name", "ref", "city", "x_ca_n_1", "phone", "street", "zip", "property_product_pricelist", "category_id", "is_company", "type", "customer_rank", "user_id",
+     ...(await hasFamilleField(session) ? [FAMILLE_FIELD] : [])], mine ? 0 : 2000, "x_ca_n_1 desc");
   const clientIds = new Set(clients.map((c: any) => c.id));
 
   // Commandes portant une offre de ces campagnes (devis compris).
@@ -272,7 +303,8 @@ export async function loadMeaData(session: odoo.OdooSession, mine = true): Promi
 // cochés « Non éligible » qui ne l'ont pas prise.
 export function eligibleCount(d: MeaData, key: string): number {
   const tk = d.taken.get(key);
-  return d.clients.filter(c => tk?.has(c.id) || !d.plans.get(planKey(key, c.id))?.ineligible).length;
+  const camp = d.campaigns.find(c => c.key === key);
+  return d.clients.filter(c => tk?.has(c.id) || (!d.plans.get(planKey(key, c.id))?.ineligible && (!camp || meaTargets(camp, c)))).length;
 }
 
 // Case « Non éligible » : le champ Studio peut s'appeler « Non éligible » ou « Éligible ».

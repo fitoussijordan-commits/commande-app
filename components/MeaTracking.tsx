@@ -11,7 +11,7 @@ import * as odoo from "@/lib/odoo";
 import { linkedPartnerId } from "@/lib/calendar";
 import { loadBatchBdc, pricelistDiscount } from "@/lib/rdvPrep";
 import { buildBdc, downloadBlob, loadBdcImages } from "@/lib/bdcExcel";
-import { loadMeaData, savePlan, planKey, saveLocalPlan, eligibleCount, type MeaData, type Plan } from "@/lib/meaTracking";
+import { loadMeaData, savePlan, planKey, saveLocalPlan, eligibleCount, meaTargets, type MeaData, type Plan } from "@/lib/meaTracking";
 import AppointmentModal from "@/components/AppointmentModal";
 import { getMineOnly, setMineOnly } from "@/lib/clients";
 
@@ -119,12 +119,17 @@ export default function MeaDashboard({ session, onClose, onOpenClient, onToast }
   const isIneligible = (k: string, id: number) => !!data?.plans.get(planKey(k, id))?.ineligible;
   const status = (id: number): Status => taken.get(id)?.state === "pris" ? "pris" : taken.has(id) ? "devis" : isIneligible(key, id) ? "ne" : "todo";
   const counts: Record<Status, number> = { todo: 0, devis: 0, pris: 0, ne: 0 };
-  data?.clients.forEach(c => counts[status(c.id)]++);
+  // MEA « Exclusif Institut / Revendeur » : seuls les clients de ce type (et ceux
+  // qui l'ont déjà prise) sont listés.
+  const camp = data?.campaigns.find(c => c.key === key);
+  const inScope = (c: any) => !camp || taken.has(c.id) || meaTargets(camp, c);
+  data?.clients.filter(inScope).forEach(c => counts[status(c.id)]++);
 
   const rows = useMemo(() => {
     if (!data) return [];
     const words = q.trim().toLowerCase().split(/\s+/).filter(Boolean);
     return data.clients
+      .filter(inScope)
       .filter(c => status(c.id) === filter)
       .filter(c => words.every(w => `${c.name} ${c.city || ""} ${c.ref || ""}`.toLowerCase().includes(w)))
       .sort((a, b) => sortBy === "name" ? String(a.name).localeCompare(String(b.name), "fr")
@@ -160,8 +165,8 @@ export default function MeaDashboard({ session, onClose, onOpenClient, onToast }
     return v ? `${k} (${v})` : k;
   };
   const meaOptionsFor = (clientId: number) =>
-    (data?.campaigns || []).filter(c => c.active && data?.taken.get(c.key)?.get(clientId)?.state !== "pris").map(c => meaLabel(c.key, clientId));
-  const camp = data?.campaigns.find(c => c.key === key);
+    (data?.campaigns || []).filter(c => c.active && data?.taken.get(c.key)?.get(clientId)?.state !== "pris"
+      && meaTargets(c, data?.clients.find(x => x.id === clientId))).map(c => meaLabel(c.key, clientId));
 
   // BDC de séminaire pour les clients affichés : achats N-1 et proposition par client.
   const exportBdcs = async () => {

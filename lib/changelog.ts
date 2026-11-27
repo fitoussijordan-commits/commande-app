@@ -8,6 +8,7 @@ export const CHANGELOG: ChangelogEntry[] = [
   {
     date: "2026-11-27",
     items: [
+      "MEA réservées à un type de client : une MEA « Exclusif Institut » ou « Exclusif Revendeur » (dans le nom de l'offre ou d'un modèle de devis lié) n'est proposée qu'à ce type de client. INSTITUT = champ Famille (x_famille_id) contenant « Institut » ou « Esth » ; sinon REVENDEUR. Appliqué à la Préparation de RDV, à Mes MEA (clients listés et taux de placement) et au tableau de bord. Un client qui a déjà pris la MEA la garde dans sa liste.",
       "Préparation de RDV : plus aucune MEA dépliée à l'ouverture de la page ; on ouvre celle qu'on veut.",
     ],
   },
